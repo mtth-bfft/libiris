@@ -1,0 +1,16 @@
+[package]
+name = "iris-broker"
+version = "0.5.0"
+authors = ["Matthieu Buffet <matthieu@buffet.re>"]
+edition = "2018"
+
+[dependencies]
+iris-policy = { path = "../policy" }
+iris-ipc = { path = "../ipc" }
+
+[target.'cfg(target_os="linux")'.dependencies]
+libc = "0.2.94"
+
+[target.'cfg(target_os="windows")'.dependencies]
+winapi = { version = "0.3.9", features = ["processthreadsapi", "errhandlingapi", "sysinfoapi", "winbase", "winerror", "userenv", "sddl", "synchapi", "memoryapi"] }
+

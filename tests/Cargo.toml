@@ -1,0 +1,56 @@
+[package]
+name = "iris-integration-tests"
+version = "0.1.0"
+authors = ["Matthieu Buffet <matthieu@buffet.re>"]
+edition = "2018"
+
+[dependencies]
+iris-broker = { path = "../broker" }
+iris-worker = { path = "../worker" }
+iris-policy = { path = "../policy" }
+iris-ipc = { path = "../ipc" }
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3.9", features = ["fileapi", "handleapi", "debugapi", "securitybaseapi", "aclapi", "winsock2"] }
+
+[lib]
+name = "common"
+path = "src/common.rs"
+
+[[bin]]
+name = "spawn_worker"
+path = "src/workers/spawn.rs"
+
+[[bin]]
+name = "environment_vars_sanitized_worker"
+path = "src/workers/environment_vars_sanitized.rs"
+
+[[bin]]
+name = "inherited_resources_no_leak_worker"
+path = "src/workers/inherited_resources_no_leak.rs"
+
+[[bin]]
+name = "inherited_dup_handles_worker"
+path = "src/workers/inherited_dup_handles.rs"
+
+[[bin]]
+name = "inherited_resources_detects_leak_worker"
+path = "src/workers/inherited_resources_detects_leak.rs"
+
+[[bin]]
+name = "stdout_stderr_worker"
+path = "src/workers/stdout_stderr.rs"
+
+[[bin]]
+name = "access_file_worker"
+path = "src/workers/access_file.rs"
+
+[[bin]]
+name = "fcntl_fsetfl_blocked_worker"
+path = "src/workers/fcntl_fsetfl_blocked.rs"
+
+[[bin]]
+name = "network_connect_worker"
+path = "src/workers/network_connect.rs"
+

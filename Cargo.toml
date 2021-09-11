@@ -1,0 +1,10 @@
+[workspace]
+
+members = [
+    "policy",
+    "ipc",
+    "worker",
+    "broker",
+    "tests",
+]
+
