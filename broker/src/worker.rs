@@ -7,11 +7,9 @@ use iris_ipc::{
 };
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use std::ffi::{CStr, CString};
-use std::thread::JoinHandle;
 
 pub struct Worker {
     process: OSSandboxedProcess,
-    manager_thread: JoinHandle<()>,
 }
 
 impl Worker {
@@ -67,7 +65,9 @@ impl Worker {
         broker_pipe.set_remote_process(process.get_pid())?;
         let mut broker_pipe = IPCMessagePipe::new(broker_pipe);
         let policy = policy.get_runtime_policy(); // free resources kept open before passing it to the 'static manager thread
-        let manager_thread = std::thread::spawn(move || {
+        std::thread::spawn(move || {
+            // TODO: wait for the initial child message before returning
+            // TODO: bind manager thread lifetime to the worker lifetime (cleanup in drop?)
             let mut has_lowered_privileges = false;
             loop {
                 let request = match broker_pipe.recv() {
@@ -106,10 +106,7 @@ impl Worker {
                 }
             }
         });
-        Ok(Self {
-            process: process,
-            manager_thread,
-        })
+        Ok(Self { process: process })
     }
 
     pub fn get_pid(&self) -> u64 {

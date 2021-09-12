@@ -59,20 +59,21 @@ impl<'a> Policy<'a> {
             let (prev_readable, prev_writable, prev_restrict_to_append_only) = self
                 .file_access
                 .get(&path)
-                .unwrap_or(&(false, false, false));
+                .copied()
+                .unwrap_or((false, false, false));
             let mut restrict_to_append_only = restrict_to_append_only;
             if writable {
-                if *prev_writable {
+                if prev_writable {
                     // grant the union of both rights: only restrict if both restrict
                     restrict_to_append_only =
-                        *prev_restrict_to_append_only && restrict_to_append_only;
+                        prev_restrict_to_append_only && restrict_to_append_only;
                 }
             }
             self.file_access.insert(
                 path.to_owned(),
                 (
-                    *prev_readable || readable,
-                    *prev_writable || writable,
+                    prev_readable || readable,
+                    prev_writable || writable,
                     restrict_to_append_only,
                 ),
             );

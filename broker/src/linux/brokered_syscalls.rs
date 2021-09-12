@@ -1,7 +1,7 @@
 use iris_ipc::{IPCRequest, IPCResponse};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use std::convert::TryInto;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 
 pub(crate) fn handle_os_specific_request(
     request: IPCRequest,
@@ -42,7 +42,7 @@ pub(crate) fn handle_open_file(
     // Ensure the path does not contain a NULL byte
     let path_nul = match CString::new(path.clone()) {
         Ok(s) => s,
-        Err(e) => return (IPCResponse::GenericCode(-(libc::EINVAL as i64)), None),
+        Err(_) => return (IPCResponse::GenericCode(-(libc::EINVAL as i64)), None),
     };
     // Ensure the access requested matches the worker's policy
     let (can_read, can_write, can_only_append) = policy.get_file_allowed_access(&path);

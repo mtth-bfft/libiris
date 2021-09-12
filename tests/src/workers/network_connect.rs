@@ -1,16 +1,16 @@
-//#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use iris_worker::lower_final_sandbox_privileges_asap;
-use std::convert::TryInto;
-use std::ffi::CString;
 
 #[cfg(target_family = "unix")]
-fn check(ip: &str, port: u16) {
+fn check(_ip: &str, _port: u16) {
     println!("Not implemented");
 }
 
 #[cfg(target_family = "windows")]
 fn check(ip: &str, port: u16) -> bool {
+    use std::convert::TryInto;
+    use std::ffi::CString;
     use winapi::shared::minwindef::MAKEWORD;
     use winapi::shared::ws2def::{AF_INET, IPPROTO_TCP, SOCKADDR_IN};
     use winapi::um::winsock2::{
@@ -55,7 +55,7 @@ fn check(ip: &str, port: u16) -> bool {
 }
 
 fn main() {
-    //lower_final_sandbox_privileges_asap();
+    lower_final_sandbox_privileges_asap();
     let args: Vec<String> = std::env::args().collect();
     assert_eq!(args.len(), 3, "invalid argument count");
     let (ip, port) = (&args[1], args[2].parse::<u16>().expect("invalid port"));

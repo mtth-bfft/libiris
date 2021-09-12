@@ -124,7 +124,7 @@ fn get_fd_for_path(path: &str) -> Result<Handle, i64> {
     Err(err)
 }
 
-pub(crate) fn lower_final_sandbox_privileges(policy: &Policy, ipc: IPCMessagePipe) {
+pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePipe) {
     // Initialization of globals. This is safe as long as we are only called once
     unsafe {
         // Store the emulated current working directory
@@ -210,7 +210,6 @@ pub(crate) fn lower_final_sandbox_privileges(policy: &Policy, ipc: IPCMessagePip
         " [.] Allowing syscall fcntl / {} for F_GETFL only",
         syscall_nr
     );
-    let mypid = std::process::id();
     let a0_pid_comparator = scmp_arg_cmp {
         arg: 0, // first syscall argument
         op: scmp_compare::SCMP_CMP_EQ,
@@ -429,14 +428,17 @@ fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Opt
     (resp, handle)
 }
 
-fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, mode: libc::c_int) -> i64 {
+fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc::c_int) -> i64 {
+    if dirfd != libc::AT_FDCWD {
+        return -(libc::EINVAL as i64);
+    }
+    if path.is_empty() {
+        return -(libc::ENOENT as i64);
+    }
     println!(
         " [.] Requesting access to file path {:?} (flags={})",
         path, flags
     );
-    if path.is_empty() {
-        return -(libc::ENOENT as i64);
-    }
     // If path is relative, prepend the process CWD.
     let mut path = path.to_owned();
     if path.chars().next() != Some('/') {
@@ -448,7 +450,8 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, mode: libc:
         write: (flags & (libc::O_WRONLY | libc::O_RDWR)) != 0 && (flags & (libc::O_PATH)) == 0,
         append_only: (flags & libc::O_APPEND) != 0 && (flags & (libc::O_PATH)) == 0,
     };
-    // TODO: if O_CREAT, creat it (careful with O_EXCL)
+    // TODO: if O_CREAT, creat it (careful with O_EXCL). Enforce NX for everyone and NR+NW for
+    // others when using the `mode` provided by workers.
     // TODO: if O_TRUNC, ftruncate() it. But ftruncate() allows bypassing O_APPEND, so add truncate: bool to OpenFile requests
     match send_recv(&request, None) {
         (IPCResponse::GenericCode(_), Some(handle)) => {

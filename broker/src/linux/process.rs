@@ -11,6 +11,9 @@ const DEFAULT_CLONE_STACK_SIZE: usize = 1 * 1024 * 1024;
 
 pub struct OSSandboxedProcess {
     pid: u32,
+    // Thread stack for clone(2), flagged as "never read" because rust does not
+    // know about the thread created unsafely
+    #[allow(dead_code)]
     initial_thread_stack: Vec<u8>,
 }
 
