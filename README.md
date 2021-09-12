@@ -1,6 +1,8 @@
 libiris
 =======
 
+![Build Status](https://github.com/mtth-bfft/libiris/actions/workflows/build_test.yml/badge.svg?branch=main)
+
 libiris is a (work in progress) cross-platform sandboxing library.
 
 Repository

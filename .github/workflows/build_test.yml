@@ -1,0 +1,42 @@
+name: Build and test
+on: push
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        run_os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.run_os }}
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+    - name: Install libseccomp
+      run: |
+        sudo apt update
+        sudo apt install libseccomp-dev libseccomp2
+      if: ${{ matrix.run_os == 'ubuntu-latest' }}
+    - name: Build and run integration tests
+      env:
+        RUSTFLAGS: -D warnings
+      uses: actions-rs/cargo@v1
+      with:
+        command: build
+        args: --workspace --all-targets --all-features --release --verbose
+    - name: Run integration tests
+      run: cargo test --all --release --verbose
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: Check rustfmt compliance
+        run: cargo fmt --all -- --check
+
