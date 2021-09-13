@@ -1,7 +1,10 @@
-name: Check any new security advisory for dependencies
+name: Audit dependencies
 on:
+  push:
+  pull_request:
   schedule:
     - cron: '30 7,17 * * *'
+
 env:
   CARGO_TERM_COLOR: always
 jobs:
