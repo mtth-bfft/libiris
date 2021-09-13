@@ -14,7 +14,7 @@ fn network_connect_loopback() {
         _ => panic!("Unable to query socket port"),
     };
     println!(" [.] Waiting for connection on 127.0.0.1:{}", port);
-    let server_thread = thread::spawn(move || match listener.accept() {
+    thread::spawn(move || match listener.accept() {
         Ok((_sock, addr)) => println!(" [+] Ok, received connect from {:?}", addr),
         Err(e) => println!(" [!] ERROR when accepting connection: {}", e),
     });

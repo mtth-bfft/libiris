@@ -4,7 +4,7 @@
 #![allow(non_upper_case_globals)]
 
 use core::ptr::null_mut;
-use iris::Worker;
+use iris_broker::Worker;
 use std::convert::TryInto;
 use std::ffi::CString;
 use std::fs::File;
@@ -21,9 +21,7 @@ use winapi::um::fileapi::OPEN_EXISTING;
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::handleapi::{CloseHandle, DuplicateHandle};
 use winapi::um::memoryapi::ReadProcessMemory;
-use winapi::um::minwinbase::{
-    DEBUG_EVENT, EXCEPTION_BREAKPOINT, EXCEPTION_DEBUG_EVENT, OUTPUT_DEBUG_STRING_EVENT,
-};
+use winapi::um::minwinbase::{DEBUG_EVENT, OUTPUT_DEBUG_STRING_EVENT};
 use winapi::um::processthreadsapi::OpenProcessToken;
 use winapi::um::processthreadsapi::SetThreadToken;
 use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess};
@@ -317,18 +315,16 @@ pub fn check_worker_handles(worker: &Worker) {
     let himpersonationtoken = unsafe {
         let mut hworkertoken: HANDLE = null_mut();
         let res = OpenProcessToken(hworker, TOKEN_DUPLICATE, &mut hworkertoken as *mut _);
-        assert_ne!(res, 0, "OpenProcessToken() failed with error {}", unsafe {
-            GetLastError()
-        });
+        let err = GetLastError();
+        assert_ne!(res, 0, "OpenProcessToken() failed with error {}", err);
         let mut himpersonationtoken: HANDLE = null_mut();
         let res = DuplicateToken(
             hworkertoken,
             SecurityImpersonation,
             &mut himpersonationtoken as *mut _,
         );
-        assert_ne!(res, 0, "DuplicateToken() failed with error {}", unsafe {
-            GetLastError()
-        });
+        let err = GetLastError();
+        assert_ne!(res, 0, "DuplicateToken() failed with error {}", err);
         CloseHandle(hworkertoken);
         himpersonationtoken
     };
@@ -385,9 +381,10 @@ pub fn check_worker_handles(worker: &Worker) {
                         .Name
                         .Buffer;
                     if name_len > 0 {
-                        name = Some(String::from_utf16_lossy(unsafe {
-                            std::slice::from_raw_parts(name_buf, name_len as usize / 2)
-                        }));
+                        name = Some(String::from_utf16_lossy(std::slice::from_raw_parts(
+                            name_buf,
+                            name_len as usize / 2,
+                        )));
                     }
                 }
             }

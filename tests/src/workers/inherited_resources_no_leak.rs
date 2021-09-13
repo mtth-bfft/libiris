@@ -5,8 +5,9 @@ fn main() {
     while unsafe { IsDebuggerPresent() } == 0 {
         ()
     }
+    let msg = CString::new("Ready for inspection").unwrap();
     unsafe {
-        OutputDebugStringA(CString::new("Ready for inspection").unwrap().as_ptr());
+        OutputDebugStringA(msg.as_ptr());
     }
     // Parent will kill us after inspecting our handles, so this last call will never return
 }

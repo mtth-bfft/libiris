@@ -4,7 +4,7 @@ use core::ptr::null_mut;
 use iris_policy::{CrossPlatformHandle, Handle};
 use std::convert::TryInto;
 use std::ffi::CString;
-use winapi::shared::minwindef::{DWORD, ULONG};
+use winapi::shared::minwindef::DWORD;
 use winapi::shared::winerror::ERROR_BROKEN_PIPE;
 use winapi::shared::winerror::ERROR_PIPE_CONNECTED;
 use winapi::um::errhandlingapi::GetLastError;
@@ -182,7 +182,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
     fn set_remote_process(&mut self, remote_pid: u64) -> Result<(), String> {
         let remote_pid: u32 = match remote_pid.try_into() {
             Ok(n) => n,
-            Err(e) => return Err(format!("Invalid PID: {}", remote_pid)),
+            Err(_) => return Err(format!("Invalid PID: {}", remote_pid)),
         };
         self.remote_process_handle = unsafe {
             let res = OpenProcess(PROCESS_DUP_HANDLE, 0, remote_pid);

@@ -11,30 +11,20 @@ fn transform_path(path: &str) -> String {
 #[cfg(windows)]
 fn transform_path(path: &str) -> String {
     use common::os::get_proc_address;
-    use core::ptr::{null_mut, slice_from_raw_parts};
-    use std::convert::TryInto;
-    use winapi::shared::minwindef::FARPROC;
-    use winapi::shared::ntdef::{
-        InitializeObjectAttributes, NTSTATUS, NT_SUCCESS, OBJECT_ATTRIBUTES, POBJECT_ATTRIBUTES,
-        PULONG, PUNICODE_STRING, ULONG, UNICODE_STRING,
-    };
-    use winapi::shared::ntstatus::STATUS_BUFFER_TOO_SMALL;
-    use winapi::um::winnt::{ACCESS_MASK, GENERIC_READ, HANDLE, PCWSTR, PHANDLE, PVOID, WCHAR};
+    use core::ptr::null_mut;
+    use winapi::shared::ntdef::{NTSTATUS, NT_SUCCESS, UNICODE_STRING};
+    use winapi::um::winnt::{PCWSTR, PVOID, WCHAR};
 
-    struct RTL_RELATIVE_NAME {
-        RelativeName: UNICODE_STRING,
-        ContainingDirectory: HANDLE,
-        CurDirRef: PVOID,
-    };
-
+    #[allow(non_camel_case_types)]
     type PRtlDosPathNameToRelativeNtPathName_U_WithStatus = unsafe extern "system" fn(
         DosName: PCWSTR,
         NtName: *mut UNICODE_STRING,
         PartName: PCWSTR,
-        RelativeName: *mut RTL_RELATIVE_NAME,
+        RelativeName: PVOID,
     )
         -> NTSTATUS;
 
+    #[allow(non_snake_case)]
     let RtlDosPathNameToRelativeNtPathName_U_WithStatus: PRtlDosPathNameToRelativeNtPathName_U_WithStatus = get_proc_address!("ntdll.dll", "RtlDosPathNameToRelativeNtPathName_U_WithStatus");
     let dos_path: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
     let mut us_nt_path = UNICODE_STRING {

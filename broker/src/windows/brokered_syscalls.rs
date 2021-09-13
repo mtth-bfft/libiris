@@ -2,29 +2,18 @@ use crate::os::get_proc_address::get_proc_address;
 use core::ptr::null_mut;
 use iris_ipc::{IPCRequest, IPCResponse};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
-use std::convert::TryInto;
-use std::ffi::CString;
 use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::ntdef::{
-    InitializeObjectAttributes, NTSTATUS, NT_SUCCESS, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE,
-    PVOID, ULONG, UNICODE_STRING,
+    NTSTATUS, NT_SUCCESS, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE, PVOID, ULONG, UNICODE_STRING,
 };
 use winapi::shared::ntstatus::{
     STATUS_ACCESS_DENIED, STATUS_INVALID_PARAMETER, STATUS_NOT_SUPPORTED,
 };
-use winapi::um::errhandlingapi::GetLastError;
-use winapi::um::fileapi::CreateFileA;
-use winapi::um::fileapi::OPEN_EXISTING;
-use winapi::um::handleapi::INVALID_HANDLE_VALUE;
-use winapi::um::winbase::FILE_FLAG_OPEN_REPARSE_POINT;
-use winapi::um::winbase::SECURITY_IDENTIFICATION;
-use winapi::um::winbase::SECURITY_SQOS_PRESENT;
 use winapi::um::winnt::{
-    SecurityIdentification, ACCESS_MASK, ACCESS_SYSTEM_SECURITY, DELETE, FILE_APPEND_DATA,
-    FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_READ_EA, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA, HANDLE, LARGE_INTEGER,
-    LONGLONG, READ_CONTROL, SECURITY_DYNAMIC_TRACKING, SECURITY_QUALITY_OF_SERVICE, SYNCHRONIZE,
-    WCHAR, WRITE_DAC, WRITE_OWNER,
+    SecurityIdentification, ACCESS_MASK, DELETE, FILE_APPEND_DATA, FILE_READ_ATTRIBUTES,
+    FILE_READ_DATA, FILE_READ_EA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA, HANDLE, LARGE_INTEGER, LONGLONG,
+    READ_CONTROL, SECURITY_DYNAMIC_TRACKING, SECURITY_QUALITY_OF_SERVICE, SYNCHRONIZE, WCHAR,
 };
 
 // Constants from winternl.h not yet exported by winapi
@@ -36,6 +25,7 @@ const FILE_OVERWRITE: u32 = 0x00000004;
 const FILE_OVERWRITE_IF: u32 = 0x00000005;
 
 // From WDK headers
+#[allow(non_snake_case)]
 #[repr(C)]
 pub(crate) struct IO_STATUS_BLOCK {
     Status: NTSTATUS,

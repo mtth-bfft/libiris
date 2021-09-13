@@ -7,14 +7,12 @@ fn fcntl_fsetfd_blocked() {}
 fn fcntl_fsetfd_blocked() {
     use common::{cleanup_tmp_file, get_worker_bin_path, open_tmp_file};
     use iris_broker::{downcast_to_handle, Policy, Worker};
-    use std::convert::TryInto;
     use std::ffi::CString;
-    use std::io::Write;
 
     let worker_binary = get_worker_bin_path();
     let (tmpout, tmpoutpath) = open_tmp_file();
     let tmpout = downcast_to_handle(tmpout);
-    let (mut tmpwritable, tmpwritablepath) = open_tmp_file();
+    let (_, tmpwritablepath) = open_tmp_file();
     let mut policy = Policy::new();
     // Make the file append-only
     policy

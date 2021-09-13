@@ -1,5 +1,4 @@
 use common::{check_worker_handles, get_worker_bin_path};
-use core::ptr::null_mut;
 use iris_broker::{Policy, Worker};
 
 // Voluntarily set up resources (opened handles and file descriptors)
@@ -8,12 +7,13 @@ use iris_broker::{Policy, Worker};
 // injected into it or into its parents.
 
 #[cfg(unix)]
-fn os_specific_setup(worker: &Worker) {
-    unimplemented!();
+fn os_specific_setup(_worker: &Worker) {
+    // TODO: set up file descriptors to be leaked
 }
 
 #[cfg(windows)]
 fn os_specific_setup(worker: &Worker) {
+    use core::ptr::null_mut;
     use std::convert::TryInto;
     use winapi::um::errhandlingapi::GetLastError;
     use winapi::um::handleapi::{CloseHandle, DuplicateHandle};
@@ -64,7 +64,6 @@ fn inherited_resources_detects_leak() {
         None,
     )
     .expect("worker creation failed");
-    std::thread::sleep_ms(1000);
     os_specific_setup(&worker);
     check_worker_handles(&worker);
 }

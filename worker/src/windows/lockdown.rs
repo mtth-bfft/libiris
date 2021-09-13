@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use core::ffi::c_void;
 use core::ptr::{null, null_mut};
 use core::sync::atomic::compiler_fence;
@@ -26,9 +28,6 @@ use winapi::um::winnt::{
 
 // Constants from winternl.h not yet exported by winapi
 const FILE_OPEN: u32 = 1;
-const FILE_CREATE: u32 = 2;
-const FILE_OPEN_IF: u32 = 3;
-const FILE_OVERWRITE_IF: u32 = 5;
 
 // From WDK headers
 #[repr(C)]
@@ -55,6 +54,7 @@ struct LIST_ENTRY {
     Blink: *const c_void,
 }
 #[repr(C)]
+#[allow(non_camel_case_types)]
 struct LDR_DATA_TABLE_ENTRY {
     Reserved1: [PVOID; 2],
     InMemoryOrderLinks: LIST_ENTRY,
@@ -438,10 +438,10 @@ fn write_trampoline(location: *mut i8, target_function: *const fn()) {
     unsafe {
         *(location as *mut u8) = 0x68;
     } // x64 PUSH 32-bit immediate
-    unsafe { *(unsafe { location.add(1) as *mut u32 }) = target_low };
-    unsafe { *(unsafe { location.add(5) as *mut u32 }) = 0x042444C7 }; // x64 MOV DWORD PTR [RSP+4], 32-bit immediate
-    unsafe { *(unsafe { location.add(9) as *mut u32 }) = target_high };
-    unsafe { *(unsafe { location.add(13) as *mut u8 }) = 0xC3 }; // x64 RET
+    unsafe { *(location.add(1) as *mut u32) = target_low };
+    unsafe { *(location.add(5) as *mut u32) = 0x042444C7 }; // x64 MOV DWORD PTR [RSP+4], 32-bit immediate
+    unsafe { *(location.add(9) as *mut u32) = target_high };
+    unsafe { *(location.add(13) as *mut u8) = 0xC3 }; // x64 RET
 }
 
 fn hotpatch_u32(new_value: u32, location: *mut u32) {
@@ -552,7 +552,7 @@ extern "system" fn hook_ntcreatefile(
     } else {
         unsafe { *(*allocation_size).QuadPart() }
     };
-    let ea = unsafe { std::slice::from_raw_parts((ea_buffer as *const u8), ea_length as usize) };
+    let ea = unsafe { std::slice::from_raw_parts(ea_buffer as *const u8, ea_length as usize) };
     let ea = Vec::from(ea);
     let request = IPCRequest::NtCreateFile {
         desired_access,

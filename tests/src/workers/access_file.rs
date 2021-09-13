@@ -131,33 +131,35 @@ fn check(
     use winapi::shared::minwindef::{DWORD, FARPROC};
     use winapi::shared::ntdef::{
         InitializeObjectAttributes, NTSTATUS, NT_SUCCESS, OBJECT_ATTRIBUTES, PLARGE_INTEGER,
-        POBJECT_ATTRIBUTES, PULONG, PUNICODE_STRING, ULONG, UNICODE_STRING,
+        POBJECT_ATTRIBUTES, ULONG, UNICODE_STRING,
     };
     use winapi::shared::ntstatus::STATUS_ACCESS_DENIED;
     use winapi::shared::winerror::ERROR_ACCESS_DENIED;
     use winapi::um::errhandlingapi::{GetLastError, SetLastError};
     use winapi::um::fileapi::{
-        CreateFileA, GetFileSize, ReadFile, SetFilePointer, WriteFile, INVALID_SET_FILE_POINTER,
-        OPEN_EXISTING,
+        GetFileSize, ReadFile, SetFilePointer, WriteFile, INVALID_SET_FILE_POINTER,
     };
-    use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
+    use winapi::um::handleapi::CloseHandle;
     use winapi::um::libloaderapi::{GetProcAddress, LoadLibraryA};
-    use winapi::um::winbase::{FILE_BEGIN, FILE_FLAG_BACKUP_SEMANTICS};
+    use winapi::um::winbase::FILE_BEGIN;
     use winapi::um::winnt::{
         ACCESS_MASK, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES, FILE_READ_DATA,
         FILE_READ_EA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
-        FILE_WRITE_DATA, FILE_WRITE_EA, GENERIC_READ, HANDLE, LARGE_INTEGER, PHANDLE, PVOID,
-        READ_CONTROL, SYNCHRONIZE, WCHAR,
+        FILE_WRITE_DATA, FILE_WRITE_EA, HANDLE, LARGE_INTEGER, PHANDLE, PVOID, READ_CONTROL,
+        SYNCHRONIZE, WCHAR,
     };
     const FILE_OPEN: DWORD = 0x00000001;
     const FILE_OPENED: ULONG_PTR = 0x00000001;
     const FILE_NON_DIRECTORY_FILE: DWORD = 0x00000040;
     const FILE_SYNCHRONOUS_IO_NONALERT: DWORD = 0x00000020;
+    #[allow(non_camel_case_types)]
     struct IO_STATUS_BLOCK {
         _pointer: PVOID,
         information: ULONG_PTR,
     }
+    #[allow(non_camel_case_types)]
     type PIO_STATUS_BLOCK = *mut IO_STATUS_BLOCK;
+    #[allow(non_camel_case_types)]
     type pntcreatefile = unsafe extern "system" fn(
         file_handle: PHANDLE,
         desired_access: ACCESS_MASK,
@@ -171,6 +173,7 @@ fn check(
         ea_buffer: PVOID,
         ea_length: ULONG,
     ) -> NTSTATUS;
+    #[allow(non_camel_case_types)]
     type pntopenfile = unsafe extern "system" fn(
         file_handle: PHANDLE,
         desired_access: ACCESS_MASK,
