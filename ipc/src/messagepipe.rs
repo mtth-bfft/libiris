@@ -5,7 +5,7 @@ pub trait CrossPlatformMessagePipe {
 
     /**
      * Must only be called with handles returned by the same implementation of CrossPlatformMessagePipe
-     * when called with as_handles() in order to be safe.
+     * when called with into_handle() in order to be safe.
      */
     fn from_handle(handle: Handle) -> Self
     where

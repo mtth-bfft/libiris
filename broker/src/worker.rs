@@ -62,7 +62,7 @@ impl Worker {
         .unwrap();
         envp.push(&ipc_handle_var);
         let process = OSSandboxedProcess::new(&policy, exe, argv, &envp, stdin, stdout, stderr)?;
-        broker_pipe.set_remote_process(process.get_pid())?;
+        broker_pipe.set_remote_process(process.get_pid())?; // set to pass handles later
         let mut broker_pipe = IPCMessagePipe::new_server(broker_pipe, IPCVersion::V1)?;
         let policy = policy.get_runtime_policy(); // free resources kept open before passing it to the 'static manager thread
         std::thread::spawn(move || {

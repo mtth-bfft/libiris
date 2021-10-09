@@ -17,3 +17,6 @@ pub use os::messagepipe::OSMessagePipe as MessagePipe;
 // Name of the environment variable used to pass the IPC socket handle/file
 // descriptor number to child processes
 pub const IPC_HANDLE_ENV_NAME: &str = "SANDBOX_IPC_HANDLE";
+
+// Name of the environment variable used to pass a seccomp filter
+pub const SECCOMP_HANDLE_ENV_NAME: &str = "SANDBOX_SECCOMP_HANDLE";
