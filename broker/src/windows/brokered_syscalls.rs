@@ -1,6 +1,6 @@
 use crate::os::get_proc_address::get_proc_address;
 use core::ptr::null_mut;
-use iris_ipc::{IPCRequest, IPCResponse};
+use iris_ipc::{IPCRequestV1, IPCResponseV1};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::ntdef::{
@@ -54,11 +54,11 @@ pub(crate) type PNtCreateFile = unsafe extern "system" fn(
 ) -> NTSTATUS;
 
 pub(crate) fn handle_os_specific_request(
-    request: IPCRequest,
+    request: IPCRequestV1,
     policy: &Policy,
-) -> (IPCResponse, Option<Handle>) {
+) -> (IPCResponseV1, Option<Handle>) {
     match request {
-        IPCRequest::NtCreateFile {
+        IPCRequestV1::NtCreateFile {
             desired_access,
             path,
             allocation_size,
@@ -80,7 +80,7 @@ pub(crate) fn handle_os_specific_request(
         ),
         unknown => {
             println!(" [!] Unexpected request from worker: {:?}", unknown);
-            (IPCResponse::GenericError(STATUS_NOT_SUPPORTED), None)
+            (IPCResponseV1::GenericError(STATUS_NOT_SUPPORTED), None)
         }
     }
 }
@@ -95,9 +95,9 @@ fn handle_ntcreatefile(
     create_disposition: ULONG,
     create_options: ULONG,
     ea: &[u8],
-) -> (IPCResponse, Option<Handle>) {
+) -> (IPCResponseV1, Option<Handle>) {
     if path.is_empty() {
-        return (IPCResponse::GenericError(STATUS_INVALID_PARAMETER), None);
+        return (IPCResponseV1::GenericError(STATUS_INVALID_PARAMETER), None);
     }
     // Validate desired_access
     let never_granted = desired_access
@@ -110,7 +110,7 @@ fn handle_ntcreatefile(
             " [!] Worker requested access rights 0x{:X} to {} but such access cannot be delegated",
             never_granted, path
         );
-        return (IPCResponse::GenericError(STATUS_ACCESS_DENIED), None);
+        return (IPCResponseV1::GenericError(STATUS_ACCESS_DENIED), None);
     }
     // TODO: validate all bit flags to only let through those we know are safe for a sandboxed process
     // TODO: DELETE_ON_CLOSE => write access required ?
@@ -167,7 +167,7 @@ fn handle_ntcreatefile(
                 "has no access to that path".to_owned()
             }
         );
-        return (IPCResponse::GenericError(STATUS_ACCESS_DENIED), None);
+        return (IPCResponseV1::GenericError(STATUS_ACCESS_DENIED), None);
     }
     // Validate share_access
     if share_access != (FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE) {
@@ -206,7 +206,7 @@ fn handle_ntcreatefile(
                     "cannot lock that path".to_owned()
                 }
             );
-            return (IPCResponse::GenericError(STATUS_ACCESS_DENIED), None);
+            return (IPCResponseV1::GenericError(STATUS_ACCESS_DENIED), None);
         }
     }
 
@@ -263,5 +263,5 @@ fn handle_ntcreatefile(
             (status, io_status.Information, None)
         }
     };
-    return (IPCResponse::NtCreateFile { io_status, code }, handle);
+    return (IPCResponseV1::NtCreateFile { io_status, code }, handle);
 }

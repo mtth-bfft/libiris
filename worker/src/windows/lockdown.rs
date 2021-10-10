@@ -3,7 +3,7 @@
 use core::ffi::c_void;
 use core::ptr::{null, null_mut};
 use core::sync::atomic::compiler_fence;
-use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse};
+use iris_ipc::{IPCMessagePipe, IPCRequestV1, IPCResponseV1};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
@@ -554,7 +554,7 @@ extern "system" fn hook_ntcreatefile(
     };
     let ea = unsafe { std::slice::from_raw_parts(ea_buffer as *const u8, ea_length as usize) };
     let ea = Vec::from(ea);
-    let request = IPCRequest::NtCreateFile {
+    let request = IPCRequestV1::NtCreateFile {
         desired_access,
         path,
         allocation_size,
@@ -565,7 +565,7 @@ extern "system" fn hook_ntcreatefile(
         ea,
     };
     match send_recv(&request, None) {
-        (IPCResponse::NtCreateFile { io_status, code }, handle) => {
+        (IPCResponseV1::NtCreateFile { io_status, code }, handle) => {
             if let Some(handle) = handle {
                 unsafe {
                     let handle: usize = handle
@@ -580,7 +580,7 @@ extern "system" fn hook_ntcreatefile(
             };
             code as NTSTATUS
         }
-        (IPCResponse::GenericError(code), None) => return code as NTSTATUS,
+        (IPCResponseV1::GenericError(code), None) => return code as NTSTATUS,
         other => panic!(
             "Unexpected response from broker to NtCreateFile request: {:?}",
             other
@@ -618,7 +618,7 @@ extern "system" fn hook_ntopenfile(
         )
     };
     let path = String::from_utf16_lossy(path);
-    let request = IPCRequest::NtCreateFile {
+    let request = IPCRequestV1::NtCreateFile {
         desired_access,
         path,
         allocation_size: 0,
@@ -629,7 +629,7 @@ extern "system" fn hook_ntopenfile(
         ea: Vec::new(),
     };
     match send_recv(&request, None) {
-        (IPCResponse::NtCreateFile { io_status, code }, handle) => {
+        (IPCResponseV1::NtCreateFile { io_status, code }, handle) => {
             if let Some(handle) = handle {
                 unsafe {
                     let handle: usize = handle
@@ -644,7 +644,7 @@ extern "system" fn hook_ntopenfile(
             };
             code as NTSTATUS
         }
-        (IPCResponse::GenericError(code), None) => code as NTSTATUS,
+        (IPCResponseV1::GenericError(code), None) => code as NTSTATUS,
         other => panic!(
             "Unexpected response from broker to NtCreateFile request: {:?}",
             other
@@ -653,7 +653,7 @@ extern "system" fn hook_ntopenfile(
 }
 
 // TODO: merge with Linux
-fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Option<Handle>) {
+fn send_recv(request: &IPCRequestV1, handle: Option<&Handle>) -> (IPCResponseV1, Option<Handle>) {
     let mut pipe = get_ipc_pipe();
     println!(
         " [.] Sending request {:?} (handle: {:?})",

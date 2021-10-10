@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 use core::ptr::null;
-use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse};
+use iris_ipc::{IPCMessagePipe, IPCRequestV1, IPCResponseV1};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use libc::c_int;
 use seccomp_sys::{
@@ -100,15 +100,15 @@ fn get_fd_for_path_with_perms(
     write: bool,
     append_only: bool,
 ) -> Result<Handle, i64> {
-    let request = IPCRequest::OpenFile {
+    let request = IPCRequestV1::OpenFile {
         path: path.to_owned(),
         read,
         write,
         append_only,
     };
     match send_recv(&request, None) {
-        (IPCResponse::GenericCode(_), Some(fd)) => Ok(fd),
-        (IPCResponse::GenericCode(code), None) if code < 0 => Err(code),
+        (IPCResponseV1::GenericCode(_), Some(fd)) => Ok(fd),
+        (IPCResponseV1::GenericCode(code), None) if code < 0 => Err(code),
         err => panic!("Unexpected response from broker to file request: {:?}", err),
     }
 }
@@ -417,7 +417,7 @@ pub(crate) extern "C" fn sigsys_handler(
     }
 }
 
-fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Option<Handle>) {
+fn send_recv(request: &IPCRequestV1, handle: Option<&Handle>) -> (IPCResponseV1, Option<Handle>) {
     let mut pipe = get_ipc_pipe();
     pipe.send(&request, handle)
         .expect("unable to send IPC request to broker");
@@ -444,7 +444,7 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc
     if path.chars().next() != Some('/') {
         path = get_cwd().clone() + "/" + &path;
     }
-    let request = IPCRequest::OpenFile {
+    let request = IPCRequestV1::OpenFile {
         path,
         read: (flags & (libc::O_WRONLY)) == 0 && (flags & (libc::O_PATH)) == 0,
         write: (flags & (libc::O_WRONLY | libc::O_RDWR)) != 0 && (flags & (libc::O_PATH)) == 0,
@@ -454,10 +454,10 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc
     // others when using the `mode` provided by workers.
     // TODO: if O_TRUNC, ftruncate() it. But ftruncate() allows bypassing O_APPEND, so add truncate: bool to OpenFile requests
     match send_recv(&request, None) {
-        (IPCResponse::GenericCode(_), Some(handle)) => {
+        (IPCResponseV1::GenericCode(_), Some(handle)) => {
             unsafe { handle.into_raw() }.try_into().unwrap()
         }
-        (IPCResponse::GenericCode(code), None) => code,
+        (IPCResponseV1::GenericCode(code), None) => code,
         other => panic!(
             "Unexpected response from broker to file request: {:?}",
             other

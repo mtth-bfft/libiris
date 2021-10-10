@@ -1,14 +1,14 @@
-use iris_ipc::{IPCRequest, IPCResponse};
+use iris_ipc::{IPCRequestV1, IPCResponseV1};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use std::convert::TryInto;
 use std::ffi::CString;
 
 pub(crate) fn handle_os_specific_request(
-    request: IPCRequest,
+    request: IPCRequestV1,
     policy: &Policy,
-) -> (IPCResponse, Option<Handle>) {
+) -> (IPCResponseV1, Option<Handle>) {
     match request {
-        IPCRequest::OpenFile {
+        IPCRequestV1::OpenFile {
             path,
             read,
             write,
@@ -16,7 +16,7 @@ pub(crate) fn handle_os_specific_request(
         } => handle_open_file(policy, path, read, write, append_only),
         unknown => {
             println!(" [!] Unexpected request from worker: {:?}", unknown);
-            (IPCResponse::GenericCode(-(libc::EINVAL as i64)), None)
+            (IPCResponseV1::GenericCode(-(libc::EINVAL as i64)), None)
         }
     }
 }
@@ -27,22 +27,22 @@ pub(crate) fn handle_open_file(
     requests_read: bool,
     requests_write: bool,
     requests_append_only: bool,
-) -> (IPCResponse, Option<Handle>) {
+) -> (IPCResponseV1, Option<Handle>) {
     // Ensure the path is an absolute path
     if path.is_empty()
         || path.chars().next() != Some('/')
         || (requests_append_only && !requests_write)
     {
-        return (IPCResponse::GenericCode(-(libc::EINVAL as i64)), None);
+        return (IPCResponseV1::GenericCode(-(libc::EINVAL as i64)), None);
     }
     // Ensure the path is already resolved
     if path.contains("/../") || path.contains("/./") {
-        return (IPCResponse::GenericCode(-(libc::EINVAL as i64)), None);
+        return (IPCResponseV1::GenericCode(-(libc::EINVAL as i64)), None);
     }
     // Ensure the path does not contain a NULL byte
     let path_nul = match CString::new(path.clone()) {
         Ok(s) => s,
-        Err(_) => return (IPCResponse::GenericCode(-(libc::EINVAL as i64)), None),
+        Err(_) => return (IPCResponseV1::GenericCode(-(libc::EINVAL as i64)), None),
     };
     // Ensure the access requested matches the worker's policy
     let (can_read, can_write, can_only_append) = policy.get_file_allowed_access(&path);
@@ -83,7 +83,7 @@ pub(crate) fn handle_open_file(
                 "has no access to that path".to_owned()
             }
         );
-        return (IPCResponse::GenericCode(-(libc::EACCES) as i64), None);
+        return (IPCResponseV1::GenericCode(-(libc::EACCES) as i64), None);
     }
     let mut flags = libc::O_CLOEXEC;
     if requests_read && requests_write {
@@ -105,9 +105,9 @@ pub(crate) fn handle_open_file(
             let err = std::io::Error::last_os_error()
                 .raw_os_error()
                 .unwrap_or(libc::EACCES) as i64;
-            return (IPCResponse::GenericCode(-err), None);
+            return (IPCResponseV1::GenericCode(-err), None);
         }
         Handle::new(res.try_into().unwrap()).unwrap()
     };
-    return (IPCResponse::GenericCode(0), Some(handle));
+    return (IPCResponseV1::GenericCode(0), Some(handle));
 }

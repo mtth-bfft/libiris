@@ -1,6 +1,6 @@
 use crate::lockdown;
 use iris_ipc::{
-    CrossPlatformMessagePipe, IPCMessagePipe, IPCRequest, IPCResponse, MessagePipe,
+    CrossPlatformMessagePipe, IPCMessagePipe, IPCRequestV1, IPCResponseV1, MessagePipe,
     IPC_HANDLE_ENV_NAME,
 };
 use iris_policy::{CrossPlatformHandle, Handle};
@@ -18,15 +18,16 @@ pub fn lower_final_sandbox_privileges_asap() {
     // of this environment variable, and we erase it as soon as it is used.
     let handle = unsafe { Handle::new(handle).expect("invalid IPC handle environment variable") };
     let pipe = MessagePipe::from_handle(handle);
-    let mut ipc = IPCMessagePipe::new(pipe);
+    let (mut ipc, _) =
+        IPCMessagePipe::new_client(pipe).expect("unable to open IPC channel to broker");
 
-    ipc.send(&IPCRequest::LowerFinalSandboxPrivilegesAsap, None)
+    ipc.send(&IPCRequestV1::LowerFinalSandboxPrivilegesAsap, None)
         .expect("unable to send IPC message to broker");
     let resp = ipc
         .recv()
         .expect("unable to read worker policy from broker");
     let pol = match resp {
-        Some(IPCResponse::PolicyApplied(pol)) => pol,
+        Some(IPCResponseV1::PolicyApplied(pol)) => pol,
         other => panic!(
             "unexpected initial response received from broker: {:?}",
             other

@@ -2,7 +2,7 @@ use crate::os::brokered_syscalls::handle_os_specific_request;
 use crate::os::process::OSSandboxedProcess;
 use crate::process::CrossPlatformSandboxedProcess;
 use iris_ipc::{
-    CrossPlatformMessagePipe, IPCMessagePipe, IPCRequest, IPCResponse, MessagePipe,
+    CrossPlatformMessagePipe, IPCMessagePipe, IPCRequestV1, IPCResponseV1, IPCVersion, MessagePipe,
     IPC_HANDLE_ENV_NAME,
 };
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
@@ -63,7 +63,7 @@ impl Worker {
         envp.push(&ipc_handle_var);
         let process = OSSandboxedProcess::new(&policy, exe, argv, &envp, stdin, stdout, stderr)?;
         broker_pipe.set_remote_process(process.get_pid())?;
-        let mut broker_pipe = IPCMessagePipe::new(broker_pipe);
+        let mut broker_pipe = IPCMessagePipe::new_server(broker_pipe, IPCVersion::V1)?;
         let policy = policy.get_runtime_policy(); // free resources kept open before passing it to the 'static manager thread
         std::thread::spawn(move || {
             // TODO: wait for the initial child message before returning
@@ -93,9 +93,9 @@ impl Worker {
                 println!(" [.] Received request: {:?}", &request);
                 let (resp, handle) = match request {
                     // Handle OS-agnostic requests
-                    IPCRequest::LowerFinalSandboxPrivilegesAsap if !has_lowered_privileges => {
+                    IPCRequestV1::LowerFinalSandboxPrivilegesAsap if !has_lowered_privileges => {
                         has_lowered_privileges = true;
-                        (IPCResponse::PolicyApplied(policy.clone()), None)
+                        (IPCResponseV1::PolicyApplied(policy.clone()), None)
                     }
                     other => handle_os_specific_request(other, &policy),
                 };

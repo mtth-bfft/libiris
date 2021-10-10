@@ -5,7 +5,7 @@ use winapi::shared::ntdef::{LONGLONG, NTSTATUS, ULONG};
 use winapi::um::winnt::ACCESS_MASK;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
-pub enum IPCRequest {
+pub enum IPCRequestV1 {
     // Initial message sent by workers to signal they are ready to enforce their final
     // sandboxing policy permanently
     LowerFinalSandboxPrivilegesAsap,
@@ -23,7 +23,7 @@ pub enum IPCRequest {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
-pub enum IPCResponse {
+pub enum IPCResponseV1 {
     // Acknowledgement of LowerFinalSandboxPrivilegesAsap
     PolicyApplied(Policy<'static>),
     NtCreateFile {
