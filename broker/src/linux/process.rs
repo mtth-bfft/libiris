@@ -2,7 +2,7 @@ use crate::process::CrossPlatformSandboxedProcess;
 use core::ffi::c_void;
 use core::ptr::null;
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
-use iris_ipc::SECCOMP_HANDLE_ENV_NAME;
+use iris_ipc::{SECCOMP_HANDLE_ENV_NAME, MessagePipe, CrossPlatformMessagePipe};
 use libc::c_int;
 use std::convert::{TryFrom, TryInto};
 use std::ffi::{CStr, CString};
@@ -86,31 +86,11 @@ struct EntrypointParameters {
     argv: Vec<CString>,
     envp: Vec<CString>,
     allowed_file_descriptors: Vec<c_int>,
-    pipe_execve_errno: Handle,
-    pipe_seccomp: Handle,
+    sock_execve_errno: MessagePipe,
+    sock_seccomp: MessagePipe,
     stdin: Option<c_int>,
     stdout: Option<c_int>,
     stderr: Option<c_int>,
-}
-
-// Returns a pair of handles like pipe(3) does: readable then writable end
-fn pipe() -> Result<(Handle, Handle), String> {
-    let mut pipes: Vec<c_int> = vec![-1, -1];
-    let res = unsafe {
-        let res = libc::pipe(pipes.as_mut_ptr());
-        if res < 0 || pipes[0] < 0 || pipes[1] < 0 {
-            // It's safe to return here, if pipe() returned an error it did not give us file descriptors so there is no leak
-            return Err(format!(
-                "pipe() failed with code {}",
-                Error::last_os_error()
-            ));
-        }
-        (
-            Handle::new(pipes[0].try_into().unwrap()).unwrap(),
-            Handle::new(pipes[1].try_into().unwrap()).unwrap(),
-        )
-    };
-    Ok(res)
 }
 
 fn get_syscall_number(name: &str) -> Result<i32, String> {
@@ -164,12 +144,12 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         let clone_args = 0; // FIXME: add a retry-loop for libc::CLONE_NEWUSER | libc::CLONE_NEWCGROUP | libc::CLONE_NEWIPC | libc::CLONE_NEWNET | libc::CLONE_NEWNS | libc::CLONE_NEWPID | libc::CLONE_NEWUTS;
 
         // Set up a pipe that will get CLOEXEC-ed if execve() succeeds, and otherwise be used to send us the errno
-        let (pipe_exec_parent, mut pipe_exec_child) = pipe()?;
+        let (mut sock_exec_parent, mut sock_exec_child) = MessagePipe::new()?;
         // Set the child end as CLOEXEC so it gets closed on successful execve(), which we can detect
-        pipe_exec_child.set_inheritable(false)?;
+        sock_exec_child.as_handle().set_inheritable(false)?;
 
         // Set up a pipe that we will use to transmit a go/no-go for seccomp unotify to the worker
-        let (pipe_seccomp_child, pipe_seccomp_parent) = pipe()?;
+        let (sock_seccomp_child, mut sock_seccomp_parent) = MessagePipe::new()?;
 
         // Pack together everything that needs to be passed to the new process
         let entrypoint_params = EntrypointParameters {
@@ -181,8 +161,8 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 .iter()
                 .map(|n| n.as_raw().try_into().unwrap())
                 .collect(),
-            pipe_execve_errno: pipe_exec_child,
-            pipe_seccomp: pipe_seccomp_child,
+            sock_execve_errno: sock_exec_child,
+            sock_seccomp: sock_seccomp_child,
             stdin: stdin.map(|h| c_int::try_from(h.as_raw()).unwrap()),
             stdout: stdout.map(|h| c_int::try_from(h.as_raw()).unwrap()),
             stderr: stderr.map(|h| c_int::try_from(h.as_raw()).unwrap()),
@@ -233,29 +213,19 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 println!(" [.] Will use seccomp user notifications for sandboxing");
                 true
             }
-        } as u8;
+        };
         // Send that info to the worker, so they can use the right type of seccomp filter
         // before execve() (if user notifications are usable) or after execve()
         // (if only seccomp trap is usable).
-        let res = unsafe { libc::write(pipe_seccomp_parent.as_raw().try_into().unwrap(), &use_seccomp_user_notifications as *const _ as *const _, 1) };
-        if res != 1 {
-            // TODO: free resources, worker process, etc.
-            return Err(format!("Unable to send seccomp status to worker process ({})", Error::last_os_error()));
+        if let Err(e) = sock_seccomp_parent.send(&[use_seccomp_user_notifications as u8], None) {
+            // TODO: check need for freeing resource
+            return Err(format!("Unable to send seccomp status to worker process: {}", e));
         }
 
-        let mut execve_errno = vec![0u8; 4];
-        let res = unsafe {
-            libc::read(
-                pipe_exec_parent.as_raw().try_into().unwrap(),
-                execve_errno.as_mut_ptr() as *mut _,
-                execve_errno.len(),
-            )
-        };
-        if res > 0 {
-            return Err(format!(
-                "execve() failed with code {}",
-                u32::from_be_bytes(execve_errno[..].try_into().unwrap())
-            ));
+        if let Ok(v) = sock_exec_parent.recv() {
+            if v.len() > 0 {
+                return Err(format!("execve() failed with code {}", u32::from_be_bytes(v.try_into().unwrap_or([0u8; 4]))));
+            }
         }
 
         println!(" [.] Worker PID={} created", worker_pid);
@@ -297,7 +267,7 @@ fn replace_fd_with_or_dev_null(fd: libc::c_int, replacement: Option<libc::c_int>
     }
     if let Some(replacement) = replacement {
         let res = unsafe { libc::dup(replacement) };
-        if res < 0 || res != fd {
+        if res != fd {
             let errno = std::io::Error::last_os_error()
                 .raw_os_error()
                 .unwrap_or(0);
@@ -344,9 +314,9 @@ extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
     // Wait for our broker to tell us which type of seccomp filter to use
     let use_seccomp_user_notifications = {
         let mut byte = 0u8;
-        let res = unsafe { libc::read(args.pipe_seccomp.as_raw().try_into().unwrap(), &mut byte as *mut _ as *mut _, 1) };
+        let res = unsafe { libc::recv(args.sock_seccomp.as_raw().try_into().unwrap(), &mut byte as *mut _ as *mut _, 1, libc::MSG_WAITALL) };
         if res != 1 {
-            println!(" [!] Unable to read seccomp status from broker ({}), falling back to seccomp trap", Error::last_os_error());
+            println!(" [!] Unable to recv seccomp status from broker ({}), falling back to seccomp trap", Error::last_os_error());
             byte = 0;
         }
         byte != 0
@@ -521,7 +491,7 @@ extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
             // Don't close our stdin/stdout/stderr handles
             // Don't close the CLOEXEC pipe used to check if execve() worked, otherwise it loses its purpose
             if fd > libc::STDERR_FILENO
-                    && fd != args.pipe_execve_errno.as_raw().try_into().unwrap()
+                    && fd != args.sock_execve_errno.as_handle().as_raw().try_into().unwrap()
                     && seccomp_fd_to_allow != Some(fd)
                     && !args.allowed_file_descriptors.contains(&fd) {
                 println!(" [.] Cleaning up file descriptor {} ({})", fd, path.to_string_lossy());
@@ -552,7 +522,7 @@ extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
     let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
     let errno_bytes = (errno as u32).to_be_bytes();
     unsafe {
-        libc::write(args.pipe_execve_errno.as_raw().try_into().unwrap(), errno_bytes.as_ptr() as *const _, 4);
+        libc::send(args.sock_execve_errno.as_handle().as_raw().try_into().unwrap(), errno_bytes.as_ptr() as *const _, 4, 0);
         libc::exit(errno);
     }
 }

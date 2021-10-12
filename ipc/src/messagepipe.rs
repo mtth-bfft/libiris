@@ -3,6 +3,8 @@ use iris_policy::Handle;
 pub trait CrossPlatformMessagePipe {
     fn into_handle(self) -> Handle;
 
+    fn as_handle(&mut self) -> &mut Handle;
+
     /**
      * Must only be called with handles returned by the same implementation of CrossPlatformMessagePipe
      * when called with into_handle() in order to be safe.

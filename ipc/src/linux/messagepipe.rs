@@ -15,6 +15,10 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
         self.fd
     }
 
+    fn as_handle(&mut self) -> &mut Handle {
+        &mut self.fd
+    }
+
     fn from_handle(handle: Handle) -> Self {
         Self { fd: handle }
     }

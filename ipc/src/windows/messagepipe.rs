@@ -24,6 +24,7 @@ use winapi::um::winnt::{
 
 const PIPE_BUFFER_SIZE: u32 = (std::mem::size_of::<u64>() as u32) + IPC_MESSAGE_MAX_SIZE;
 const PIPE_FOOTER_SIZE: usize = std::mem::size_of::<u64>();
+const PIPE_MAX_INSTANCES_PER_PROCESS: usize = 1000;
 
 pub struct OSMessagePipe {
     pipe_handle: Handle,
@@ -35,6 +36,10 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
         self.pipe_handle
     }
 
+    fn as_handle(&mut self) -> &mut Handle {
+        &mut self.pipe_handle
+    }
+
     fn from_handle(handle: Handle) -> Self {
         Self {
             pipe_handle: handle,
@@ -43,9 +48,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
     }
 
     fn new() -> Result<(Self, Self), String> {
-        let mut pipe_id = 0;
-        loop {
-            pipe_id += 1;
+        for pipe_id in 1..PIPE_MAX_INSTANCES_PER_PROCESS {
             let name = format!("\\\\.\\pipe\\ipc-{}-{}", std::process::id(), pipe_id);
             let name_nul = CString::new(name).unwrap();
             let handle1 = unsafe {
@@ -60,9 +63,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     null_mut(),
                 );
                 if res == null_mut() || res == INVALID_HANDLE_VALUE {
-                    // No handle was returned, it is safe to just exit the unsafe block
-                    return Err(format!("CreateNamedPipe() failed with code {} <---- FIXME handle gracefully to just increment the ID and retry", GetLastError()));
-                    //continue;
+                    continue;
                 }
                 Handle::new(res as u64).unwrap()
             };
@@ -79,13 +80,11 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 // FILE_WRITE_ATTRIBUTES is required to set the pipe mode to "messages" afterwards.
                 if res == INVALID_HANDLE_VALUE {
                     // No handle was returned, it is safe to just exit the unsafe block
-                    // Continuing will also destroy handle1 created just above
                     return Err(format!(
                         "CreateFile({:?}) failed with code {}",
                         name_nul,
                         GetLastError()
                     ));
-                    //continue;
                 }
                 Handle::new(res as u64).unwrap()
             };
@@ -114,6 +113,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
             }
             return Ok((Self::from_handle(handle1), Self::from_handle(handle2)));
         }
+        return Err(format!("Unable to create a named pipe: error {}", unsafe { GetLastError() }));
     }
 
     fn recv(&mut self) -> Result<Vec<u8>, String> {
