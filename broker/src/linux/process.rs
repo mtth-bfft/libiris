@@ -1,6 +1,6 @@
 use crate::process::CrossPlatformSandboxedProcess;
 use core::ffi::c_void;
-use core::ptr::null;
+use core::ptr::{null, null_mut};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use iris_ipc::{SECCOMP_HANDLE_ENV_NAME, MessagePipe, CrossPlatformMessagePipe};
 use libc::c_int;
@@ -8,14 +8,14 @@ use std::convert::{TryFrom, TryInto};
 use std::ffi::{CStr, CString};
 use std::io::Error;
 use seccomp_sys::{
-    scmp_arg_cmp, scmp_compare, scmp_filter_attr, seccomp_api_get, seccomp_attr_set, seccomp_init, seccomp_load, seccomp_export_bpf,
+    scmp_arg_cmp, scmp_compare, scmp_filter_attr, seccomp_api_get, seccomp_attr_set, seccomp_init, seccomp_load, seccomp_export_bpf, seccomp_notify_fd, seccomp_notif_resp, seccomp_notify_alloc, seccomp_notif, seccomp_notify_receive,
     seccomp_release, seccomp_rule_add, seccomp_syscall_resolve_name, SCMP_ACT_ALLOW, SCMP_ACT_TRAP, SCMP_ACT_NOTIFY,
     __NR_SCMP_ERROR,
 };
 
 const DEFAULT_CLONE_STACK_SIZE: usize = 1 * 1024 * 1024;
 const MAGIC_VALUE_TO_READ_FROM_BROKER: u64 = 0xC0FF33C0FF33;
-const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 54] = [
+const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 56] = [
     "read",
     "write",
     "readv",
@@ -48,6 +48,9 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 54] = [
     "brk",
     "cacheflush",
     "close_range",
+    //"clone",  // Note: should only allow thread creation within the same namespaces,
+                // but argument order depends on Linux build configuration.
+    "get_robust_list",
     "getresuid",
     "getresgid",
     "getresuid32",
@@ -70,6 +73,7 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 54] = [
     "uname",
     "shutdown",
     "nice",
+    "set_robust_list",
     "pause",
 ];
 
@@ -205,7 +209,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 iov_len: std::mem::size_of::<u64>(),
             };
             let res = unsafe { libc::process_vm_readv(worker_pid, &local_iov as *const _, 1, &remote_iov as *const _, 1, 0) };
-            if res != std::mem::size_of::<u64>().try_into().unwrap() || read_buffer == MAGIC_VALUE_TO_READ_FROM_BROKER {
+            if res != std::mem::size_of::<u64>().try_into().unwrap() || read_buffer != MAGIC_VALUE_TO_READ_FROM_BROKER {
                 println!(" [!] Unable to read worker process memory from broker (code {}), falling back to legacy seccomp-trap", res);
                 false
             }
@@ -222,11 +226,40 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             return Err(format!("Unable to send seccomp status to worker process: {}", e));
         }
 
+        if use_seccomp_user_notifications {
+            println!(" [.] Waiting for notify fd...");
+            let notify_fd = match sock_seccomp_parent.recv_with_handle() {
+                Ok((_, Some(fd))) => fd,
+                other => return Err(format!("Unable to receive seccomp notify handle from worker: {:?}", other)),
+            };
+            println!(" [.] Got fd {:?}", notify_fd);
+            std::thread::spawn(move || {
+                let mut req: *mut seccomp_notif = null_mut();
+                let mut resp: *mut seccomp_notif_resp = null_mut();
+                let res = unsafe { seccomp_notify_alloc(&mut req as *mut *mut seccomp_notif, &mut resp as *mut *mut seccomp_notif_resp) };
+                if res != 0 {
+                    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                    panic!("seccomp_notify_alloc() failed with error {} (errno {})", res, errno);
+                }
+                loop {
+                    // seccomp_notify_receive() requires the notification struct to be zeroed
+                    unsafe { core::ptr::write_bytes(req as *mut u8, 0u8, std::mem::size_of::<seccomp_notif>()); }
+                    let res = unsafe { seccomp_notify_receive(notify_fd.as_raw().try_into().unwrap(), req) };
+                    if res != 0 {
+                        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                        panic!("seccomp_notify_receive() failed with error {} (errno {})", res, errno);
+                    }
+                    println!(">>> RECEIVED SYSCALL {}", unsafe { (*req).data.nr });
+                }
+            });
+        }
+
         if let Ok(v) = sock_exec_parent.recv() {
             if v.len() > 0 {
                 return Err(format!("execve() failed with code {}", u32::from_be_bytes(v.try_into().unwrap_or([0u8; 4]))));
             }
         }
+        println!(" [+] execve() successful");
 
         println!(" [.] Worker PID={} created", worker_pid);
         Ok(Self {
@@ -312,14 +345,12 @@ extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
     replace_fd_with_or_dev_null(libc::STDERR_FILENO, args.stderr);
 
     // Wait for our broker to tell us which type of seccomp filter to use
-    let use_seccomp_user_notifications = {
-        let mut byte = 0u8;
-        let res = unsafe { libc::recv(args.sock_seccomp.as_raw().try_into().unwrap(), &mut byte as *mut _ as *mut _, 1, libc::MSG_WAITALL) };
-        if res != 1 {
-            println!(" [!] Unable to recv seccomp status from broker ({}), falling back to seccomp trap", Error::last_os_error());
-            byte = 0;
-        }
-        byte != 0
+    let use_seccomp_user_notifications = match args.sock_seccomp.recv() {
+        Ok(v) if v.len() == 1 => v[0] != 0,
+        other => {
+            println!(" [!] Unable to receive seccomp status from broker ({:?}), falling back to seccomp trap", other);
+            false
+        },
     };
 
     // Compile a seccomp filter for this worker
@@ -352,6 +383,42 @@ extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
                 syscall_name, -res
             );
         }
+    }
+
+    // Add special case handling for mmap() with prot & PROT_EXEC = 0
+    // (allow any combination of PROT_NONE, PROT_READ, PROT_WRITE)
+    let syscall_nr = get_syscall_number("mmap").unwrap();
+    println!(
+        " [.] Allowing syscall mmap / {} for non-executable mappings only",
+        syscall_nr
+    );
+    let a2_prot_exec_comparator = scmp_arg_cmp {
+        arg: 2, // third syscall argument
+        op: scmp_compare::SCMP_CMP_MASKED_EQ,
+        datum_a: (!(libc::PROT_READ | libc::PROT_WRITE)) as u64, // mask
+        datum_b: 0, // masked value
+    };
+    let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a2_prot_exec_comparator) };
+    if res != 0 {
+        println!(" [!] seccomp_rule_add(SCMP_ACT_ALLOW, mmap, SCMP_A2(SCMP_CMP_MASKED_EQ, !(PROT_READ|PROT_WRITE), 0)) failed with code {}", -res);
+    }
+
+    // Add special case handling for mprotect() with prot & PROT_EXEC = 0
+    // (allow any combination of PROT_NONE, PROT_READ, PROT_WRITE)
+    let syscall_nr = get_syscall_number("mprotect").unwrap();
+    println!(
+        " [.] Allowing syscall mprotect / {} for non-executable mappings only",
+        syscall_nr
+    );
+    let a2_prot_exec_comparator = scmp_arg_cmp {
+        arg: 2, // third syscall argument
+        op: scmp_compare::SCMP_CMP_MASKED_EQ,
+        datum_a: (!(libc::PROT_READ | libc::PROT_WRITE)) as u64, // mask
+        datum_b: 0, // masked value
+    };
+    let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a2_prot_exec_comparator) };
+    if res != 0 {
+        println!(" [!] seccomp_rule_add(SCMP_ACT_ALLOW, mprotect, SCMP_A2(SCMP_CMP_MASKED_EQ, !(PROT_READ|PROT_WRITE), 0)) failed with code {}", -res);
     }
 
     // Add special case handling for fcntl() with F_GETFL only
@@ -423,17 +490,57 @@ extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
         panic!("seccomp_rule_add(SCMP_ACT_ALLOW, tkill, SCMP_A0(SCMP_CMP_EQ, gettid())) failed with code {}", -res);
     }
 
+    // Add special case handling for sched_getaffinity() on ourselves only
+    // (used by libc at thread initialization)
+    // (pid=mypid and pid=0 mean the same thing and are both acceptable)
+    let syscall_nr = get_syscall_number("sched_getaffinity").unwrap();
+    println!(
+        " [.] Allowing syscall sched_getaffinity / {} on ourselves only",
+        syscall_nr
+    );
+    let a0_tid_comparator = scmp_arg_cmp {
+        arg: 0, // first syscall argument
+        op: scmp_compare::SCMP_CMP_EQ,
+        datum_a: mytid.try_into().unwrap(),
+        datum_b: 0, // unused with SCMP_CMP_EQ
+    };
+    let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a0_tid_comparator) };
+    if res != 0 {
+        panic!("seccomp_rule_add(SCMP_ACT_ALLOW, sched_getaffinity, SCMP_A0(SCMP_CMP_EQ, gettid())) failed with code {}", -res);
+    }
+    let a0_zero_comparator = scmp_arg_cmp {
+        arg: 0, // first syscall argument
+        op: scmp_compare::SCMP_CMP_EQ,
+        datum_a: 0, // 0 == ourselves, our PID
+        datum_b: 0, // unused with SCMP_CMP_EQ
+    };
+    let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a0_zero_comparator) };
+    if res != 0 {
+        panic!("seccomp_rule_add(SCMP_ACT_ALLOW, sched_getaffinity, SCMP_A0(SCMP_CMP_EQ, 0)) failed with code {}", -res);
+    }
+
     let mut seccomp_fd_to_allow = None;
     if use_seccomp_user_notifications {
-        // FIXME: load filter
+        println!(" [.] Loading seccomp user notify filter...");
         let res = unsafe { seccomp_load(filter) };
         if res != 0 {
-            panic!("seccomp_load() failed with error {}", -res);
+            panic!("seccomp_load() failed with error {}", res);
         }
-
+        let notify_fd = unsafe {
+            let res = seccomp_notify_fd(filter);
+            if res < 0 {
+                panic!("seccomp_notify_fd() failed with error {}", res);
+            }
+            Handle::new(res.try_into().unwrap()).unwrap()
+        };
         unsafe { seccomp_release(filter) };
+        // Send the file descriptor to our parent so that it can read notifications
+        if let Err(e) = args.sock_seccomp.send(&[1u8], Some(&notify_fd)) {
+            panic!("Unable to send seccomp notify handle to broker: {}", e);
+        }
     }
     else {
+        println!(" [.] Exporting seccomp trap BPF bytecode to ephemeral file for worker...");
         // We need to give this filter to the process, post-execve(). Save it
         // to an ephemeral file descriptor they will inherit (the only export
         // function from libseccomp only accepts a file descriptor as of today)
@@ -521,8 +628,8 @@ extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
     // Tell our broker so it can report the error back to the Worker::new() caller.
     let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
     let errno_bytes = (errno as u32).to_be_bytes();
-    unsafe {
-        libc::send(args.sock_execve_errno.as_handle().as_raw().try_into().unwrap(), errno_bytes.as_ptr() as *const _, 4, 0);
-        libc::exit(errno);
+    if let Err(e) = args.sock_execve_errno.send(&errno_bytes, None) {
+        println!(" [!] Failed to report execve() error to broker: {}", e);
     }
+    std::process::exit(errno);
 }
