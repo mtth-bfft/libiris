@@ -3,18 +3,19 @@ use crate::Handle;
 use glob::Pattern;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // TODO: Eq required for serializability here. Replace Vec<> with unordered sets
 // to avoid making the semantics of == and != non-intuitive.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct Policy<'a> {
+pub struct Policy {
     #[serde(skip)]
-    inherit_handles: Vec<&'a Handle>,
+    inherit_handles: Vec<Arc<Handle>>,
     file_access: HashMap<String, (bool, bool, bool)>,
     file_lock: HashMap<String, (bool, bool, bool)>,
 }
 
-impl<'a> Policy<'a> {
+impl Policy {
     pub fn new() -> Self {
         Self {
             inherit_handles: Vec::new(),
@@ -23,21 +24,17 @@ impl<'a> Policy<'a> {
         }
     }
 
-    pub fn get_runtime_policy(&self) -> Policy<'static> {
-        Policy {
-            inherit_handles: Vec::new(),
-            file_access: self.file_access.clone(),
-            file_lock: self.file_lock.clone(),
-        }
+    pub fn release_handles(&mut self) {
+        self.inherit_handles.clear();
     }
 
-    pub fn allow_inherit_handle(&mut self, handle: &'a Handle) -> Result<(), String> {
+    pub fn allow_inherit_handle(&mut self, handle: Arc<Handle>) -> Result<(), String> {
         self.inherit_handles.push(handle);
         Ok(())
     }
 
-    pub fn get_inherited_handles(&self) -> &[&Handle] {
-        &self.inherit_handles[..]
+    pub fn get_inherited_handles(&self) -> Vec<Arc<Handle>> {
+        self.inherit_handles.clone()
     }
 
     pub fn allow_file_access(

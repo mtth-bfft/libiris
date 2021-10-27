@@ -1,6 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use iris_worker::lower_final_sandbox_privileges_asap;
+use iris_worker::initialize_sandbox_as_soon_as_possible;
 
 #[cfg(target_family = "unix")]
 fn check(_ip: &str, _port: u16) {
@@ -55,7 +55,7 @@ fn check(ip: &str, port: u16) -> bool {
 }
 
 fn main() {
-    lower_final_sandbox_privileges_asap();
+    initialize_sandbox_as_soon_as_possible();
     let args: Vec<String> = std::env::args().collect();
     assert_eq!(args.len(), 3, "invalid argument count");
     let (ip, port) = (&args[1], args[2].parse::<u16>().expect("invalid port"));

@@ -1,7 +1,7 @@
-use iris_worker::lower_final_sandbox_privileges_asap;
+use iris_worker::initialize_sandbox_as_soon_as_possible;
 
 fn main() {
-    lower_final_sandbox_privileges_asap();
+    initialize_sandbox_as_soon_as_possible();
     println!(" [+] Worker main reached");
     std::process::exit(42);
 }

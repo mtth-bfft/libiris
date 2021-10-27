@@ -1,6 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use iris_worker::lower_final_sandbox_privileges_asap;
+use iris_worker::initialize_sandbox_as_soon_as_possible;
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
 
@@ -377,7 +377,7 @@ fn check(
 }
 
 fn main() {
-    lower_final_sandbox_privileges_asap();
+    initialize_sandbox_as_soon_as_possible();
     let args: Vec<String> = std::env::args().collect();
     assert_eq!(args.len(), 9);
     let test_function = args[1].parse::<u8>().unwrap();

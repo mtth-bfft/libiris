@@ -2,6 +2,7 @@ use common::{cleanup_tmp_file, get_worker_bin_path, open_tmp_file};
 use iris_broker::{downcast_to_handle, Policy, Worker};
 use std::ffi::CString;
 use std::io::Write;
+use std::sync::Arc;
 
 #[cfg(target_family = "unix")]
 fn transform_path(path: &str) -> String {
@@ -53,6 +54,62 @@ fn transform_path(path: &str) -> String {
     resolved
 }
 
+fn test_case(worker_binary: &CString, test_function: u32, readable: bool, writable: bool, restrict_to_append_only: bool, request_read: bool, request_write: bool, request_only_append: bool) {
+    let (tmpout, tmpoutpath) = open_tmp_file();
+    let tmpout = Arc::new(downcast_to_handle(tmpout));
+    let (mut tmpok, tmpokpath) = open_tmp_file();
+    tmpok.write_all(b"OK").unwrap();
+    let mut policy = Policy::new();
+    policy
+        .allow_file_access(
+            &tmpokpath.to_string_lossy(),
+            readable,
+            writable,
+            restrict_to_append_only,
+        )
+        .unwrap();
+    let mut worker = Worker::new(
+        &policy,
+        &worker_binary,
+        &[
+            &worker_binary,
+            &CString::new(format!("{}", test_function)).unwrap(),
+            &CString::new(transform_path(
+                tmpokpath.to_str().expect("invalid tmp path"),
+            ))
+            .unwrap(),
+            &CString::new(if readable { "1" } else { "0" }).unwrap(),
+            &CString::new(if writable { "1" } else { "0" }).unwrap(),
+            &CString::new(if restrict_to_append_only {
+                "1"
+            } else {
+                "0"
+            })
+            .unwrap(),
+            &CString::new(if request_read { "1" } else { "0" })
+                .unwrap(),
+            &CString::new(if request_write { "1" } else { "0" })
+                .unwrap(),
+            &CString::new(if request_only_append { "1" } else { "0" })
+                .unwrap(),
+        ],
+        &[],
+        None,
+        Some(Arc::clone(&tmpout)),
+        Some(Arc::clone(&tmpout)),
+    )
+    .expect("worker creation failed");
+    assert_eq!(
+        worker.wait_for_exit(),
+        Ok(0),
+        "worker reported an error, see its output log:\n{}",
+        std::fs::read_to_string(tmpoutpath)
+            .unwrap_or("<unable to read log>".to_owned())
+    );
+    cleanup_tmp_file(&tmpoutpath);
+    cleanup_tmp_file(&tmpokpath);
+}
+
 #[test]
 fn access_file() {
     let worker_binary = get_worker_bin_path();
@@ -69,59 +126,7 @@ fn access_file() {
                                 if !request_write && request_only_append {
                                     continue; // nonsensical case
                                 }
-                                let (tmpout, tmpoutpath) = open_tmp_file();
-                                let tmpout = downcast_to_handle(tmpout);
-                                let (mut tmpok, tmpokpath) = open_tmp_file();
-                                tmpok.write_all(b"OK").unwrap();
-                                let mut policy = Policy::new();
-                                policy
-                                    .allow_file_access(
-                                        &tmpokpath.to_string_lossy(),
-                                        readable,
-                                        writable,
-                                        restrict_to_append_only,
-                                    )
-                                    .unwrap();
-                                let mut worker = Worker::new(
-                                    &policy,
-                                    &worker_binary,
-                                    &[
-                                        &worker_binary,
-                                        &CString::new(format!("{}", test_function)).unwrap(),
-                                        &CString::new(transform_path(
-                                            tmpokpath.to_str().expect("invalid tmp path"),
-                                        ))
-                                        .unwrap(),
-                                        &CString::new(if readable { "1" } else { "0" }).unwrap(),
-                                        &CString::new(if writable { "1" } else { "0" }).unwrap(),
-                                        &CString::new(if restrict_to_append_only {
-                                            "1"
-                                        } else {
-                                            "0"
-                                        })
-                                        .unwrap(),
-                                        &CString::new(if request_read { "1" } else { "0" })
-                                            .unwrap(),
-                                        &CString::new(if request_write { "1" } else { "0" })
-                                            .unwrap(),
-                                        &CString::new(if request_only_append { "1" } else { "0" })
-                                            .unwrap(),
-                                    ],
-                                    &[],
-                                    None,
-                                    Some(&tmpout),
-                                    Some(&tmpout),
-                                )
-                                .expect("worker creation failed");
-                                assert_eq!(
-                                    worker.wait_for_exit(),
-                                    Ok(0),
-                                    "worker reported an error, see its output log:\n{}",
-                                    std::fs::read_to_string(tmpoutpath)
-                                        .unwrap_or("<unable to read log>".to_owned())
-                                );
-                                cleanup_tmp_file(&tmpoutpath);
-                                cleanup_tmp_file(&tmpokpath);
+                                test_case(&worker_binary, test_function, readable, writable, restrict_to_append_only, request_read, request_write, request_only_append);
                             }
                         }
                     }

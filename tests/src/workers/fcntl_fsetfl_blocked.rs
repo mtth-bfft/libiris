@@ -3,12 +3,12 @@ fn main() {}
 
 #[cfg(target_family = "unix")]
 fn main() {
-    use iris_worker::lower_final_sandbox_privileges_asap;
+    use iris_worker::initialize_sandbox_as_soon_as_possible;
     use libc::c_int;
     use std::convert::TryInto;
     use std::ffi::CString;
 
-    lower_final_sandbox_privileges_asap();
+    initialize_sandbox_as_soon_as_possible();
     let args: Vec<String> = std::env::args().collect();
     assert_eq!(args.len(), 2);
     let path = CString::new(args[1].as_str()).unwrap();

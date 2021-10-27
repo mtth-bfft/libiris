@@ -8,10 +8,11 @@ fn fcntl_fsetfd_blocked() {
     use common::{cleanup_tmp_file, get_worker_bin_path, open_tmp_file};
     use iris_broker::{downcast_to_handle, Policy, Worker};
     use std::ffi::CString;
+    use std::sync::Arc;
 
     let worker_binary = get_worker_bin_path();
     let (tmpout, tmpoutpath) = open_tmp_file();
-    let tmpout = downcast_to_handle(tmpout);
+    let tmpout = Arc::new(downcast_to_handle(tmpout));
     let (_, tmpwritablepath) = open_tmp_file();
     let mut policy = Policy::new();
     // Make the file append-only
@@ -27,8 +28,8 @@ fn fcntl_fsetfd_blocked() {
         ],
         &[],
         None,
-        Some(&tmpout),
-        Some(&tmpout),
+        Some(Arc::clone(&tmpout)),
+        Some(Arc::clone(&tmpout)),
     )
     .expect("worker creation failed");
     assert_eq!(

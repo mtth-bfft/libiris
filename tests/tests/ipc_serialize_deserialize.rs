@@ -9,12 +9,13 @@ fn ipc_serialize_deserialize() {
     );
     assert_eq!(vers, IPCVersion::V1);
     worker_ipc
-        .send(&IPCRequestV1::LowerFinalSandboxPrivilegesAsap, None)
+        .send(&IPCRequestV1::LibraryInitialized, None)
         .unwrap();
-    assert_eq!(
-        broker_ipc.recv(),
-        Ok(Some(IPCRequestV1::LowerFinalSandboxPrivilegesAsap))
-    );
+    let resp: Option<IPCRequestV1> = broker_ipc.recv().expect("did not receive initial broker response");
+    match resp {
+        Some(IPCRequestV1::LibraryInitialized) => (),
+        other => panic!("unexpected message from broker: {:?}", other),
+    }
 }
 
 #[test]

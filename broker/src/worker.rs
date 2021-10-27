@@ -1,4 +1,3 @@
-use crate::os::brokered_syscalls::handle_os_specific_request;
 use crate::os::process::OSSandboxedProcess;
 use crate::process::CrossPlatformSandboxedProcess;
 use iris_ipc::{
@@ -6,30 +5,33 @@ use iris_ipc::{
     IPC_HANDLE_ENV_NAME,
 };
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use std::sync::Arc;
 use std::ffi::{CStr, CString};
 
 pub struct Worker {
     process: OSSandboxedProcess,
+    policy: Arc<Policy>,
 }
 
 impl Worker {
-    pub fn new<'a>(
-        policy: &'a Policy,
-        exe: &'a CStr,
-        argv: &[&'a CStr],
-        envp: &[&'a CStr],
-        stdin: Option<&'a Handle>,
-        stdout: Option<&'a Handle>,
-        stderr: Option<&'a Handle>,
+    pub fn new(
+        policy: &Policy,
+        exe: &CStr,
+        argv: &[&CStr],
+        envp: &[&CStr],
+        stdin: Option<Arc<Handle>>,
+        stdout: Option<Arc<Handle>>,
+        stderr: Option<Arc<Handle>>,
     ) -> Result<Self, String> {
-        let mut policy = policy.clone();
         let (mut broker_pipe, worker_pipe) = MessagePipe::new()?;
         let mut worker_pipe_handle = worker_pipe.into_handle();
         worker_pipe_handle.set_inheritable(true)?;
-        policy.allow_inherit_handle(&worker_pipe_handle)?;
-        for handle in vec![stdin, stdout, stderr] {
+        let worker_pipe_handle = Arc::new(worker_pipe_handle);
+        let mut policy = policy.clone();
+        policy.allow_inherit_handle(worker_pipe_handle.clone())?;
+        for handle in [&stdin, &stdout, &stderr] {
             if let Some(handle) = handle {
-                policy.allow_inherit_handle(handle)?;
+                policy.allow_inherit_handle(handle.clone())?;
             }
         }
         for handle in policy.get_inherited_handles() {
@@ -61,59 +63,25 @@ impl Worker {
         ))
         .unwrap();
         envp.push(&ipc_handle_var);
-        let process = OSSandboxedProcess::new(&policy, exe, argv, &envp, stdin, stdout, stderr)?;
+        let mut process = OSSandboxedProcess::new(&policy, exe, argv, &envp, stdin, stdout, stderr)?;
+        let late_mitigations = process.get_late_mitigations()?;
         broker_pipe.set_remote_process(process.get_pid())?; // set to pass handles later
         let mut broker_pipe = IPCMessagePipe::new_server(broker_pipe, IPCVersion::V1)?;
-        let policy = policy.get_runtime_policy(); // free resources kept open before passing it to the 'static manager thread
-        std::thread::spawn(move || {
-            // TODO: wait for the initial child message before returning
-            // TODO: bind manager thread lifetime to the worker lifetime (cleanup in drop?)
-            let mut has_lowered_privileges = false;
-            loop {
-                let request = match broker_pipe.recv() {
-                    Ok(Some(m)) => m,
-                    Ok(None) => {
-                        if !has_lowered_privileges {
-                            println!(" [!] Manager thread exiting, child closed its IPC socket before lowering privileges");
-                            break;
-                        }
-                        println!(
-                            " [.] Manager thread exiting cleanly, worker closed its IPC socket"
-                        );
-                        break;
-                    }
-                    Err(e) => {
-                        println!(
-                            " [!] Manager thread exiting: error when receiving IPC: {}",
-                            e
-                        );
-                        break;
-                    }
-                };
-                println!(" [.] Received request: {:?}", &request);
-                let (resp, handle) = match request {
-                    // Handle OS-agnostic requests
-                    IPCRequestV1::LowerFinalSandboxPrivilegesAsap if !has_lowered_privileges => {
-                        has_lowered_privileges = true;
-                        (IPCResponseV1::PolicyApplied(policy.clone()), None)
-                    }
-                    other => handle_os_specific_request(other, &policy),
-                };
-                println!(" [.] Sending response: {:?}", &resp);
-                if let Err(e) = broker_pipe.send(&resp, handle.as_ref()) {
-                    println!(" [!] Manager thread exiting: error when sending IPC: {}", e);
-                    break;
-                }
-            }
-        });
-        Ok(Self { process: process })
+        if let Err(e) = broker_pipe.send(&late_mitigations, None) {
+            return Err(format!("Unable to send initial message to worker process: {:?}", e));
+        }
+        // The IPC might outlive our worker object (e.g. if it is dropped without waiting
+        // for the worker to exit), and it needs to keep a hand on our policy to apply it.
+        let policy = Arc::new(policy);
+        process.start_serving_ipc_requests(broker_pipe, policy.clone())?;
+        Ok(Self { process, policy })
     }
 
     pub fn get_pid(&self) -> u64 {
         self.process.get_pid()
     }
 
-    pub fn wait_for_exit(&mut self) -> Result<u64, String> {
+    pub fn wait_for_exit(&self) -> Result<u64, String> {
         self.process.wait_for_exit()
     }
 }

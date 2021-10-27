@@ -1,6 +1,7 @@
 use common::{check_worker_handles, cleanup_tmp_file, get_worker_bin_path, open_tmp_file};
 use iris_broker::{downcast_to_handle, CrossPlatformHandle, Policy, Worker};
 use std::fs::File;
+use std::sync::Arc;
 
 // Voluntarily set up resources (opened handles and file descriptors)
 // ready to be leaked into our children. This could be the result of
@@ -39,15 +40,15 @@ fn inherited_resources_no_leak() {
     let worker_binary = get_worker_bin_path();
     // TODO: remove stdout redirection to avoid it showing up in the test results? Or find a better solution
     let (tmpout, tmpoutpath) = open_tmp_file();
-    let tmpout = downcast_to_handle(tmpout);
+    let tmpout = Arc::new(downcast_to_handle(tmpout));
     let mut worker = Worker::new(
         &policy,
         &worker_binary,
         &[&worker_binary],
         &[],
         None,
-        Some(&tmpout),
-        Some(&tmpout),
+        Some(Arc::clone(&tmpout)),
+        Some(Arc::clone(&tmpout)),
     )
     .expect("worker creation failed");
     check_worker_handles(&worker);

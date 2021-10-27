@@ -1,8 +1,8 @@
 mod api;
 
-// OS-specific lockdown functions
-#[cfg_attr(target_os = "linux", path = "linux/lockdown.rs")]
-#[cfg_attr(target_os = "windows", path = "windows/lockdown.rs")]
-mod lockdown;
+// OS-specific mitigation functions
+#[cfg_attr(target_os = "linux", path = "linux/late_mitigations.rs")]
+#[cfg_attr(target_os = "windows", path = "windows/late_mitigations.rs")]
+mod late_mitigations;
 
 pub use api::*;

@@ -1,23 +1,28 @@
-use iris_policy::Policy;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub enum IPCRequestV1 {
-    // Initial message sent by workers to signal they are ready to enforce their final
-    // sandboxing policy permanently
-    LowerFinalSandboxPrivilegesAsap,
-    // Worker request to open or create a file (possibly with a directory handle attached, in which case `path` is relative to that directory)
-    OpenFile {
-        path: String,
-        read: bool,
-        write: bool,
-        append_only: bool,
+    // Syscall intercepted by seccomp-bpf
+    Syscall {
+        arch: u32,
+        nr: u64,
+        arg1: u64,
+        arg2: u64,
+        arg3: u64,
+        arg4: u64,
+        arg5: u64,
+        arg6: u64,
     },
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub enum IPCResponseV1 {
-    // Acknowledgement of LowerFinalSandboxPrivilegesAsap
-    PolicyApplied(Policy<'static>),
-    GenericCode(i64),
+    // Initial message sent by the broker to its worker
+    LateMitigations {
+        seccomp_trap_bpf: Option<Vec<u8>>,
+    },
+    // Generic error message, something is wrong in our library itself
+    InternalError(u64),
+    // Syscall result code (or 0 if the syscall is successful and a handle is attached)
+    SyscallResult(i64),
 }

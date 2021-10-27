@@ -4,6 +4,7 @@ use std::ffi::CString;
 use std::net::SocketAddr;
 use std::net::TcpListener;
 use std::thread;
+use std::sync::Arc;
 
 #[ignore] // not ready yet
 #[test]
@@ -22,7 +23,7 @@ fn network_connect_loopback() {
     let policy = Policy::new();
     let worker_binary = get_worker_bin_path();
     let (tmpout, tmpoutpath) = open_tmp_file();
-    let tmpout = downcast_to_handle(tmpout);
+    let tmpout = Arc::new(downcast_to_handle(tmpout));
     let mut worker = Worker::new(
         &policy,
         &worker_binary,
@@ -33,8 +34,8 @@ fn network_connect_loopback() {
         ],
         &[],
         None,
-        Some(&tmpout),
-        Some(&tmpout),
+        Some(Arc::clone(&tmpout)),
+        Some(Arc::clone(&tmpout)),
     )
     .expect("worker creation failed");
     assert_eq!(

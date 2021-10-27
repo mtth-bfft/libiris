@@ -1,25 +1,31 @@
-use iris_ipc::{IPCRequestV1, IPCResponseV1};
-use iris_policy::{CrossPlatformHandle, Handle, Policy};
-use std::convert::TryInto;
+use std::fs::File;
 use std::ffi::CString;
+use iris_policy::{Handle, Policy};
 
-pub(crate) fn handle_os_specific_request(
-    request: IPCRequestV1,
-    policy: &Policy,
-) -> (IPCResponseV1, Option<Handle>) {
-    match request {
-        IPCRequestV1::OpenFile {
-            path,
-            read,
-            write,
-            append_only,
-        } => handle_open_file(policy, path, read, write, append_only),
-        unknown => {
-            println!(" [!] Unexpected request from worker: {:?}", unknown);
-            (IPCResponseV1::GenericCode(-(libc::EINVAL as i64)), None)
-        }
-    }
+pub(crate) fn handle_syscall(arch: u32, nr: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64, arg6: u64, policy: &Policy, proc_mem: &File) -> (i64, Option<Handle>) {
+    (-libc::ENOSYS as i64, None)
 }
+
+/*
+
+fn read_cstring_from_ptr(ptr: u64, proc_mem: &File) -> Result<CString, String> {
+    let mut bytes = vec![0u8; 4096];
+    match proc_mem.read_at(&mut bytes, bytes.len()) {
+        Ok(n) => bytes.truncate(n),
+        Err(e) => return Err(format!("Unable to read from worker memory at address {} : {}", ptr, e)),
+    };
+    let res = match CString::new(bytes) {
+        Ok(s) => s,
+        Err(e) => return Err(format!("Unable to read worker memory at address {} as string: {}", ptr, e)),
+    };
+    Ok(res)
+}
+
+    if nr == libc::SYS_openat as u64 {
+        let path = read_cstring_from_ptr(arg2, proc_mem).unwrap();
+        println!(" [+] openat({}, {})", arg1, path);
+        return (-libc::ENOSYS as i64, None);
+    }
 
 pub(crate) fn handle_open_file(
     policy: &Policy,
@@ -110,4 +116,4 @@ pub(crate) fn handle_open_file(
         Handle::new(res.try_into().unwrap()).unwrap()
     };
     return (IPCResponseV1::GenericCode(0), Some(handle));
-}
+}*/
