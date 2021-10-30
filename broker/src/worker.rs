@@ -9,8 +9,7 @@ use std::sync::Arc;
 use std::ffi::{CStr, CString};
 
 pub struct Worker {
-    process: OSSandboxedProcess,
-    policy: Arc<Policy>,
+    process: Arc<OSSandboxedProcess>,
 }
 
 impl Worker {
@@ -63,18 +62,8 @@ impl Worker {
         ))
         .unwrap();
         envp.push(&ipc_handle_var);
-        let mut process = OSSandboxedProcess::new(&policy, exe, argv, &envp, stdin, stdout, stderr)?;
-        let late_mitigations = process.get_late_mitigations()?;
-        broker_pipe.set_remote_process(process.get_pid())?; // set to pass handles later
-        let mut broker_pipe = IPCMessagePipe::new_server(broker_pipe, IPCVersion::V1)?;
-        if let Err(e) = broker_pipe.send(&late_mitigations, None) {
-            return Err(format!("Unable to send initial message to worker process: {:?}", e));
-        }
-        // The IPC might outlive our worker object (e.g. if it is dropped without waiting
-        // for the worker to exit), and it needs to keep a hand on our policy to apply it.
-        let policy = Arc::new(policy);
-        process.start_serving_ipc_requests(broker_pipe, policy.clone())?;
-        Ok(Self { process, policy })
+        let process = OSSandboxedProcess::new(policy, exe, argv, &envp, broker_pipe, stdin, stdout, stderr)?;
+        Ok(Self { process })
     }
 
     pub fn get_pid(&self) -> u64 {
