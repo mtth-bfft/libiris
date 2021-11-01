@@ -1,5 +1,5 @@
 use core::ffi::c_void;
-use iris_ipc::{IPCRequestV1, IPCResponseV1};
+use iris_ipc::{IPCRequestV1, IPCResponseV1, SeccompTrapErrorV1};
 use iris_policy::{CrossPlatformHandle, Handle};
 use libc::{c_int, c_uint};
 use std::convert::TryInto;
@@ -20,67 +20,73 @@ struct siginfo_seccomp_t {
     si_arch: c_uint,           // Architecture of attempted system call
 }
 
-pub(crate) fn apply_late_mitigations(mitigations: &IPCResponseV1) -> Result<(), String> {
+pub(crate) fn apply_late_mitigations(mitigations: &IPCResponseV1) -> IPCRequestV1 {
     let seccomp_bpf = match mitigations {
         IPCResponseV1::LateMitigations { seccomp_trap_bpf } => {
             seccomp_trap_bpf
         },
         _ => panic!("Not reachable"),
     };
-    if let Some(seccomp_bpf) = seccomp_bpf {
-        println!(" [.] Applying seccomp trap BPF filter...");
-        let instr_len = std::mem::size_of::<libc::sock_filter>();
-        let instr_count = seccomp_bpf.len() / instr_len;
-        if instr_count > u16::MAX.into() || (seccomp_bpf.len() % instr_len) != 0 {
-            return Err(format!("Invalid seccomp filter received from broker: {} bytes long", seccomp_bpf.len()));
-        }
-        let seccomp_filter = libc::sock_fprog {
-            filter: seccomp_bpf.as_ptr() as *const _ as *mut _,
-            len: instr_count as u16,
-        };
-
-        // Set our own SIGSYS handler
-        let mut empty_signal_set: libc::sigset_t = unsafe { std::mem::zeroed() };
-        unsafe { libc::sigemptyset(&mut empty_signal_set as *mut _) };
-        let new_sigaction = libc::sigaction {
-            sa_sigaction: sigsys_handler as usize,
-            sa_mask: empty_signal_set,
-            sa_flags: libc::SA_SIGINFO,
-            sa_restorer: None,
-        };
-        let mut old_sigaction = libc::sigaction {
-            sa_sigaction: 0,
-            sa_mask: empty_signal_set,
-            sa_flags: 0,
-            sa_restorer: None,
-        };
-        let res = unsafe {
-            libc::sigaction(
-                libc::SIGSYS,
-                &new_sigaction as *const _,
-                &mut old_sigaction as *mut _,
-            )
-        };
-        if res != 0 {
-            return Err(format!(
-                "sigaction(SIGSYS) failed with error {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-        if old_sigaction.sa_sigaction != libc::SIG_DFL && old_sigaction.sa_sigaction != libc::SIG_IGN {
-            println!(" [!] SIGSYS handler overwritten, the worker process might fail unexpectedly");
-        }
-
-        // Load the filter, by hand. We have to do this to avoid duplicating the BPF
-        // generating code in broker+worker, because libseccomp does not have a
-        // filter import function.
-        let res = unsafe { libc::syscall(libc::SYS_seccomp, SECCOMP_SET_MODE_FILTER, libc::SECCOMP_FILTER_FLAG_TSYNC, &seccomp_filter as *const _, 0, 0) };
-        if res != 0 {
-            return Err(format!(" [!] Error while setting up seccomp trap filter: {}", Error::last_os_error()));
-        }
-        println!(" [.] Seccomp filter applied");
+    let seccomp_trap_bpf = if let Some(seccomp_bpf) = seccomp_bpf {
+        apply_bpf_filter_mitigation(seccomp_bpf)
+    } else {
+        None
+    };
+    IPCRequestV1::ReportLateMitigations {
+        seccomp_trap_bpf,
     }
-    Ok(())
+}
+
+fn apply_bpf_filter_mitigation(seccomp_bpf: &[u8]) -> Option<SeccompTrapErrorV1> {
+    println!(" [.] Applying seccomp trap BPF filter...");
+    let instr_len = std::mem::size_of::<libc::sock_filter>();
+    let instr_count = seccomp_bpf.len() / instr_len;
+    if instr_count > u16::MAX.into() || (seccomp_bpf.len() % instr_len) != 0 {
+        return Some(SeccompTrapErrorV1::InvalidFilterLen(seccomp_bpf.len()));
+    }
+    let seccomp_filter = libc::sock_fprog {
+        filter: seccomp_bpf.as_ptr() as *const _ as *mut _,
+        len: instr_count as u16,
+    };
+
+    // Set our own SIGSYS handler, before loading any filter
+    let mut empty_signal_set: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe { libc::sigemptyset(&mut empty_signal_set as *mut _) };
+    let new_sigaction = libc::sigaction {
+        sa_sigaction: sigsys_handler as usize,
+        sa_mask: empty_signal_set,
+        sa_flags: libc::SA_SIGINFO,
+        sa_restorer: None,
+    };
+    let mut old_sigaction = libc::sigaction {
+        sa_sigaction: 0,
+        sa_mask: empty_signal_set,
+        sa_flags: 0,
+        sa_restorer: None,
+    };
+    let res = unsafe {
+        libc::sigaction(
+            libc::SIGSYS,
+            &new_sigaction as *const _,
+            &mut old_sigaction as *mut _,
+        )
+    };
+    if res != 0 {
+        return Some(SeccompTrapErrorV1::SigactionFailure(Error::last_os_error().raw_os_error().unwrap_or(0)));
+    }
+
+    // Load the filter, by hand (libseccomp does not have a filter import function)
+    let res = unsafe { libc::syscall(libc::SYS_seccomp, SECCOMP_SET_MODE_FILTER, libc::SECCOMP_FILTER_FLAG_TSYNC, &seccomp_filter as *const _, 0, 0) };
+    if res != 0 {
+        return Some(SeccompTrapErrorV1::SeccompLoadFailure(Error::last_os_error().raw_os_error().unwrap_or(0)));
+    }
+    println!(" [+] Seccomp trap BPF filter applied");
+
+    if old_sigaction.sa_sigaction != libc::SIG_DFL && old_sigaction.sa_sigaction != libc::SIG_IGN {
+        Some(SeccompTrapErrorV1::NonFatalHandlerOverwrite)
+    } else {
+        None
+    }
 }
 
 fn read_u64_from_ctx(ucontext: *mut libc::ucontext_t, registry: libc::c_int) -> u64 {

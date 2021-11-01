@@ -9,11 +9,29 @@ fn ipc_serialize_deserialize() {
     );
     assert_eq!(vers, IPCVersion::V1);
     worker_ipc
-        .send(&IPCRequestV1::LibraryInitialized, None)
+        .send(&IPCRequestV1::Syscall {
+            arch: 0xCAFE0001,
+            nr: 0xCAFE00000000,
+            arg1: 0xCAFE00000001,
+            arg2: 0xCAFE00000002,
+            arg3: 0xCAFE00000003,
+            arg4: 0xCAFE00000004,
+            arg5: 0xCAFE00000005,
+            arg6: 0xCAFE00000006,
+            ip: 0xCAFE00000007,
+        }, None)
         .unwrap();
-    let resp: Option<IPCRequestV1> = broker_ipc.recv().expect("did not receive initial broker response");
-    match resp {
-        Some(IPCRequestV1::LibraryInitialized) => (),
+    let res: Option<IPCRequestV1> = broker_ipc.recv().expect("did not receive initial broker response");
+    match res {
+        Some(IPCRequestV1::Syscall { arch, nr, arg1, arg2, arg3, arg4, arg5, arg6, ip }) if arch == 0xCAFE0001 &&
+            nr == 0xCAFE00000000 &&
+            arg1 == 0xCAFE00000001 &&
+            arg2 == 0xCAFE00000002 &&
+            arg3 == 0xCAFE00000003 &&
+            arg4 == 0xCAFE00000004 &&
+            arg5 == 0xCAFE00000005 &&
+            arg6 == 0xCAFE00000006 &&
+            ip == 0xCAFE00000007 => (),
         other => panic!("unexpected message from broker: {:?}", other),
     }
 }

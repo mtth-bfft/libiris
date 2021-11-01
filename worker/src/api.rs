@@ -38,15 +38,16 @@ pub fn initialize_sandbox_as_soon_as_possible() {
         IPC_PIPE_SINGLETON = Box::leak(Box::new(Mutex::new(ipc))) as *const _;
     }
 
-    let msg = get_ipc_pipe()
-        .recv()
+    let mut ipc = get_ipc_pipe();
+    let msg = ipc.recv()
         .expect("unable to read worker late mitigations from broker");
-    if let Some(IPCResponseV1::LateMitigations { .. }) = &msg {
-        apply_late_mitigations(&msg.unwrap()).expect("unable to apply late mitigations from broker");
+    let resp = if let Some(IPCResponseV1::LateMitigations { .. }) = &msg {
+        apply_late_mitigations(&msg.unwrap())
     } else {
         panic!(
             "unexpected initial message received from broker: {:?}",
             msg
         );
-    }
+    };
+    ipc.send(&resp, None).expect("unable to report late mitigation status to broker");
 }

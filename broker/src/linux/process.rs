@@ -19,6 +19,18 @@ use std::os::unix::fs::FileExt;
 use crate::os::brokered_syscalls::handle_syscall;
 use crate::os::seccomp::SeccompFilter;
 
+// Missing from libseccomp (for now)
+#[repr(C)]
+struct seccomp_notif_addfd {
+    id: u64,          // Cookie value
+    flags: u32,       // Flags
+    srcfd: u32,       // Local file descriptor number
+    newfd: u32,       // 0 or desired file descriptor number in target
+    newfd_flags: u32, // Flags to set on target file descriptor
+}
+const SECCOMP_IOCTL_NOTIF_ADDFD: u64 = 0x40182103;
+const SECCOMP_ADDFD_FLAG_SEND: u32 = 0x2;
+
 const DEFAULT_CLONE_STACK_SIZE: usize = 1 * 1024 * 1024;
 const MAGIC_VALUE_TO_READ_FROM_BROKER: [u8; 29] = *b"I AM A LIBIRIS WORKER PROCESS";
 const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 62] = [
@@ -104,11 +116,6 @@ pub(crate) struct OSSandboxedProcess {
     seccomp_unotify_thread: RwLock<Option<JoinHandle<()>>>,
     // Thread which will continuously read IPC requests
     ipc_thread: RwLock<Option<JoinHandle<()>>>,
-    // BPF bytecode waiting to be enforced as soon as process initialization is over
-    seccomp_trap_bpf: RwLock<Option<Vec<u8>>>,
-    // Boolean flipped to true once the worker has run execve() when seccomp
-    // user notifications are in use. Meaningless variable otherwise.
-    seccomp_unotify_execve_ran: RwLock<bool>,
 }
 
 struct EntrypointParameters {
@@ -282,40 +289,12 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             proc_mem,
             ipc_thread: RwLock::new(None),
             seccomp_unotify_thread: RwLock::new(None),
-            seccomp_trap_bpf: RwLock::new(None),
-            seccomp_unotify_execve_ran: RwLock::new(false),
         });
-
-        // Now that we can pass Arc<> references to our Process struct, start serving IPC
-        // in a detached thread holding an Arc<> to read our memory. Note: this is an OS-specific
-        // code to allow processes with seccomp-notify to close their IPC socket after late
-        // mitigations are applied.
-        broker_pipe.set_remote_process(process.get_pid())?; // set to pass handles later
-        let mut broker_pipe = IPCMessagePipe::new_server(broker_pipe, IPCVersion::V1)?;
         let processref = Arc::clone(&process);
-        *(process.ipc_thread.write().unwrap()) = Some(std::thread::spawn(move || {
-            loop {
-                let req = match broker_pipe.recv() {
-                    Ok(Some(req)) => req,
-                    Ok(None) => break,
-                    Err(e) => panic!("Unable to read IPC message from worker: {}", e),
-                };
-                let (resp, handle) = match req {
-                    IPCRequestV1::Syscall { arch, nr, arg1, arg2, arg3, arg4, arg5, arg6 } => handle_syscall(arch, nr, arg1, arg2, arg3, arg4, arg5, arg6, &processref),
-                    other => {
-                        println!(" [!] Unexpected IPC message from worker: {:?}", other);
-                        break;
-                    },
-                };
-                if let Err(e) = broker_pipe.send(&resp, handle.as_ref()) {
-                    panic!("Unable to write IPC message to worker: {}", e);
-                }
-            }
-            println!(" [+] Worker closed its IPC socket, closing IPC thread");
-        }));
 
-        // Wait for the worker to tell us if it succeeded in applying a seccomp filter, so that we can
-        // spawn a seccomp-unotify thread if necessary, or prepare a seccomp-trap filter for later.
+        // Now that we can pass Arc<> references to our Process struct, wait for the worker
+        // to tell us if it succeeded in applying a seccomp user notification filter, so that
+        // we can spawn a dedicated thread holding an Arc<> to read its memory
         match sock_seccomp_parent.recv_with_handle() {
             Ok((_, Some(notify_fd))) => {
                 println!(" [+] Received seccomp user notification fd {:?}", notify_fd);
@@ -337,6 +316,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                             let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
                             panic!("seccomp_notify_receive() failed with error {} (errno {})", res, errno);
                         }
+                        let cookie = unsafe { (*req).id }; // to allow the kernel to match the response to the request
                         let ip = unsafe { (*req).data.instruction_pointer };
                         let arch = unsafe { (*req).data.arch };
                         let nr = unsafe { (*req).data.nr as u64 };
@@ -346,10 +326,35 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                         let arg4 = unsafe { (*req).data.args[3] };
                         let arg5 = unsafe { (*req).data.args[4] };
                         let arg6 = unsafe { (*req).data.args[5] };
-                        let (code, handle) = handle_syscall(arch, nr, arg1, arg2, arg3, arg4, arg5, arg6, &processref);
+                        // FIXME: need to dereference memory here, then check that the notif cookie is
+                        // still valid. Otherwise, the syscall may actually have been cancelled by a
+                        // signal, and the arguments we read from memory were garbage e.g. from the signal
+                        // handler stack.
+                        let code = match handle_syscall(arch, nr, arg1, arg2, arg3, arg4, arg5, arg6, &processref, ip) {
+                            (code, None) => code,
+                            (_, Some(handle)) => {
+                                let addfd = seccomp_notif_addfd {
+                                    id: cookie,
+                                    flags: 0,
+                                    srcfd: handle.as_raw().try_into().unwrap(),
+                                    newfd: 0,
+                                    newfd_flags: (libc::O_CLOEXEC as u32),
+                                };
+                                let res = unsafe { libc::ioctl(notify_fd.as_raw().try_into().unwrap(), SECCOMP_IOCTL_NOTIF_ADDFD, &addfd as *const seccomp_notif_addfd) };
+                                if res < 0 {
+                                    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                                    panic!("Spurious syscall response failure: SECCOMP_IOCTL_NOTIF_ADDFD failed (errno {})", errno);
+                                }
+                                res.into() // file descriptor number in the remote process
+                            }
+                        };
                         unsafe { core::ptr::write_bytes(resp as *mut u8, 0u8, std::mem::size_of::<seccomp_notif_resp>()); }
-                        unsafe { (*resp).id = (*req).id; } // to allow the kernel to match the response to the request
-                        unsafe { (*resp).val = code; } // response the process will see
+                        unsafe { (*resp).id = cookie; }
+                        if code >= 0 { // success value
+                            unsafe { (*resp).val = code; }
+                        } else { // failure code
+                            unsafe { (*resp).error = code as i32; }
+                        }
                         let res = unsafe { seccomp_notify_respond(notify_fd.as_raw().try_into().unwrap(), resp) };
                         if res != 0 {
                             let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
@@ -371,8 +376,9 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         };
 
         // If the worker was supposed to try seccomp user notification and failed,
-        // fallback on seccomp-trap
-        *(process.seccomp_trap_bpf.write().unwrap()) = match (&process.proc_mem, process.seccomp_unotify_thread.read(), generate_seccomp_filter(SCMP_ACT_TRAP)) {
+        // fallback on seccomp-trap: compile a filter and schedule it to be loaded
+        // as a late mitigation
+        let seccomp_trap_bpf = match (&process.proc_mem, process.seccomp_unotify_thread.read(), generate_seccomp_filter(SCMP_ACT_TRAP)) {
             (None, _, _) => {
                 None
             },
@@ -429,6 +435,52 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 }
             }
         };
+
+        // Now that we know which late mitigations need to be applied, start serving
+        // IPCs (and not before)
+        // Note: this is an OS-specific code to allow processes with seccomp-notify to close their
+        // IPC socket after late mitigations are applied.
+        broker_pipe.set_remote_process(process.get_pid())?; // set to pass handles later
+        let mut broker_pipe = IPCMessagePipe::new_server(broker_pipe, IPCVersion::V1)?;
+        let late_mitigations = IPCResponseV1::LateMitigations {
+            seccomp_trap_bpf,
+        };
+        if let Err(e) = broker_pipe.send(&late_mitigations, None) {
+            return Err(format!("Unable to send initial message to worker: {:?}", e));
+        }
+        let initial_msg = match broker_pipe.recv() {
+            Ok(Some(msg)) => msg,
+            other => return Err(format!("Unable to read initial message from worker: {:?}", other)),
+        };
+        match initial_msg {
+            IPCRequestV1::ReportLateMitigations { seccomp_trap_bpf } => {
+                if let Some(seccomp_trap_bpf) = seccomp_trap_bpf {
+                    println!(" [!] Unable to apply seccomp-bpf late mitigation: {:?}", seccomp_trap_bpf);
+                }
+            },
+            other => return Err(format!("Unexpected initial message from worker: {:?}", other)),
+        };
+        *(process.ipc_thread.write().unwrap()) = Some(std::thread::spawn(move || {
+            loop {
+                let req = match broker_pipe.recv() {
+                    Ok(Some(req)) => req,
+                    Ok(None) => break,
+                    Err(e) => panic!("Unable to read IPC message from worker: {}", e),
+                };
+                let (resp, handle) = match req {
+                    IPCRequestV1::Syscall { arch, nr, arg1, arg2, arg3, arg4, arg5, arg6, ip } => handle_syscall(arch, nr, arg1, arg2, arg3, arg4, arg5, arg6, &processref, ip),
+                    other => {
+                        println!(" [!] Unexpected IPC message from worker: {:?}", other);
+                        break;
+                    },
+                };
+                if let Err(e) = broker_pipe.send(&resp, handle.as_ref()) {
+                    panic!("Unable to write IPC message to worker: {}", e);
+                }
+            }
+            println!(" [+] Worker closed its IPC socket, closing IPC thread");
+        }));
+
         println!(" [+] Process PID={} execve() successful, running", process.get_pid());
         Ok(process)
     }
@@ -461,7 +513,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
 }
 
 impl OSSandboxedProcess {
-    pub fn read_cstring_from_ptr(&self, ptr: u64, max_len: usize) -> Result<CString, String> {
+    pub(crate) fn read_cstring_from_ptr(&self, ptr: u64, max_len: usize) -> Result<CString, String> {
         let proc_mem = match &self.proc_mem {
             Some(f) => f,
             None => return Err("Cannot read from worker memory".to_owned()),
@@ -526,40 +578,25 @@ fn generate_seccomp_filter(default_action: u32) -> Result<SeccompFilter, String>
         }
     }
 
-    // Add special case handling for mmap() with prot & PROT_EXEC = 0
-    // (allow any combination of PROT_NONE, PROT_READ, PROT_WRITE)
-    let syscall_nr = get_syscall_number("mmap").unwrap();
-    println!(
-        " [.] Allowing syscall mmap / {} for non-executable mappings only",
-        syscall_nr
-    );
-    let a2_prot_exec_comparator = scmp_arg_cmp {
-        arg: 2, // third syscall argument
-        op: scmp_compare::SCMP_CMP_MASKED_EQ,
-        datum_a: (!(libc::PROT_READ | libc::PROT_WRITE)) as u64, // mask
-        datum_b: 0, // masked value
-    };
-    let res = unsafe { seccomp_rule_add(filter.context, SCMP_ACT_ALLOW, syscall_nr, 1, a2_prot_exec_comparator) };
-    if res != 0 {
-        println!(" [!] seccomp_rule_add(SCMP_ACT_ALLOW, mmap, SCMP_A2(SCMP_CMP_MASKED_EQ, !(PROT_READ|PROT_WRITE), 0)) failed with code {}", -res);
-    }
-
-    // Add special case handling for mprotect() with prot & PROT_EXEC = 0
-    // (allow any combination of PROT_NONE, PROT_READ, PROT_WRITE)
-    let syscall_nr = get_syscall_number("mprotect").unwrap();
-    println!(
-        " [.] Allowing syscall mprotect / {} for non-executable mappings only",
-        syscall_nr
-    );
-    let a2_prot_exec_comparator = scmp_arg_cmp {
-        arg: 2, // third syscall argument
-        op: scmp_compare::SCMP_CMP_MASKED_EQ,
-        datum_a: (!(libc::PROT_READ | libc::PROT_WRITE)) as u64, // mask
-        datum_b: 0, // masked value
-    };
-    let res = unsafe { seccomp_rule_add(filter.context, SCMP_ACT_ALLOW, syscall_nr, 1, a2_prot_exec_comparator) };
-    if res != 0 {
-        println!(" [!] seccomp_rule_add(SCMP_ACT_ALLOW, mprotect, SCMP_A2(SCMP_CMP_MASKED_EQ, !(PROT_READ|PROT_WRITE), 0)) failed with code {}", -res);
+    // When filtering through user notifications, we do not rely on signals
+    // and can let the process do whatever it wants with them
+    if default_action == SCMP_ACT_NOTIFY {
+        let syscall_name = "rt_sigprocmask";
+        let syscall_nr = match get_syscall_number(&syscall_name) {
+            Ok(syscall_nr) => {
+                println!(" [.] Allowing syscall {} / {}", syscall_name, syscall_nr);
+                let res = unsafe { seccomp_rule_add(filter.context, SCMP_ACT_ALLOW, syscall_nr, 0) };
+                if res != 0 {
+                    return Err(format!(
+                        "seccomp_rule_add(SCMP_ACT_ALLOW, {}) failed with code {}",
+                        syscall_name, -res
+                    ));
+                }
+            },
+            Err(e) => {
+                eprintln!(" [.] Unable to find syscall {} : {}", syscall_name, e);
+            },
+        };
     }
 
     // Add special case handling for fcntl() with F_GETFL only

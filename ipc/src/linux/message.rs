@@ -1,7 +1,20 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub enum SeccompTrapErrorV1 {
+    InvalidFilterLen(usize),
+    SigactionFailure(i32),
+    SeccompLoadFailure(i32),
+    NonFatalHandlerOverwrite,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub enum IPCRequestV1 {
+    // Initial response sent by the worker to its broker, to
+    // report the status of late mitigations
+    ReportLateMitigations {
+        seccomp_trap_bpf: Option<SeccompTrapErrorV1>,
+    },
     // Syscall intercepted by seccomp-bpf
     Syscall {
         arch: u32,
