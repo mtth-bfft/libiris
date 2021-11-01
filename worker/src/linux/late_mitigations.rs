@@ -125,7 +125,7 @@ pub(crate) extern "C" fn sigsys_handler(
     );
     unsafe { libc::write(2, msg.as_ptr() as *const _, msg.len()) };
 
-    let req = IPCRequestV1::Syscall { arch, nr, arg1, arg2, arg3, arg4, arg5, arg6 };
+    let req = IPCRequestV1::Syscall { arch, nr, arg1, arg2, arg3, arg4, arg5, arg6, ip };
     let response_code = match send_recv(&req, None) {
         (IPCResponseV1::SyscallResult(code), None) => code,
         (IPCResponseV1::SyscallResult(0), Some(handle)) => {

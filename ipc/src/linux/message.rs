@@ -12,6 +12,7 @@ pub enum IPCRequestV1 {
         arg4: u64,
         arg5: u64,
         arg6: u64,
+        ip: u64,
     },
 }
 

@@ -5,13 +5,14 @@ use std::sync::Arc;
 use std::convert::TryInto;
 use iris_policy::{Handle, Policy, CrossPlatformHandle};
 use crate::os::process::OSSandboxedProcess;
+use crate::process::CrossPlatformSandboxedProcess;
 
 const MAX_PATH_LEN: usize = 4096;
 
 // Constants from linux/audit.h
 const AUDIT_ARCH_X86_64: u32 = 0xC000003E;
 
-pub(crate) fn handle_syscall(arch: u32, nr: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64, arg6: u64, process: &Arc<OSSandboxedProcess>) -> (i64, Option<Handle>) {
+pub(crate) fn handle_syscall(arch: u32, nr: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64, arg6: u64, process: &Arc<OSSandboxedProcess>, ip: u64) -> (i64, Option<Handle>) {
     // Always make decisions based on architecture AND syscall number
     // Always read all arguments once, and then only make decisions based on them
     if arch == AUDIT_ARCH_X86_64 && nr == libc::SYS_open as u64 {
@@ -25,7 +26,7 @@ pub(crate) fn handle_syscall(arch: u32, nr: u64, arg1: u64, arg2: u64, arg3: u64
             (Ok(path), flags, mode) => (path, flags, mode),
             _ => return (-libc::EINVAL as i64, None),
         };
-        handle_open_file(path, flags, mode, &process.policy)
+        handle_open_file(path, flags, mode, &process, ip)
     }
     else if arch == AUDIT_ARCH_X86_64 && nr == libc::SYS_openat as u64 {
         let (arg1, arg2, arg3, arg4, arg5, arg6) = (
@@ -39,10 +40,11 @@ pub(crate) fn handle_syscall(arch: u32, nr: u64, arg1: u64, arg2: u64, arg3: u64
             (dirfd, Ok(path), flags, mode) if dirfd == libc::AT_FDCWD => (path, flags, mode),
             _ => return (-libc::EINVAL as i64, None),
         };
-        handle_open_file(path, flags, mode, &process.policy)
+        handle_open_file(path, flags, mode, &process, ip)
     }
     else {
-        println!(" [!] Unsupported syscall number {} (arch 0x{:X})", nr, arch);
+        println!(" [!] Unsupported syscall number {} (args: 0x{:X} 0x{:X} 0x{:X} 0x{:X} 0x{:X} 0x{:X}) (arch 0x{:X}) at {}",
+            nr, arg1, arg2, arg3, arg4, arg5, arg6, arch, try_resolve_addr(ip, &process));
         (-libc::ENOSYS as i64, None)
     }
 }
@@ -54,11 +56,45 @@ fn consume_flag<T: Copy + PartialEq + Not<Output=T> + BitAnd<Output=T>>(needle: 
     present
 }
 
+/**
+ * Makes a best effort to return a string describing in which module an address
+ * is located, in the worker process address space.
+ */
+fn try_resolve_addr(addr: u64, process: &Arc<OSSandboxedProcess>) -> String {
+    let file_path = format!("/proc/{}/maps", process.get_pid());
+    let mappings = match std::fs::read_to_string(&file_path) {
+        Ok(s) => s,
+        Err(e) => return format!("0x{:X} (unable to open {}, {})", addr, file_path, e),
+    };
+    for mapping in mappings.lines() {
+        if let Some((boundaries, rest)) = mapping.split_once(" ") {
+            if let Some((start, end)) = boundaries.split_once("-") {
+                if let (Ok(start), Ok(end)) = (u64::from_str_radix(start, 16), u64::from_str_radix(end, 16)) {
+                    if start <= addr && addr <= end {
+                        if let Some((fields, module)) = rest.split_once("  ") {
+                            let module = module.trim();
+                            let fields: Vec<&str> = fields.splitn(3, " ").collect();
+                            if module.len() == 0 || fields.len() != 3 {
+                                return format!("0x{:X} (anonymous memory)", addr)
+                            }
+                            if let Ok(offset) = u64::from_str_radix(fields[1], 16) {
+                                return format!("0x{:X} ({}+0x{:X})", addr, module, offset + (addr - start));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    format!("0x{:X} (address not found in {})", addr, file_path)
+}
+
 fn handle_open_file(
     path: CString,
     flags: libc::c_int,
     mode: libc::mode_t,
-    policy: &Policy,
+    process: &Arc<OSSandboxedProcess>,
+    ip: u64,
 ) -> (i64, Option<Handle>) {
     // Ensure the path is an absolute path
     let path_utf8 = match path.to_str() {
@@ -101,23 +137,24 @@ fn handle_open_file(
     // Also ensure we understand each flag that was asked.
     if flags_left != 0 {
         println!(
-            " [!] Worker denied access to {} (unsupported flag 0x{:X} in 0x{:X})",
+            " [!] Worker denied access to {} (unsupported flag 0x{:X} in 0x{:X}) at {}",
             path_utf8,
             flags,
-            flags_left
+            flags_left,
+            try_resolve_addr(ip, process),
         );
         return (-(libc::ENOSYS as i64), None);
     }
     // Ensure the access requested matches the worker's policy
     // Also ensure at least one form of access has been requested, so that one cannot ask
     // for e.g. a O_PATH file descriptor, which would leak file existence at any path.
-    let (can_read, can_write, can_only_append) = policy.get_file_allowed_access(&path_utf8);
+    let (can_read, can_write, can_only_append) = process.policy.get_file_allowed_access(&path_utf8);
     if !(requests_read || requests_write)
         || (requests_read && !can_read)
         || (requests_write && (!can_write || (!requests_append_only && can_only_append)))
     {
         println!(
-            " [!] Worker denied{}{}{} access to {} ({})",
+            " [!] Worker denied{}{}{} access to {} ({}) at {}",
             if requests_read && !can_read {
                 " read"
             } else {
@@ -147,7 +184,8 @@ fn handle_open_file(
                 )
             } else {
                 "has no access to that path".to_owned()
-            }
+            },
+            try_resolve_addr(ip, process)
         );
         return (-(libc::EACCES as i64), None);
     }
