@@ -21,41 +21,30 @@ use crate::os::seccomp::SeccompFilter;
 
 const DEFAULT_CLONE_STACK_SIZE: usize = 1 * 1024 * 1024;
 const MAGIC_VALUE_TO_READ_FROM_BROKER: [u8; 29] = *b"I AM A LIBIRIS WORKER PROCESS";
-const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 56] = [
+const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 62] = [
     "read",
     "write",
     "readv",
     "writev",
     "recvmsg",
     "sendmsg",
-    "tee",
-    "fstat",
-    "lseek",
-    "_llseek",
+    "futex",
+    "clock_nanosleep",
+    "nanosleep",
+    "poll",
     "select",
     "_newselect",
+    "fstat",
+    "tee",
+    "lseek",
+    "_llseek",
     "accept",
     "accept4",
     //"ftruncate", disallowed to prevent truncation of O_APPEND files
     "close",
-    "memfd_create",
-    "sigaltstack",
-    "munmap",
-    "nanosleep",
-    "fchdir",
-    "exit_group",
-    "restart_syscall",
-    "rt_sigreturn",
-    "rt_sigaction", // FIXME: should really be handled separately, to hook rt_sigaction(SIGSYS,..)
+    "sched_yield",
     "getpid",
     "gettid",
-    "alarm",
-    "arch_prctl",
-    "brk",
-    "cacheflush",
-    "close_range",
-    //"clone",  // Note: should only allow thread creation within the same namespaces,
-                // but argument order depends on Linux build configuration.
     "get_robust_list",
     "getresuid",
     "getresgid",
@@ -64,7 +53,27 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 56] = [
     "getrandom",
     "getuid",
     "getuid32",
+    "memfd_create",
+    "mmap", // Note: blocking dynamic executable memory allocation is done via a late mitigation
+            // because there is no way to mmap into another process, so there is no way to
+            // make mmap a broker-handled syscall
+    "mprotect",
+    "munmap",
+    "fchdir",
+    "exit_group",
+    "restart_syscall",
+    "rt_sigreturn",
+    "rt_sigaction", // FIXME: should really be handled separately, to hook rt_sigaction(SIGSYS,..)
+    "sigaltstack",
+    "alarm",
+    "arch_prctl",
+    "brk",
+    "cacheflush",
+    "close_range",
+    //"clone",  // Note: should only allow thread creation within the same namespaces,
+                // but argument order depends on Linux build configuration.
     "readdir",
+    "shutdown",
     "timer_create",
     "timer_delete",
     "timer_getoverrun",
@@ -74,12 +83,11 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 56] = [
     "timerfd_gettime",
     "timerfd_settime",
     "times",
-    "sched_yield",
     "time",
     "uname",
-    "shutdown",
     "nice",
     "set_robust_list",
+    "set_tid_address",
     "pause",
 ];
 
