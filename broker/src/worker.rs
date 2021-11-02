@@ -61,6 +61,11 @@ impl Worker {
             worker_pipe_handle.as_raw().to_string()
         ))
         .unwrap();
+        // Ensure only the policy holds a reference to the worker's end of the pipe
+        // so that when policy.release_handles() is called, we know we're not holding
+        // a reference to the worker's end of the pipe (and thus we can start detecting
+        // if the worker closed its end)
+        drop(worker_pipe_handle);
         envp.push(&ipc_handle_var);
         let process = OSSandboxedProcess::new(policy, exe, argv, &envp, broker_pipe, stdin, stdout, stderr)?;
         Ok(Self { process })
