@@ -17,6 +17,11 @@ fn check(
 ) {
     use libc::c_int;
 
+    if !request_read && !request_write {
+        println!("Skipping, O_PATH is not supported yet");
+        return;
+    }
+
     fn check_fd(fd: c_int, readable: bool, writable: bool, restrict_to_append_only: bool) {
         let mut buf = vec![0u8; 1024];
         // Try to read (set up by the broker to contain "OK")

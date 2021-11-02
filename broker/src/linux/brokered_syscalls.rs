@@ -107,6 +107,9 @@ fn handle_open_file(
         return (-(libc::EINVAL as i64), None);
     }
     // FIXME: ensure the path is already resolved (no /..)
+    // Clear O_PATH to alias this type of requests to O_RDONLY ones
+    // since O_PATH allows fstatat()
+    let flags = flags & !libc::O_PATH;
     let mut flags_left = flags;
     let mut requests_read = false;
     let mut requests_write = false;
@@ -120,6 +123,9 @@ fn handle_open_file(
     }
     else {
         requests_read = true; // O_RDONLY == 0 is a pseudo-flag
+    }
+    if consume_flag(libc::O_PATH, &mut flags_left) {
+        requests_read = true; // O_PATH file descriptors can be used in fstat, fstatfs, fchdir
     }
     if consume_flag(libc::O_CREAT, &mut flags_left) {
         requests_write = true;
@@ -146,11 +152,8 @@ fn handle_open_file(
         return (-(libc::ENOSYS as i64), None);
     }
     // Ensure the access requested matches the worker's policy
-    // Also ensure at least one form of access has been requested, so that one cannot ask
-    // for e.g. a O_PATH file descriptor, which would leak file existence at any path.
     let (can_read, can_write, can_only_append) = process.policy.get_file_allowed_access(&path_utf8);
-    if !(requests_read || requests_write)
-        || (requests_read && !can_read)
+    if (requests_read && !can_read)
         || (requests_write && (!can_write || (!requests_append_only && can_only_append)))
     {
         println!(
