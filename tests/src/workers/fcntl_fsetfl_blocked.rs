@@ -49,11 +49,4 @@ fn main() {
     };
     let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
     assert_eq!(res, -1, "fcntl(F_SETFL) = {} (errno {})", res, err);
-    assert_eq!(err, libc::EPERM, "fcntl(F_SETFL) = {} (errno {})", res, err);
-
-    assert_eq!(
-        unsafe { libc::close(fd) },
-        0,
-        "failed to close file descriptor after test"
-    );
 }
