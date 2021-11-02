@@ -1,4 +1,5 @@
 use crate::os::path::canonicalize_path;
+use crate::os::ALWAYS_ALLOWED_PATHS;
 use crate::Handle;
 use glob::Pattern;
 use serde::{Deserialize, Serialize};
@@ -17,11 +18,15 @@ pub struct Policy {
 
 impl Policy {
     pub fn new() -> Self {
-        Self {
+        let mut res = Self {
             inherit_handles: Vec::new(),
             file_access: HashMap::new(),
             file_lock: HashMap::new(),
+        };
+        for (path, read, write, append_only) in ALWAYS_ALLOWED_PATHS {
+            res.allow_file_access(path, read, write, append_only).expect("invalid default policy");
         }
+        res
     }
 
     pub fn release_handles(&mut self) {
