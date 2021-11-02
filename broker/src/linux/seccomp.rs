@@ -1,10 +1,5 @@
 use core::ffi::c_void;
-use seccomp_sys::{
-    seccomp_init,
-    seccomp_release,
-    seccomp_attr_set,
-    scmp_filter_attr,
-};
+use seccomp_sys::{scmp_filter_attr, seccomp_attr_set, seccomp_init, seccomp_release};
 
 pub(crate) struct SeccompFilter {
     pub(crate) context: *mut c_void,
@@ -23,9 +18,7 @@ impl SeccompFilter {
                 -res
             ));
         }
-        Ok(Self {
-            context,
-        })
+        Ok(Self { context })
     }
 }
 

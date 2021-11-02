@@ -54,7 +54,16 @@ fn transform_path(path: &str) -> String {
     resolved
 }
 
-fn test_case(worker_binary: &CString, test_function: u32, readable: bool, writable: bool, restrict_to_append_only: bool, request_read: bool, request_write: bool, request_only_append: bool) {
+fn test_case(
+    worker_binary: &CString,
+    test_function: u32,
+    readable: bool,
+    writable: bool,
+    restrict_to_append_only: bool,
+    request_read: bool,
+    request_write: bool,
+    request_only_append: bool,
+) {
     let (tmpout, tmpoutpath) = open_tmp_file();
     let tmpout = Arc::new(downcast_to_handle(tmpout));
     let (mut tmpok, tmpokpath) = open_tmp_file();
@@ -68,7 +77,7 @@ fn test_case(worker_binary: &CString, test_function: u32, readable: bool, writab
             restrict_to_append_only,
         )
         .unwrap();
-    let mut worker = Worker::new(
+    let worker = Worker::new(
         &policy,
         &worker_binary,
         &[
@@ -80,18 +89,10 @@ fn test_case(worker_binary: &CString, test_function: u32, readable: bool, writab
             .unwrap(),
             &CString::new(if readable { "1" } else { "0" }).unwrap(),
             &CString::new(if writable { "1" } else { "0" }).unwrap(),
-            &CString::new(if restrict_to_append_only {
-                "1"
-            } else {
-                "0"
-            })
-            .unwrap(),
-            &CString::new(if request_read { "1" } else { "0" })
-                .unwrap(),
-            &CString::new(if request_write { "1" } else { "0" })
-                .unwrap(),
-            &CString::new(if request_only_append { "1" } else { "0" })
-                .unwrap(),
+            &CString::new(if restrict_to_append_only { "1" } else { "0" }).unwrap(),
+            &CString::new(if request_read { "1" } else { "0" }).unwrap(),
+            &CString::new(if request_write { "1" } else { "0" }).unwrap(),
+            &CString::new(if request_only_append { "1" } else { "0" }).unwrap(),
         ],
         &[],
         None,
@@ -103,8 +104,7 @@ fn test_case(worker_binary: &CString, test_function: u32, readable: bool, writab
         worker.wait_for_exit(),
         Ok(0),
         "worker reported an error, see its output log:\n{}",
-        std::fs::read_to_string(tmpoutpath)
-            .unwrap_or("<unable to read log>".to_owned())
+        std::fs::read_to_string(tmpoutpath).unwrap_or("<unable to read log>".to_owned())
     );
     cleanup_tmp_file(&tmpoutpath);
     cleanup_tmp_file(&tmpokpath);
@@ -126,7 +126,16 @@ fn access_file() {
                                 if !request_write && request_only_append {
                                     continue; // nonsensical case
                                 }
-                                test_case(&worker_binary, test_function, readable, writable, restrict_to_append_only, request_read, request_write, request_only_append);
+                                test_case(
+                                    &worker_binary,
+                                    test_function,
+                                    readable,
+                                    writable,
+                                    restrict_to_append_only,
+                                    request_read,
+                                    request_write,
+                                    request_only_append,
+                                );
                             }
                         }
                     }

@@ -1,12 +1,9 @@
 use crate::os::process::OSSandboxedProcess;
 use crate::process::CrossPlatformSandboxedProcess;
-use iris_ipc::{
-    CrossPlatformMessagePipe, IPCMessagePipe, IPCRequestV1, IPCResponseV1, IPCVersion, MessagePipe,
-    IPC_HANDLE_ENV_NAME,
-};
+use iris_ipc::{CrossPlatformMessagePipe, MessagePipe, IPC_HANDLE_ENV_NAME};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
-use std::sync::Arc;
 use std::ffi::{CStr, CString};
+use std::sync::Arc;
 
 pub struct Worker {
     process: Arc<OSSandboxedProcess>,
@@ -22,7 +19,7 @@ impl Worker {
         stdout: Option<Arc<Handle>>,
         stderr: Option<Arc<Handle>>,
     ) -> Result<Self, String> {
-        let (mut broker_pipe, worker_pipe) = MessagePipe::new()?;
+        let (broker_pipe, worker_pipe) = MessagePipe::new()?;
         let mut worker_pipe_handle = worker_pipe.into_handle();
         worker_pipe_handle.set_inheritable(true)?;
         let worker_pipe_handle = Arc::new(worker_pipe_handle);
@@ -67,7 +64,8 @@ impl Worker {
         // if the worker closed its end)
         drop(worker_pipe_handle);
         envp.push(&ipc_handle_var);
-        let process = OSSandboxedProcess::new(policy, exe, argv, &envp, broker_pipe, stdin, stdout, stderr)?;
+        let process =
+            OSSandboxedProcess::new(policy, exe, argv, &envp, broker_pipe, stdin, stdout, stderr)?;
         Ok(Self { process })
     }
 

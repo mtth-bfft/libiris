@@ -1,58 +1,67 @@
-use std::fs::File;
-use std::ops::{Not, BitAnd};
-use std::ffi::CString;
-use std::sync::Arc;
-use std::convert::TryInto;
-use iris_policy::{Handle, Policy, CrossPlatformHandle};
 use crate::os::process::OSSandboxedProcess;
 use crate::process::CrossPlatformSandboxedProcess;
+use iris_policy::{CrossPlatformHandle, Handle};
+use std::convert::TryInto;
+use std::ffi::CString;
+use std::ops::{BitAnd, Not};
+use std::sync::Arc;
 
 const MAX_PATH_LEN: usize = 4096;
 
 // Constants from linux/audit.h
 const AUDIT_ARCH_X86_64: u32 = 0xC000003E;
 
-pub(crate) fn handle_syscall(arch: u32, nr: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64, arg6: u64, process: &Arc<OSSandboxedProcess>, ip: u64) -> (i64, Option<Handle>) {
+pub(crate) fn handle_syscall(
+    arch: u32,
+    nr: u64,
+    arg1: u64,
+    arg2: u64,
+    arg3: u64,
+    arg4: u64,
+    arg5: u64,
+    arg6: u64,
+    process: &Arc<OSSandboxedProcess>,
+    ip: u64,
+) -> (i64, Option<Handle>) {
     // Always make decisions based on architecture AND syscall number
     // Always read all arguments once, and then only make decisions based on them
     if arch == AUDIT_ARCH_X86_64 && nr == libc::SYS_open as u64 {
-        let (arg1, arg2, arg3, arg4, arg5, arg6) = (
+        let (arg1, arg2, arg3) = (
             process.read_cstring_from_ptr(arg1, MAX_PATH_LEN),
             arg2 as libc::c_int,
             arg3 as libc::mode_t,
-            0, 0, 0
         );
         let (path, flags, mode) = match (arg1, arg2, arg3) {
             (Ok(path), flags, mode) => (path, flags, mode),
             _ => return (-libc::EINVAL as i64, None),
         };
         handle_open_file(path, flags, mode, &process, ip)
-    }
-    else if arch == AUDIT_ARCH_X86_64 && nr == libc::SYS_openat as u64 {
-        let (arg1, arg2, arg3, arg4, arg5, arg6) = (
+    } else if arch == AUDIT_ARCH_X86_64 && nr == libc::SYS_openat as u64 {
+        let (arg1, arg2, arg3, arg4) = (
             arg1 as libc::c_int,
             process.read_cstring_from_ptr(arg2, MAX_PATH_LEN),
             arg3 as libc::c_int,
             arg4 as libc::mode_t,
-            0, 0
         );
         let (path, flags, mode) = match (arg1, arg2, arg3, arg4) {
             (dirfd, Ok(path), flags, mode) if dirfd == libc::AT_FDCWD => (path, flags, mode),
             _ => return (-libc::EINVAL as i64, None),
         };
         handle_open_file(path, flags, mode, &process, ip)
-    }
-    else {
+    } else {
         println!(" [!] Unsupported syscall number {} (args: 0x{:X} 0x{:X} 0x{:X} 0x{:X} 0x{:X} 0x{:X}) (arch 0x{:X}) at {}",
             nr, arg1, arg2, arg3, arg4, arg5, arg6, arch, try_resolve_addr(ip, &process));
         (-libc::ENOSYS as i64, None)
     }
 }
 
-fn consume_flag<T: Copy + PartialEq + Not<Output=T> + BitAnd<Output=T>>(needle: T, bitfield: &mut T) -> bool {
+fn consume_flag<T: Copy + PartialEq + Not<Output = T> + BitAnd<Output = T>>(
+    needle: T,
+    bitfield: &mut T,
+) -> bool {
     // Does not check (a & b) != 0 because of multi-bit flags like O_RDWR
     let present = ((*bitfield) & needle) == needle;
-    *bitfield = ((*bitfield) & !needle);
+    *bitfield = (*bitfield) & !needle;
     present
 }
 
@@ -69,16 +78,23 @@ fn try_resolve_addr(addr: u64, process: &Arc<OSSandboxedProcess>) -> String {
     for mapping in mappings.lines() {
         if let Some((boundaries, rest)) = mapping.split_once(" ") {
             if let Some((start, end)) = boundaries.split_once("-") {
-                if let (Ok(start), Ok(end)) = (u64::from_str_radix(start, 16), u64::from_str_radix(end, 16)) {
+                if let (Ok(start), Ok(end)) =
+                    (u64::from_str_radix(start, 16), u64::from_str_radix(end, 16))
+                {
                     if start <= addr && addr <= end {
                         if let Some((fields, module)) = rest.split_once("  ") {
                             let module = module.trim();
                             let fields: Vec<&str> = fields.splitn(3, " ").collect();
                             if module.len() == 0 || fields.len() != 3 {
-                                return format!("0x{:X} (anonymous memory)", addr)
+                                return format!("0x{:X} (anonymous memory)", addr);
                             }
                             if let Ok(offset) = u64::from_str_radix(fields[1], 16) {
-                                return format!("0x{:X} ({}+0x{:X})", addr, module, offset + (addr - start));
+                                return format!(
+                                    "0x{:X} ({}+0x{:X})",
+                                    addr,
+                                    module,
+                                    offset + (addr - start)
+                                );
                             }
                         }
                     }
@@ -92,7 +108,7 @@ fn try_resolve_addr(addr: u64, process: &Arc<OSSandboxedProcess>) -> String {
 fn handle_open_file(
     path: CString,
     flags: libc::c_int,
-    mode: libc::mode_t,
+    _mode: libc::mode_t,
     process: &Arc<OSSandboxedProcess>,
     ip: u64,
 ) -> (i64, Option<Handle>) {
@@ -101,9 +117,7 @@ fn handle_open_file(
         Ok(s) => s,
         Err(_) => return (-(libc::ENOSYS as i64), None),
     };
-    if path_utf8.is_empty()
-        || path_utf8.chars().next() != Some('/')
-    {
+    if path_utf8.is_empty() || path_utf8.chars().next() != Some('/') {
         return (-(libc::EINVAL as i64), None);
     }
     // FIXME: ensure the path is already resolved (no /..)
@@ -117,11 +131,9 @@ fn handle_open_file(
     if consume_flag(libc::O_RDWR, &mut flags_left) {
         requests_read = true;
         requests_write = true;
-    }
-    else if consume_flag(libc::O_WRONLY, &mut flags_left) {
+    } else if consume_flag(libc::O_WRONLY, &mut flags_left) {
         requests_write = true;
-    }
-    else {
+    } else {
         requests_read = true; // O_RDONLY == 0 is a pseudo-flag
     }
     if consume_flag(libc::O_PATH, &mut flags_left) {
@@ -134,7 +146,8 @@ fn handle_open_file(
         requests_write = true;
         requests_append_only = true;
     }
-    if consume_flag(libc::O_TRUNC, &mut flags_left) { // note: checked after O_APPEND
+    if consume_flag(libc::O_TRUNC, &mut flags_left) {
+        // note: checked after O_APPEND
         requests_write = true;
         requests_append_only = false; // so that O_APPEND|O_TRUNC is NOT append-only
     }

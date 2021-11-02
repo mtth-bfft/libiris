@@ -1,24 +1,61 @@
-use common::{check_worker_handles, get_worker_bin_path};
+use common::{check_worker_handles, cleanup_tmp_file, get_worker_bin_path, open_tmp_file};
 use iris_broker::{Policy, Worker};
+use iris_policy::{downcast_to_handle, CrossPlatformHandle};
+use std::path::PathBuf;
 
 // Voluntarily set up resources (opened handles and file descriptors)
 // ready to be leaked into our children. This could be the result of
 // e.g. a poorly written parent program, or a poorly written plugin/AV
-// injected into it or into its parents.
+// injected into the worker or its parents.
 
-#[cfg(unix)]
-fn os_specific_setup(_worker: &Worker) {
-    // TODO: set up file descriptors to be leaked
+fn common_setup() -> (Worker, PathBuf) {
+    let (tmpleak, tmpleakpath) = open_tmp_file();
+    let mut tmpleak = downcast_to_handle(tmpleak);
+    tmpleak
+        .set_inheritable(true)
+        .expect("unable to set handle as inheritable");
+
+    let worker_binary = get_worker_bin_path();
+    let policy = Policy::new(); // don't allow any resource to be inherited by the worker process
+    let worker = Worker::new(
+        &policy,
+        &worker_binary,
+        &[&worker_binary],
+        &[],
+        None,
+        None,
+        None,
+    )
+    .expect("worker creation failed");
+
+    (worker, tmpleakpath)
 }
 
+fn common_teardown(worker: Worker, tmpleakpath: PathBuf) {
+    check_worker_handles(&worker);
+    cleanup_tmp_file(&tmpleakpath);
+}
+
+#[test]
+#[cfg(unix)]
+#[should_panic(expected = "FIXME")]
+fn inherited_resources_detects_leak() {
+    let (worker, tmpleakpath) = common_setup();
+    common_teardown(worker, tmpleakpath);
+}
+
+#[test]
 #[cfg(windows)]
-fn os_specific_setup(worker: &Worker) {
+#[should_panic(expected = "process")]
+fn inherited_resources_detects_leak() {
     use core::ptr::null_mut;
     use std::convert::TryInto;
     use winapi::um::errhandlingapi::GetLastError;
     use winapi::um::handleapi::{CloseHandle, DuplicateHandle};
     use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess};
     use winapi::um::winnt::{HANDLE, PROCESS_ALL_ACCESS, PROCESS_DUP_HANDLE};
+
+    let (worker, tmpleakpath) = common_setup();
 
     let h_worker =
         unsafe { OpenProcess(PROCESS_DUP_HANDLE, 0, worker.get_pid().try_into().unwrap()) };
@@ -46,24 +83,6 @@ fn os_specific_setup(worker: &Worker) {
         GetLastError()
     });
     unsafe { CloseHandle(h_worker) };
-}
 
-#[ignore] // not ready for now
-#[test]
-#[should_panic(expected = "process")]
-fn inherited_resources_detects_leak() {
-    let worker_binary = get_worker_bin_path();
-    let policy = Policy::new(); // don't allow any resource to be inherited by the worker process
-    let worker = Worker::new(
-        &policy,
-        &worker_binary,
-        &[&worker_binary],
-        &[],
-        None,
-        None,
-        None,
-    )
-    .expect("worker creation failed");
-    os_specific_setup(&worker);
-    check_worker_handles(&worker);
+    common_teardown(worker, tmpleakpath);
 }

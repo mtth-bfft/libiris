@@ -3,8 +3,8 @@ use iris_broker::{downcast_to_handle, Policy, Worker};
 use std::ffi::CString;
 use std::net::SocketAddr;
 use std::net::TcpListener;
-use std::thread;
 use std::sync::Arc;
+use std::thread;
 
 #[ignore] // not ready yet
 #[test]
@@ -24,7 +24,7 @@ fn network_connect_loopback() {
     let worker_binary = get_worker_bin_path();
     let (tmpout, tmpoutpath) = open_tmp_file();
     let tmpout = Arc::new(downcast_to_handle(tmpout));
-    let mut worker = Worker::new(
+    let worker = Worker::new(
         &policy,
         &worker_binary,
         &[

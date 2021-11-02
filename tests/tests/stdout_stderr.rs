@@ -11,10 +11,14 @@ fn stdout_stderr() {
     let (tmperr, tmperrpath) = open_tmp_file();
     tmpin.write_all(b"OK_STDIN").unwrap();
     tmpin.seek(SeekFrom::Start(0)).unwrap();
-    let (tmpin, tmpout, tmperr) = (downcast_to_handle(tmpin), downcast_to_handle(tmpout), downcast_to_handle(tmperr));
+    let (tmpin, tmpout, tmperr) = (
+        downcast_to_handle(tmpin),
+        downcast_to_handle(tmpout),
+        downcast_to_handle(tmperr),
+    );
     let (tmpin, tmpout, tmperr) = (Arc::new(tmpin), Arc::new(tmpout), Arc::new(tmperr));
     let worker_binary = get_worker_bin_path();
-    let mut worker = Worker::new(
+    let worker = Worker::new(
         &policy,
         &worker_binary,
         &[&worker_binary],

@@ -19,7 +19,7 @@ fn fcntl_fsetfd_blocked() {
     policy
         .allow_file_access(&tmpwritablepath.to_string_lossy(), true, true, true)
         .unwrap();
-    let mut worker = Worker::new(
+    let worker = Worker::new(
         &policy,
         &worker_binary,
         &[

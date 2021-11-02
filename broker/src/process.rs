@@ -1,5 +1,5 @@
+use iris_ipc::MessagePipe;
 use iris_policy::{Handle, Policy};
-use iris_ipc::{IPCMessagePipe, MessagePipe, IPCResponseV1};
 use std::ffi::CStr;
 use std::sync::Arc;
 
@@ -24,18 +24,4 @@ pub trait CrossPlatformSandboxedProcess {
     // Blocks until the process exits, and returns its exit code
     // Returns an error if the process has already exited
     fn wait_for_exit(&self) -> Result<u64, String>;
-
-    /*
-        // Returns true if the worker process has exited
-        fn has_exited(&self) -> bool;
-
-        // Returns the OS-specific exit code of the worker process if it has exited
-        fn get_exit_code(&self) -> Option<u64>;
-
-        // Blocks until the worker process exits
-        fn wait_for_exit(&self) -> ();
-
-        // Terminate
-        fn terminate(&self) -> ();
-    */
 }

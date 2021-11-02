@@ -1,20 +1,20 @@
+use crate::api::get_ipc_pipe;
 use core::ffi::c_void;
 use iris_ipc::{IPCRequestV1, IPCResponseV1, SeccompTrapErrorV1};
 use iris_policy::{CrossPlatformHandle, Handle};
 use libc::{c_int, c_uint};
 use std::convert::TryInto;
 use std::io::Error;
-use crate::api::get_ipc_pipe;
 
 const SYS_SECCOMP: i32 = 1;
 const SECCOMP_SET_MODE_FILTER: u32 = 1;
 
 #[repr(C)]
 struct siginfo_seccomp_t {
-    si_signo: c_int,    // Signal number
-    si_errno: c_int,    // An errno value
-    si_code: c_int,     // Signal code
-    si_unused: c_int,   // Unused
+    si_signo: c_int,           // Signal number
+    si_errno: c_int,           // An errno value
+    si_code: c_int,            // Signal code
+    si_unused: c_int,          // Unused
     si_call_addr: *mut c_void, // Address of system call instruction
     si_syscall: c_int,         // Number of attempted system call
     si_arch: c_uint,           // Architecture of attempted system call
@@ -22,9 +22,7 @@ struct siginfo_seccomp_t {
 
 pub(crate) fn apply_late_mitigations(mitigations: &IPCResponseV1) -> IPCRequestV1 {
     let seccomp_bpf = match mitigations {
-        IPCResponseV1::LateMitigations { seccomp_trap_bpf } => {
-            seccomp_trap_bpf
-        },
+        IPCResponseV1::LateMitigations { seccomp_trap_bpf } => seccomp_trap_bpf,
         _ => panic!("Not reachable"),
     };
     let seccomp_trap_bpf = if let Some(seccomp_bpf) = seccomp_bpf {
@@ -32,9 +30,7 @@ pub(crate) fn apply_late_mitigations(mitigations: &IPCResponseV1) -> IPCRequestV
     } else {
         None
     };
-    IPCRequestV1::ReportLateMitigations {
-        seccomp_trap_bpf,
-    }
+    IPCRequestV1::ReportLateMitigations { seccomp_trap_bpf }
 }
 
 fn apply_bpf_filter_mitigation(seccomp_bpf: &[u8]) -> Option<SeccompTrapErrorV1> {
@@ -72,13 +68,26 @@ fn apply_bpf_filter_mitigation(seccomp_bpf: &[u8]) -> Option<SeccompTrapErrorV1>
         )
     };
     if res != 0 {
-        return Some(SeccompTrapErrorV1::SigactionFailure(Error::last_os_error().raw_os_error().unwrap_or(0)));
+        return Some(SeccompTrapErrorV1::SigactionFailure(
+            Error::last_os_error().raw_os_error().unwrap_or(0),
+        ));
     }
 
     // Load the filter, by hand (libseccomp does not have a filter import function)
-    let res = unsafe { libc::syscall(libc::SYS_seccomp, SECCOMP_SET_MODE_FILTER, libc::SECCOMP_FILTER_FLAG_TSYNC, &seccomp_filter as *const _, 0, 0) };
+    let res = unsafe {
+        libc::syscall(
+            libc::SYS_seccomp,
+            SECCOMP_SET_MODE_FILTER,
+            libc::SECCOMP_FILTER_FLAG_TSYNC,
+            &seccomp_filter as *const _,
+            0,
+            0,
+        )
+    };
     if res != 0 {
-        return Some(SeccompTrapErrorV1::SeccompLoadFailure(Error::last_os_error().raw_os_error().unwrap_or(0)));
+        return Some(SeccompTrapErrorV1::SeccompLoadFailure(
+            Error::last_os_error().raw_os_error().unwrap_or(0),
+        ));
     }
     println!(" [+] Seccomp trap BPF filter applied");
 
@@ -117,7 +126,10 @@ pub(crate) extern "C" fn sigsys_handler(
     let ucontext = ucontext as *mut libc::ucontext_t;
     let rax = read_u64_from_ctx(ucontext, libc::REG_RAX);
     if nr != rax {
-        panic!("Unexpected registry value during syscall {}: RAX={}", nr, rax);
+        panic!(
+            "Unexpected registry value during syscall {}: RAX={}",
+            nr, rax
+        );
     }
     let arg1 = read_u64_from_ctx(ucontext, libc::REG_RDI);
     let arg2 = read_u64_from_ctx(ucontext, libc::REG_RSI);
@@ -131,14 +143,24 @@ pub(crate) extern "C" fn sigsys_handler(
     );
     unsafe { libc::write(2, msg.as_ptr() as *const _, msg.len()) };
 
-    let req = IPCRequestV1::Syscall { arch, nr, arg1, arg2, arg3, arg4, arg5, arg6, ip };
+    let req = IPCRequestV1::Syscall {
+        arch,
+        nr,
+        arg1,
+        arg2,
+        arg3,
+        arg4,
+        arg5,
+        arg6,
+        ip,
+    };
     let response_code = match send_recv(&req, None) {
         (IPCResponseV1::SyscallResult(code), None) => code,
         (IPCResponseV1::SyscallResult(0), Some(handle)) => {
             // Handle becomes the result code for successful syscalls
             let res = unsafe { handle.into_raw() };
             res.try_into().unwrap()
-        },
+        }
         other => panic!("Unexpected broker answer to {:?} : {:?}", req, other),
     };
     println!(" [.] Syscall result: {}", response_code);

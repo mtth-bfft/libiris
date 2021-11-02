@@ -8,7 +8,7 @@ fn spawn() {
     let worker_binary = get_worker_bin_path();
     let (tmpout, tmpoutpath) = open_tmp_file();
     let tmpout = Arc::new(downcast_to_handle(tmpout));
-    let mut worker = Worker::new(
+    let worker = Worker::new(
         &policy,
         &worker_binary,
         &[&worker_binary],

@@ -113,7 +113,9 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
             }
             return Ok((Self::from_handle(handle1), Self::from_handle(handle2)));
         }
-        return Err(format!("Unable to create a named pipe: error {}", unsafe { GetLastError() }));
+        return Err(format!("Unable to create a named pipe: error {}", unsafe {
+            GetLastError()
+        }));
     }
 
     fn recv(&mut self) -> Result<Vec<u8>, String> {

@@ -1,5 +1,5 @@
+use common::get_worker_bin_path;
 use iris_broker::{Policy, Worker};
-use common::{cleanup_tmp_file, get_worker_bin_path, open_tmp_file};
 
 #[test]
 fn failed_process_initialization_reports_to_parent() {

@@ -1,10 +1,10 @@
 use crate::late_mitigations::apply_late_mitigations;
+use core::ptr::null;
 use iris_ipc::{
-    CrossPlatformMessagePipe, IPCMessagePipe, IPCRequestV1, IPCResponseV1, MessagePipe,
+    CrossPlatformMessagePipe, IPCMessagePipe, IPCResponseV1, IPCVersion, MessagePipe,
     IPC_HANDLE_ENV_NAME,
 };
 use iris_policy::{CrossPlatformHandle, Handle};
-use core::ptr::null;
 use std::sync::{Mutex, MutexGuard};
 
 // TODO: use a thread_local!{} pipe, and a global mutex-protected pipe to request new thread-specific ones
@@ -26,11 +26,10 @@ pub fn initialize_sandbox_as_soon_as_possible() {
     // of this environment variable, and we erase it as soon as it is used.
     let handle = unsafe { Handle::new(handle).expect("invalid IPC handle environment variable") };
     let pipe = MessagePipe::from_handle(handle);
-    let (mut ipc, version) =
+    let (ipc, version) =
         IPCMessagePipe::new_client(pipe).expect("unable to open IPC channel to broker");
-    match version {
-        IPCVersionV1 => (),
-        other => panic!("unsupported IPC server version {:?}", other),
+    if version != IPCVersion::V1 {
+        panic!("unsupported IPC server version {:?}", version);
     }
     // Initialization of globals. This is safe as long as we are only called once
     unsafe {
@@ -39,15 +38,14 @@ pub fn initialize_sandbox_as_soon_as_possible() {
     }
 
     let mut ipc = get_ipc_pipe();
-    let msg = ipc.recv()
+    let msg = ipc
+        .recv()
         .expect("unable to read worker late mitigations from broker");
     let resp = if let Some(IPCResponseV1::LateMitigations { .. }) = &msg {
         apply_late_mitigations(&msg.unwrap())
     } else {
-        panic!(
-            "unexpected initial message received from broker: {:?}",
-            msg
-        );
+        panic!("unexpected initial message received from broker: {:?}", msg);
     };
-    ipc.send(&resp, None).expect("unable to report late mitigation status to broker");
+    ipc.send(&resp, None)
+        .expect("unable to report late mitigation status to broker");
 }

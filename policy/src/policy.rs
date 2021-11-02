@@ -24,7 +24,8 @@ impl Policy {
             file_lock: HashMap::new(),
         };
         for (path, read, write, append_only) in ALWAYS_ALLOWED_PATHS {
-            res.allow_file_access(path, read, write, append_only).expect("invalid default policy");
+            res.allow_file_access(path, read, write, append_only)
+                .expect("invalid default policy");
         }
         res
     }
