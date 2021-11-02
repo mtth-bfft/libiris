@@ -23,6 +23,10 @@ name = "spawn_worker"
 path = "src/workers/spawn.rs"
 
 [[bin]]
+name = "failed_worker_start_reports_to_parent_worker"
+path = "src/workers/failed_worker_start_reports_to_parent.rs"
+
+[[bin]]
 name = "environment_vars_sanitized_worker"
 path = "src/workers/environment_vars_sanitized.rs"
 
@@ -53,4 +57,3 @@ path = "src/workers/fcntl_fsetfl_blocked.rs"
 [[bin]]
 name = "network_connect_worker"
 path = "src/workers/network_connect.rs"
-

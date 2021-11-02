@@ -1,19 +1,6 @@
-#[cfg(windows)]
-fn main() {
-    use winapi::um::debugapi::{DebugBreak, IsDebuggerPresent};
-    // Just wait for our parent to finish checking which resources
-    // we currently hold then kill us.
-    println!("Waiting for parent to debug us...");
-    while unsafe { IsDebuggerPresent() } == 0 {
-        ()
-    }
-    println!("Parent is watching us, signaling we're ready");
-    unsafe {
-        DebugBreak();
-    }
-}
+use iris_worker::initialize_sandbox_as_soon_as_possible;
 
-#[cfg(unix)]
 fn main() {
-    unimplemented!();
+    initialize_sandbox_as_soon_as_possible();
+    std::thread::sleep(std::time::Duration::new(2, 0));
 }

@@ -1,7 +1,9 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+use iris_worker::initialize_sandbox_as_soon_as_possible;
 use std::io::{self, Read};
 
 fn main() {
+    initialize_sandbox_as_soon_as_possible();
     println!("OK_STDOUT");
     eprintln!("OK_STDERR");
 
