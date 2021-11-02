@@ -18,6 +18,7 @@ pub fn check_worker_handles(worker: &Worker) {
         if path == "/dev/null" {
             continue;
         }
+        println!(" [.] Worker holds file descriptor to {}", path);
         if path.starts_with("socket:[") && !sandbox_ipc_socket_found {
             sandbox_ipc_socket_found = true; // ignore exactly one Unix socket, the one we use to communicate with our broker
             continue;

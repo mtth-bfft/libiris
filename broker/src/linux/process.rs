@@ -283,6 +283,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                     // Process is doomed to die. It applied a seccomp filter by now, and it
                     // turns out we will not be able to read any syscall arguments.
                     // We need to kill it right now to avoid it remaining blocked forever.
+                    // FIXME: kill worker
                     // FIXME: retry from the beginning, without using /proc/x/mem?
                     return Err(format!(
                         "Unable to open process memory after execve(): {}",
@@ -992,7 +993,13 @@ extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
     }
 
     // Cleanup leftover file descriptors from our parent or from code injected into our process
-    /*for entry in std::fs::read_dir("/proc/self/fd/").expect("unable to read /proc/self/fd/") {
+    let tolerate_sock_execve_errno = args
+        .sock_execve_errno
+        .as_handle()
+        .as_raw()
+        .try_into()
+        .unwrap();
+    for entry in std::fs::read_dir("/proc/self/fd/").expect("unable to read /proc/self/fd/") {
         let entry = entry.expect("unable to read entry from /proc/self/fd/");
         if !entry
             .file_type()
@@ -1017,15 +1024,20 @@ extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
             // Don't close our stdin/stdout/stderr handles
             // Don't close the CLOEXEC pipe used to check if execve() worked, otherwise it loses its purpose
             if fd > libc::STDERR_FILENO
-                    && fd != args.sock_execve_errno.as_handle().as_raw().try_into().unwrap()
-                    && !args.allowed_file_descriptors.contains(&fd) {
-                println!(" [.] Cleaning up file descriptor {} ({})", fd, path.to_string_lossy());
+                && fd != tolerate_sock_execve_errno
+                && !args.allowed_file_descriptors.contains(&fd)
+            {
+                println!(
+                    " [.] Cleaning up file descriptor {} ({})",
+                    fd,
+                    path.to_string_lossy()
+                );
                 unsafe {
                     libc::close(fd);
                 }
             }
         }
-    }*/
+    }
 
     let argv: Vec<*const i8> = args
         .argv

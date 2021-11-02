@@ -1,7 +1,6 @@
-use common::{check_worker_handles, cleanup_tmp_file, get_worker_bin_path, open_tmp_file};
+use common::{check_worker_handles, get_worker_bin_path};
 use iris_broker::{downcast_to_handle, CrossPlatformHandle, Policy, Worker};
 use std::fs::File;
-use std::sync::Arc;
 
 // Voluntarily set up resources (opened handles and file descriptors)
 // ready to be leaked into our children. This could be the result of
@@ -29,7 +28,6 @@ fn os_specific_setup() {
     handle.set_inheritable(true).unwrap();
 }
 
-#[ignore] // not ready for now
 #[test]
 fn inherited_resources_no_leak() {
     os_specific_setup();
@@ -39,24 +37,16 @@ fn inherited_resources_no_leak() {
 
     let worker_binary = get_worker_bin_path();
     // TODO: remove stdout redirection to avoid it showing up in the test results? Or find a better solution
-    let (tmpout, tmpoutpath) = open_tmp_file();
-    let tmpout = Arc::new(downcast_to_handle(tmpout));
     let worker = Worker::new(
         &policy,
         &worker_binary,
         &[&worker_binary],
         &[],
         None,
-        Some(Arc::clone(&tmpout)),
-        Some(Arc::clone(&tmpout)),
+        None,
+        None,
     )
     .expect("worker creation failed");
     check_worker_handles(&worker);
-    assert_eq!(
-        worker.wait_for_exit(),
-        Ok(0),
-        "worker reported an error, see its output log:\n{}",
-        std::fs::read_to_string(tmpoutpath).unwrap_or("<unable to read log>".to_owned())
-    );
-    cleanup_tmp_file(&tmpoutpath);
+    assert_eq!(worker.wait_for_exit(), Ok(0), "worker reported an error");
 }
