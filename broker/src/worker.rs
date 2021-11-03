@@ -24,12 +24,7 @@ impl Worker {
         worker_pipe_handle.set_inheritable(true)?;
         let worker_pipe_handle = Arc::new(worker_pipe_handle);
         let mut policy = policy.clone();
-        policy.allow_inherit_handle(worker_pipe_handle.clone())?;
-        for handle in [&stdin, &stdout, &stderr] {
-            if let Some(handle) = handle {
-                policy.allow_inherit_handle(handle.clone())?;
-            }
-        }
+        policy.allow_inherit_handle(Arc::clone(&worker_pipe_handle))?;
         for handle in policy.get_inherited_handles() {
             // On Linux, exec() will close all CLOEXEC handles.
             // On Windows, CreateProcess() with bInheritHandles = TRUE doesn't automatically set the given

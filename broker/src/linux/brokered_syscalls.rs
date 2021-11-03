@@ -152,14 +152,16 @@ fn handle_open_file(
         requests_append_only = false; // so that O_APPEND|O_TRUNC is NOT append-only
     }
     consume_flag(libc::O_EXCL, &mut flags_left);
+    consume_flag(libc::O_NONBLOCK, &mut flags_left);
+    consume_flag(libc::O_DIRECTORY, &mut flags_left);
     consume_flag(libc::O_CLOEXEC, &mut flags_left);
     // Also ensure we understand each flag that was asked.
     if flags_left != 0 {
         println!(
             " [!] Worker denied access to {} (unsupported flag 0x{:X} in 0x{:X}) at {}",
             path_utf8,
-            flags,
             flags_left,
+            flags,
             try_resolve_addr(ip, process),
         );
         return (-(libc::ENOSYS as i64), None);

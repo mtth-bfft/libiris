@@ -37,7 +37,7 @@ const SECCOMP_IOCTL_NOTIF_ADDFD: u64 = 0x40182103;
 
 const DEFAULT_CLONE_STACK_SIZE: usize = 1 * 1024 * 1024;
 const MAGIC_VALUE_TO_READ_FROM_BROKER: [u8; 29] = *b"I AM A LIBIRIS WORKER PROCESS";
-const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 62] = [
+const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 68] = [
     "read",
     "write",
     "readv",
@@ -51,12 +51,16 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 62] = [
     "select",
     "_newselect",
     "fstat",
+    "getdents64",
     "tee",
     "lseek",
     "_llseek",
     "accept",
     "accept4",
     //"ftruncate", disallowed to prevent truncation of O_APPEND files
+    "dup",
+    "dup2",
+    "dup3",
     "close",
     "sched_yield",
     "getpid",
@@ -76,6 +80,8 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 62] = [
     "mprotect",
     "munmap",
     "fchdir",
+    "getrlimit",
+    "setrlimit",
     "exit_group",
     "restart_syscall",
     "rt_sigreturn",
@@ -115,7 +121,7 @@ pub(crate) struct OSSandboxedProcess {
     #[allow(dead_code)]
     initial_thread_stack: Vec<u8>,
     // File descriptor to /proc/x/mem to read syscall arguments from memory
-    proc_mem: Option<File>,
+    proc_mem: RwLock<Option<File>>,
     // Thread which will handle seccomp user notifications
     seccomp_unotify_thread: RwLock<Option<JoinHandle<()>>>,
     // Thread which will continuously read IPC requests
@@ -228,19 +234,19 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         }
 
         // Check whether we can read from the worker's memory or not
-        let can_read_worker_mem = match File::open(format!("/proc/{}/mem", worker_pid)) {
+        let proc_mem = match File::open(format!("/proc/{}/mem", worker_pid)) {
             Ok(f) => {
                 let mut buffer = vec![0u8; std::mem::size_of_val(&MAGIC_VALUE_TO_READ_FROM_BROKER)];
                 let ptr = (&MAGIC_VALUE_TO_READ_FROM_BROKER as *const _) as u64;
                 if let Err(e) = f.read_exact_at(&mut buffer, ptr) {
                     println!(" [!] Unable to read from worker process memory: {}", e);
-                    false
+                    None
                 } else if &buffer[..] != MAGIC_VALUE_TO_READ_FROM_BROKER {
                     println!(" [!] Unexpected value read from worker process memory {:?} , expected {:?}", buffer, &MAGIC_VALUE_TO_READ_FROM_BROKER);
-                    false
+                    None
                 } else {
                     println!(" [.] Will use seccomp user notifications for sandboxing");
-                    true
+                    Some(f)
                 }
             }
             Err(e) => {
@@ -248,9 +254,10 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                     " [!] Cannot use seccomp mitigations: unable to open worker process memory, {}",
                     e
                 );
-                false
+                None
             }
         };
+        let can_read_worker_mem = proc_mem.is_some();
         // Send that info to the worker, so it knows whether it can apply a seccomp filter
         // Note: it's okay not to use a well-defined and versionned IPC here, since this is
         // sent and received by the same executable.
@@ -261,47 +268,20 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             ));
         }
 
-        // Wait for the worker to execve(), and re-open the file descriptor to
-        // /proc/worker_pid/mem (the file descriptor opened just above was just to check
-        // if /proc/ is mounted and the ptrace() check on /proc/worker_pid/mem allows us
-        // to read its memory. The file descriptor obtained will become invalid as soon as
-        // the worker runs execve()).
-        if let Ok(v) = sock_exec_parent.recv() {
-            if v.len() > 0 {
-                return Err(format!(
-                    "execve() failed with code {}",
-                    u32::from_be_bytes(v.try_into().unwrap_or([0u8; 4]))
-                ));
-            }
-        }
-        // Acquire a definitive file descriptor to /proc/worker_pid/mem (if it worked the
-        // first time)
-        let proc_mem = if can_read_worker_mem {
-            match File::open(format!("/proc/{}/mem", worker_pid)) {
-                Ok(f) => Some(f),
-                Err(e) => {
-                    // Process is doomed to die. It applied a seccomp filter by now, and it
-                    // turns out we will not be able to read any syscall arguments.
-                    // We need to kill it right now to avoid it remaining blocked forever.
-                    // FIXME: kill worker
-                    // FIXME: retry from the beginning, without using /proc/x/mem?
-                    return Err(format!(
-                        "Unable to open process memory after execve(): {}",
-                        e
-                    ));
-                }
-            }
-        } else {
-            None
-        };
+        // As soon as we sent this, we *cannot* read/timeout on anything coming from the
+        // worker. It might already have loaded its filter, and become blocked on an
+        // unauthorized syscall performed by a third-party library (or by ourselves, e.g.
+        // readdir(/proc/self/fd) to cleanup file descriptors). Start serving seccomp-unotify,
+        // letting all syscalls pass thru until execve() runs.
 
         // Construct the resulting new worker object
-        // (as an Arc<> because we might need to keep a reference in the IPC and seccomp-unotify thread)
+        // (as an Arc<> because we need to keep a reference in both the IPC and
+        // seccomp-unotify thread, with different lifetimes)
         let process = Arc::new(Self {
             pid: worker_pid.try_into().unwrap(),
-            policy,
             initial_thread_stack: stack,
-            proc_mem,
+            policy,
+            proc_mem: RwLock::new(proc_mem),
             ipc_thread: RwLock::new(None),
             seccomp_unotify_thread: RwLock::new(None),
         });
@@ -333,20 +313,16 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                             );
                         }
                         loop {
-                            // seccomp_notify_receive() requires the notification struct to be zeroed
-                            unsafe {
+                            let res = unsafe {
                                 core::ptr::write_bytes(
                                     req as *mut u8,
                                     0u8,
                                     std::mem::size_of::<seccomp_notif>(),
                                 );
-                            }
-                            let res = unsafe {
                                 seccomp_notify_receive(notify_fd.as_raw().try_into().unwrap(), req)
                             };
                             if res != 0 {
-                                let errno =
-                                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                                let errno = Error::last_os_error().raw_os_error().unwrap_or(0);
                                 panic!(
                                     "seccomp_notify_receive() failed with error {} (errno {})",
                                     res, errno
@@ -395,41 +371,31 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                                         )
                                     };
                                     if res < 0 {
-                                        let errno = std::io::Error::last_os_error()
-                                            .raw_os_error()
-                                            .unwrap_or(0);
+                                        // FIXME: The worker can trigger this error at will, e.g. by asking for a file
+                                        // after lowering its file descriptor rlimit. We need to handle it gracefully.
+                                        let errno =
+                                            Error::last_os_error().raw_os_error().unwrap_or(0);
                                         panic!("Spurious syscall response failure: SECCOMP_IOCTL_NOTIF_ADDFD failed (errno {})", errno);
                                     }
                                     res.into() // file descriptor number in the remote process
                                 }
                             };
-                            unsafe {
+                            let res = unsafe {
                                 core::ptr::write_bytes(
                                     resp as *mut u8,
                                     0u8,
                                     std::mem::size_of::<seccomp_notif_resp>(),
                                 );
-                            }
-                            unsafe {
                                 (*resp).id = cookie;
-                            }
-                            if code >= 0 {
-                                // success value
-                                unsafe {
+                                if code >= 0 {
                                     (*resp).val = code;
-                                }
-                            } else {
-                                // failure code
-                                unsafe {
+                                } else {
                                     (*resp).error = code as i32;
                                 }
-                            }
-                            let res = unsafe {
                                 seccomp_notify_respond(notify_fd.as_raw().try_into().unwrap(), resp)
                             };
                             if res != 0 {
-                                let errno =
-                                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                                let errno = Error::last_os_error().raw_os_error().unwrap_or(0);
                                 let exists = unsafe {
                                     seccomp_notify_id_valid(
                                         notify_fd.as_raw().try_into().unwrap(),
@@ -459,16 +425,54 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             }
         };
 
+        // Now that we have unblocked the worker from its potentially unauthorized
+        // syscalls, wait for it to execve(). We get this information by watching
+        // our end of a O_CLOEXEC socket shared with the worker getting an EOF.
+        if let Ok(v) = sock_exec_parent.recv() {
+            if v.len() > 0 {
+                return Err(format!(
+                    "execve() failed with code {}",
+                    u32::from_be_bytes(v.try_into().unwrap_or([0u8; 4]))
+                ));
+            }
+        }
+        // Now that we know execve() ran, re-open a final file descriptor to
+        // /proc/worker_pid/mem if it worked the first time
+        // (the file descriptor opened just above was just to check if /proc/
+        // is mounted and the ptrace() access check allows us to read its memory.
+        // The file descriptor obtained has become invalid as soon as the
+        // worker ran execve()).
+        *(process.proc_mem.write().unwrap()) = if can_read_worker_mem {
+            match File::open(format!("/proc/{}/mem", worker_pid)) {
+                Ok(f) => Some(f),
+                Err(e) => {
+                    // Processs might have died at early launch. Otherwise,
+                    // process is doomed to die. It applied a seccomp filter by now, and it
+                    // turns out we will not be able to read any syscall arguments.
+                    // We need to kill it right now to avoid it remaining blocked forever.
+                    // FIXME: kill worker
+                    // FIXME: retry from the beginning, without using /proc/x/mem?
+                    return Err(format!(
+                        "Unable to open process memory after execve(): {}",
+                        e
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+
         // If the worker was supposed to try seccomp user notification and failed,
         // fallback on seccomp-trap: compile a filter and schedule it to be loaded
         // as a late mitigation
         let seccomp_trap_bpf = match (
-            &process.proc_mem,
+            process.proc_mem.read(),
             process.seccomp_unotify_thread.read(),
             generate_seccomp_filter(SCMP_ACT_TRAP),
         ) {
-            (None, _, _) => None,
-            (_, Ok(guard), _) if guard.is_some() => {
+            (Ok(proc_mem), _, _) if proc_mem.is_none() => None,
+            (Err(_), _, _) => None,
+            (_, Ok(unotify_thread), _) if unotify_thread.is_some() => {
                 None // no need, seccomp user notification filter already installed
             }
             (_, _, Err(e)) => {
@@ -478,7 +482,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 );
                 None
             }
-            (Some(_), _, Ok(filter)) => {
+            (Ok(_), _, Ok(filter)) => {
                 // We need to give the generated filter to the worker, post-execve().
                 // Note: Saving to an ephemeral file is convoluted, but it's
                 // the only BPF export function from libseccomp as of today.
@@ -653,10 +657,11 @@ impl OSSandboxedProcess {
         ptr: u64,
         max_len: usize,
     ) -> Result<CString, String> {
-        let proc_mem = match &self.proc_mem {
-            Some(f) => f,
-            None => return Err("Cannot read from worker memory".to_owned()),
+        let proc_mem = match self.proc_mem.read() {
+            Ok(guard) if guard.is_some() => guard,
+            _ => return Err("Cannot read from worker memory".to_owned()),
         };
+        let proc_mem = proc_mem.as_ref().unwrap();
         // Read at most max_len bytes
         let mut bytes = vec![0u8; max_len];
         match proc_mem.read_at(&mut bytes, ptr) {
@@ -698,7 +703,7 @@ fn replace_fd_with_or_dev_null(fd: libc::c_int, replacement: Option<libc::c_int>
     if let Some(replacement) = replacement {
         let res = unsafe { libc::dup(replacement) };
         if res != fd {
-            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            let errno = Error::last_os_error().raw_os_error().unwrap_or(0);
             panic!("Failed to setup file descriptor for std[in,out,err] : dup() returned {} (errno {})", res, errno);
         }
     } else {
@@ -898,6 +903,50 @@ fn generate_seccomp_filter(default_action: u32) -> Result<SeccompFilter, String>
         panic!("seccomp_rule_add(SCMP_ACT_ALLOW, sched_getaffinity, SCMP_A0(SCMP_CMP_EQ, 0)) failed with code {}", -res);
     }
 
+    // Add special case handling for prlimit64() on ourselves only
+    let syscall_nr = get_syscall_number("prlimit64").unwrap();
+    println!(
+        " [.] Allowing syscall prlimit64 / {} on ourselves only",
+        syscall_nr
+    );
+    let mypid = std::process::id();
+    let a0_pid_comparator = scmp_arg_cmp {
+        arg: 0, // first syscall argument
+        op: scmp_compare::SCMP_CMP_EQ,
+        datum_a: mypid.try_into().unwrap(),
+        datum_b: 0, // unused with SCMP_CMP_EQ
+    };
+    let res = unsafe {
+        seccomp_rule_add(
+            filter.context,
+            SCMP_ACT_ALLOW,
+            syscall_nr,
+            1,
+            a0_pid_comparator,
+        )
+    };
+    if res != 0 {
+        println!(" [!] seccomp_rule_add(SCMP_ACT_ALLOW, prlimit64, SCMP_A0(SCMP_CMP_EQ, getpid())) failed with code {}", -res);
+    }
+    let a0_zero_comparator = scmp_arg_cmp {
+        arg: 0, // first syscall argument
+        op: scmp_compare::SCMP_CMP_EQ,
+        datum_a: 0, // 0 == ourselves, our PID
+        datum_b: 0, // unused with SCMP_CMP_EQ
+    };
+    let res = unsafe {
+        seccomp_rule_add(
+            filter.context,
+            SCMP_ACT_ALLOW,
+            syscall_nr,
+            1,
+            a0_zero_comparator,
+        )
+    };
+    if res != 0 {
+        panic!("seccomp_rule_add(SCMP_ACT_ALLOW, prlimit64, SCMP_A0(SCMP_CMP_EQ, 0)) failed with code {}", -res);
+    }
+
     // Add special case handling for execve(), only if we're using user notifications.
     // Since we apply the filter before execve(), we need to allow it to run, and then forbid it
     // from within the worker process (post-execve) with a second filter
@@ -993,47 +1042,77 @@ extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
     }
 
     // Cleanup leftover file descriptors from our parent or from code injected into our process
-    let tolerate_sock_execve_errno = args
+    let dev_null_fd = File::open("/dev/null").expect("unable to open /dev/null");
+    let sock_execve_fd = args
         .sock_execve_errno
         .as_handle()
         .as_raw()
         .try_into()
         .unwrap();
-    for entry in std::fs::read_dir("/proc/self/fd/").expect("unable to read /proc/self/fd/") {
-        let entry = entry.expect("unable to read entry from /proc/self/fd/");
-        if !entry
-            .file_type()
-            .expect("unable to read file type from /proc/self/fd")
-            .is_symlink()
-        {
-            continue;
-        }
-        let mut path = entry.path();
+    // Get the number of currently opened file descriptors, by setting a soft limit on
+    // their number and trying to open one more. If it fails, restart with a higher limit, until it succeeds.
+    let mut original_limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    let res = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut original_limit as *mut _) };
+    if res != 0 {
+        let errno = Error::last_os_error().raw_os_error().unwrap_or(0);
+        println!(
+            " [!] Unable to cleanup inherited file descriptors: getrlimit(RLIMIT_NOFILE) errno {}",
+            errno
+        );
+    } else {
+        let mut fd_count = 0;
         loop {
-            match std::fs::read_link(&path) {
-                Ok(target) => path = target,
-                Err(_) => break,
+            let mut tmp_limit = original_limit;
+            tmp_limit.rlim_cur = fd_count + 1;
+            let res = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &tmp_limit as *const _) };
+            if res != 0 {
+                let errno = Error::last_os_error().raw_os_error().unwrap_or(0);
+                println!(" [!] Unable to cleanup inherited file descriptors: setrlimit(RLIMIT_NOFILE) errno {}", errno);
+                break;
             }
-        }
-        // Exclude the file descriptor from the read_dir itself (if we close it, we might
-        // break the /proc/self/fd/ enumeration)
-        if path.to_string_lossy() == format!("/proc/{}/fd", std::process::id()) {
-            continue;
-        }
-        if let Ok(fd) = entry.file_name().to_string_lossy().parse::<i32>() {
-            // Don't close our stdin/stdout/stderr handles
-            // Don't close the CLOEXEC pipe used to check if execve() worked, otherwise it loses its purpose
-            if fd > libc::STDERR_FILENO
-                && fd != tolerate_sock_execve_errno
-                && !args.allowed_file_descriptors.contains(&fd)
-            {
-                println!(
-                    " [.] Cleaning up file descriptor {} ({})",
-                    fd,
-                    path.to_string_lossy()
-                );
+            let res = unsafe { libc::dup(dev_null_fd.as_raw_fd()) };
+            if res >= 0 {
                 unsafe {
-                    libc::close(fd);
+                    libc::close(res);
+                }
+                break;
+            }
+            fd_count += 1;
+        }
+        let res = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &original_limit as *const _) };
+        if res != 0 {
+            let errno = Error::last_os_error().raw_os_error().unwrap_or(0);
+            println!(" [!] Unable to cleanup inherited file descriptors: setrlimit(RLIMIT_NOFILE) errno {}", errno);
+        }
+        println!(
+            " [.] Cleaning up file descriptors: {} to find, allowed: {:?}",
+            fd_count, args.allowed_file_descriptors
+        );
+        let mut fd_found = 3; // don't clean up stdin/stdout/stderr
+        for fd in 3i32.. {
+            if fd_found == fd_count {
+                break;
+            }
+            if fd == sock_execve_fd || args.allowed_file_descriptors.contains(&fd) {
+                fd_found += 1;
+                continue;
+            }
+            let res = unsafe { libc::close(fd) };
+            if res == 0 {
+                fd_found += 1;
+                println!(" [+] Cleaned up file descriptor {}", fd);
+            } else {
+                let errno = Error::last_os_error().raw_os_error().unwrap_or(0);
+                if errno != libc::EBADF {
+                    // no such file descriptor
+                    println!(
+                        " [!] Unable to cleanup inherited file descriptors: close({}) errno {}",
+                        fd, errno
+                    );
+                    break;
                 }
             }
         }
