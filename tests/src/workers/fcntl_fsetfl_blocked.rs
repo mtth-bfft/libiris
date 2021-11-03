@@ -7,6 +7,7 @@ fn main() {
     use libc::c_int;
     use std::convert::TryInto;
     use std::ffi::CString;
+    use std::io::Error;
 
     initialize_sandbox_as_soon_as_possible();
     let args: Vec<String> = std::env::args().collect();
@@ -33,7 +34,14 @@ fn main() {
         std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
     );
 
+    unsafe {
+        *(libc::__errno_location()) = 0;
+    }
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags == -1 {
+        let errno = Error::last_os_error().raw_os_error().unwrap_or(0);
+        panic!("fcntl(F_GETFL) failed with errno {}", errno);
+    }
     unsafe {
         *(libc::__errno_location()) = 0;
     }
@@ -47,6 +55,7 @@ fn main() {
             0,
         )
     };
+
     let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
     assert_eq!(res, -1, "fcntl(F_SETFL) = {} (errno {})", res, err);
 }

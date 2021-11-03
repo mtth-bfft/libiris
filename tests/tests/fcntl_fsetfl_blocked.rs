@@ -35,7 +35,8 @@ fn fcntl_fsetfd_blocked() {
     assert_eq!(
         worker.wait_for_exit(),
         Ok(0),
-        "worker reported an error, see its output log"
+        "worker reported an error, see its output log:\n{}",
+        std::fs::read_to_string(tmpoutpath).unwrap_or("<unable to read log>".to_owned())
     );
     cleanup_tmp_file(&tmpoutpath);
     cleanup_tmp_file(&tmpwritablepath);

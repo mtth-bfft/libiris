@@ -764,8 +764,8 @@ fn generate_seccomp_filter(default_action: u32) -> Result<SeccompFilter, String>
         " [.] Allowing syscall fcntl / {} for F_GETFL only",
         syscall_nr
     );
-    let a0_pid_comparator = scmp_arg_cmp {
-        arg: 0, // first syscall argument
+    let a1_getfl_comparator = scmp_arg_cmp {
+        arg: 1, // second syscall argument, the command number
         op: scmp_compare::SCMP_CMP_EQ,
         datum_a: libc::F_GETFL.try_into().unwrap(),
         datum_b: 0, // unused with SCMP_CMP_EQ
@@ -776,11 +776,11 @@ fn generate_seccomp_filter(default_action: u32) -> Result<SeccompFilter, String>
             SCMP_ACT_ALLOW,
             syscall_nr,
             1,
-            a0_pid_comparator,
+            a1_getfl_comparator,
         )
     };
     if res != 0 {
-        println!(" [!] seccomp_rule_add(SCMP_ACT_ALLOW, fcntl, SCMP_A0(SCMP_CMP_EQ, F_GETFL)) failed with code {}", -res);
+        println!(" [!] seccomp_rule_add(SCMP_ACT_ALLOW, fcntl, SCMP_A1(SCMP_CMP_EQ, F_GETFL)) failed with code {}", -res);
     }
 
     // Add special case handling for kill() on ourselves only (useful for e.g. raise())
