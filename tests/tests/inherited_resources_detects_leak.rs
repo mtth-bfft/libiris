@@ -50,35 +50,63 @@ fn inherited_resources_detects_leak_file() {
 
 #[test]
 #[cfg(windows)]
-#[should_panic(expected = "file handle")]
+#[should_panic(expected = "handle to file")]
 fn inherited_resources_detects_leak_file() {
     use core::ptr::null_mut;
+    use iris_policy::Handle;
     use std::convert::TryInto;
+    use std::ffi::CString;
     use winapi::um::errhandlingapi::GetLastError;
-    use winapi::um::handleapi::{CloseHandle, DuplicateHandle};
+    use winapi::um::fileapi::{CreateFileA, OPEN_EXISTING};
+    use winapi::um::handleapi::{DuplicateHandle, INVALID_HANDLE_VALUE};
     use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess};
-    use winapi::um::winnt::{HANDLE, PROCESS_ALL_ACCESS, PROCESS_DUP_HANDLE};
+    use winapi::um::winnt::{
+        FILE_ALL_ACCESS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, HANDLE,
+        PROCESS_DUP_HANDLE,
+    };
 
     let (worker, tmpleakpath) = common_setup();
 
-    let h_worker =
-        unsafe { OpenProcess(PROCESS_DUP_HANDLE, 0, worker.get_pid().try_into().unwrap()) };
-    assert_ne!(
-        h_worker,
-        null_mut(),
-        "OpenProcess(worker) failed with error {}",
-        unsafe { GetLastError() }
-    );
-    // Voluntarily inject a full-privilege handle to ourselves into the worker
+    let h_worker = unsafe {
+        let res = OpenProcess(PROCESS_DUP_HANDLE, 0, worker.get_pid().try_into().unwrap());
+        assert_ne!(
+            res,
+            null_mut(),
+            "OpenProcess(worker) failed with error {}",
+            GetLastError()
+        );
+        Handle::new(res as u64).unwrap()
+    };
+
+    let tmpleakpath_nul = CString::new(tmpleakpath.to_str().unwrap()).unwrap();
+    let h_file = unsafe {
+        let res = CreateFileA(
+            tmpleakpath_nul.as_ptr(),
+            FILE_ALL_ACCESS,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            null_mut(),
+            OPEN_EXISTING,
+            0,
+            null_mut(),
+        );
+        assert_ne!(
+            res,
+            INVALID_HANDLE_VALUE,
+            "CreateFile() failed with error {}",
+            GetLastError()
+        );
+        Handle::new(res as u64).unwrap()
+    };
+    // Voluntarily inject a full-privilege handle on a file into the worker
     // /!\ NEVER DO THIS, THIS COMPLETELY BREAKS SANDBOXING BOUNDARIES
-    let mut _voluntarily_leaked: HANDLE = null_mut();
     let res = unsafe {
+        let mut _voluntarily_leaked: HANDLE = null_mut();
         DuplicateHandle(
             GetCurrentProcess(),
-            GetCurrentProcess(),
-            h_worker,
+            h_file.as_raw() as HANDLE,
+            h_worker.as_raw() as HANDLE,
             &mut _voluntarily_leaked as *mut _,
-            PROCESS_ALL_ACCESS,
+            FILE_ALL_ACCESS,
             0,
             0,
         )
@@ -86,40 +114,42 @@ fn inherited_resources_detects_leak_file() {
     assert_ne!(res, 0, "DuplicateHandle() failed with error {}", unsafe {
         GetLastError()
     });
-    unsafe { CloseHandle(h_worker) };
 
     common_teardown(worker, tmpleakpath);
 }
 
 #[test]
 #[cfg(windows)]
-#[should_panic(expected = "process handle")]
+#[should_panic(expected = "handle to another process")]
 fn inherited_resources_detects_leak_process() {
     use core::ptr::null_mut;
+    use iris_policy::Handle;
     use std::convert::TryInto;
     use winapi::um::errhandlingapi::GetLastError;
-    use winapi::um::handleapi::{CloseHandle, DuplicateHandle};
+    use winapi::um::handleapi::DuplicateHandle;
     use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess};
     use winapi::um::winnt::{HANDLE, PROCESS_ALL_ACCESS, PROCESS_DUP_HANDLE};
 
     let (worker, tmpleakpath) = common_setup();
 
-    let h_worker =
-        unsafe { OpenProcess(PROCESS_DUP_HANDLE, 0, worker.get_pid().try_into().unwrap()) };
-    assert_ne!(
-        h_worker,
-        null_mut(),
-        "OpenProcess(worker) failed with error {}",
-        unsafe { GetLastError() }
-    );
+    let h_worker = unsafe {
+        let res = OpenProcess(PROCESS_DUP_HANDLE, 0, worker.get_pid().try_into().unwrap());
+        assert_ne!(
+            res,
+            null_mut(),
+            "OpenProcess(worker) failed with error {}",
+            GetLastError()
+        );
+        Handle::new(res as u64).unwrap()
+    };
     // Voluntarily inject a full-privilege handle to ourselves into the worker
     // /!\ NEVER DO THIS, THIS COMPLETELY BREAKS SANDBOXING BOUNDARIES
-    let mut _voluntarily_leaked: HANDLE = null_mut();
     let res = unsafe {
+        let mut _voluntarily_leaked: HANDLE = null_mut();
         DuplicateHandle(
             GetCurrentProcess(),
             GetCurrentProcess(),
-            h_worker,
+            h_worker.as_raw() as HANDLE,
             &mut _voluntarily_leaked as *mut _,
             PROCESS_ALL_ACCESS,
             0,
@@ -129,7 +159,5 @@ fn inherited_resources_detects_leak_process() {
     assert_ne!(res, 0, "DuplicateHandle() failed with error {}", unsafe {
         GetLastError()
     });
-    unsafe { CloseHandle(h_worker) };
-
     common_teardown(worker, tmpleakpath);
 }

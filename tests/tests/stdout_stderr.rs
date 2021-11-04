@@ -29,14 +29,16 @@ fn stdout_stderr() {
     )
     .expect("worker creation failed");
     assert_eq!(worker.wait_for_exit(), Ok(0), "worker wait_for_exit failed");
-    assert_eq!(
-        std::fs::read_to_string(&tmpoutpath).expect("failed to read stdout"),
-        "OK_STDOUT\n".to_owned(),
+    assert!(
+        std::fs::read_to_string(&tmpoutpath)
+            .expect("failed to read stdout")
+            .contains("OK_STDOUT\n"),
         "unexpected value from stdout"
     );
-    assert_eq!(
-        std::fs::read_to_string(&tmperrpath).expect("failed to read stderr"),
-        "OK_STDERR\n".to_owned(),
+    assert!(
+        std::fs::read_to_string(&tmperrpath)
+            .expect("failed to read stderr")
+            .contains("OK_STDERR\n"),
         "unexpected value from stderr"
     );
     cleanup_tmp_file(&tmpinpath);

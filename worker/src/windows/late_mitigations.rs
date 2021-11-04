@@ -1,14 +1,14 @@
 #![allow(non_snake_case)]
 
+use crate::get_ipc_pipe;
 use core::ffi::c_void;
-use core::ptr::{null, null_mut};
+use core::ptr::null_mut;
 use core::sync::atomic::compiler_fence;
-use iris_ipc::{IPCMessagePipe, IPCRequestV1, IPCResponseV1};
-use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use iris_ipc::{IPCRequestV1, IPCResponseV1};
+use iris_policy::{CrossPlatformHandle, Handle};
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard};
 use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::minwindef::{BYTE, DWORD, WORD};
 use winapi::shared::ntdef::{HANDLE, NTSTATUS, OBJECT_ATTRIBUTES, PULONG, PVOID, ULONG};
@@ -580,7 +580,6 @@ extern "system" fn hook_ntcreatefile(
             };
             code as NTSTATUS
         }
-        (IPCResponseV1::GenericError(code), None) => return code as NTSTATUS,
         other => panic!(
             "Unexpected response from broker to NtCreateFile request: {:?}",
             other
@@ -644,7 +643,6 @@ extern "system" fn hook_ntopenfile(
             };
             code as NTSTATUS
         }
-        (IPCResponseV1::GenericError(code), None) => code as NTSTATUS,
         other => panic!(
             "Unexpected response from broker to NtCreateFile request: {:?}",
             other
@@ -652,7 +650,6 @@ extern "system" fn hook_ntopenfile(
     }
 }
 
-// TODO: merge with Linux
 fn send_recv(request: &IPCRequestV1, handle: Option<&Handle>) -> (IPCResponseV1, Option<Handle>) {
     let mut pipe = get_ipc_pipe();
     println!(
@@ -669,25 +666,12 @@ fn send_recv(request: &IPCRequestV1, handle: Option<&Handle>) -> (IPCResponseV1,
     (resp, handle)
 }
 
-// TODO: use a thread_local!{} pipe, and a global mutex-protected pipe to request new thread-specific ones
-// OR: create a global pool of threads which wait on a global lock-free queue
-// AND/OR: make the ipc pipe multiplexed by adding random transaction IDs
-static mut IPC_PIPE_SINGLETON: *const Mutex<IPCMessagePipe> = null();
-fn get_ipc_pipe() -> MutexGuard<'static, IPCMessagePipe> {
-    unsafe { (*IPC_PIPE_SINGLETON).lock().unwrap() }
-}
-
-pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePipe) {
-    // Initialization of globals. This is safe as long as we are only called once
-    unsafe {
-        // Store the IPC pipe to handle all future syscall requests
-        IPC_PIPE_SINGLETON = Box::leak(Box::new(Mutex::new(ipc))) as *const _;
-    }
+pub(crate) fn apply_late_mitigations(_mitigations: &IPCResponseV1) -> IPCRequestV1 {
     hook_function(
         "ntdll.dll",
         "NtCreateFile",
         hook_ntcreatefile as *const fn(),
     );
     hook_function("ntdll.dll", "NtOpenFile", hook_ntopenfile as *const fn());
-    println!(" [.] Worker ready for work");
+    IPCRequestV1::ReportLateMitigations {}
 }

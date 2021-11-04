@@ -1,11 +1,17 @@
+use crate::os::brokered_syscalls::handle_ntcreatefile;
 use crate::os::proc_thread_attribute_list::ProcThreadAttributeList;
 use crate::os::sid::Sid;
 use crate::process::CrossPlatformSandboxedProcess;
 use core::ptr::null_mut;
+use iris_ipc::{
+    CrossPlatformMessagePipe, IPCMessagePipe, IPCRequestV1, IPCResponseV1, IPCVersion, MessagePipe,
+};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock};
+use std::thread::JoinHandle;
 use winapi::ctypes::c_void;
 use winapi::shared::basetsd::DWORD_PTR;
 use winapi::shared::minwindef::{DWORD, MAX_PATH};
@@ -14,9 +20,7 @@ use winapi::shared::winerror::HRESULT_FROM_WIN32;
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::minwinbase::STILL_ACTIVE;
-use winapi::um::processthreadsapi::{
-    CreateProcessA, GetExitCodeProcess, GetProcessId, PROCESS_INFORMATION,
-};
+use winapi::um::processthreadsapi::{CreateProcessA, GetExitCodeProcess, PROCESS_INFORMATION};
 use winapi::um::synchapi::WaitForSingleObject;
 use winapi::um::sysinfoapi::GetSystemWindowsDirectoryA;
 use winapi::um::userenv::{CreateAppContainerProfile, DeleteAppContainerProfile};
@@ -82,15 +86,17 @@ static mut PER_PROCESS_APPCONTAINER_ID: std::sync::atomic::AtomicUsize = AtomicU
 
 pub(crate) struct OSSandboxedProcess {
     pid: u64,
-    h_process: HANDLE,
+    policy: Policy,
+    // Thread which will handle syscall requests
+    ipc_thread: RwLock<Option<JoinHandle<()>>>,
+    // Handle to the process itself
+    h_process: Handle,
+    // Name of the appcontainer used at process creation, if supported
     appcontainer_name: Option<String>,
 }
 
 impl Drop for OSSandboxedProcess {
     fn drop(&mut self) {
-        unsafe {
-            CloseHandle(self.h_process);
-        }
         if let Some(appcontainer_name) = &self.appcontainer_name {
             let name_buf: Vec<u16> = appcontainer_name
                 .encode_utf16()
@@ -103,22 +109,24 @@ impl Drop for OSSandboxedProcess {
 
 impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
     fn new(
-        policy: &Policy,
+        mut policy: Policy,
         exe: &CStr,
         argv: &[&CStr],
         envp: &[&CStr],
-        stdin: Option<&Handle>,
-        stdout: Option<&Handle>,
-        stderr: Option<&Handle>,
-    ) -> Result<Self, String> {
+        mut broker_pipe: MessagePipe,
+        stdin: Option<Arc<Handle>>,
+        stdout: Option<Arc<Handle>>,
+        stderr: Option<Arc<Handle>>,
+    ) -> Result<Arc<Self>, String> {
         if argv.len() < 1 {
             return Err("Invalid argument: empty argv".to_owned());
         }
-        for handle in vec![stdin, stdout, stderr] {
+        for handle in [&stdin, &stdout, &stderr] {
             if let Some(handle) = handle {
                 if !handle.is_inheritable()? {
                     return Err("Stdin, stdout, and stderr handles must be set as inheritable for them to be usable by a worker".to_owned());
                 }
+                policy.allow_inherit_handle(Arc::clone(handle))?;
             }
         }
 
@@ -208,8 +216,8 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             .into_iter()
             .map(|n| n.as_raw() as *mut c_void)
             .collect::<Vec<HANDLE>>();
-        // (CreateProcess fails with ERROR_INVALID_PARAMETER if a handle is set to be inherited twice,
-        // so we sort to deduplicate)
+        // CreateProcess fails with ERROR_INVALID_PARAMETER if a handle is set to be inherited twice,
+        // so we sort to deduplicate
         handles_to_inherit.sort();
         handles_to_inherit.dedup();
         println!(" [.] Setting handles to inherit: {:?}", &handles_to_inherit);
@@ -312,10 +320,10 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         )?;
 
         // Start a child process (enable handle inheritance, but only because we set the allowed list explicitly earlier)
-        let mut proc_info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
         // TODO: use CREATE_BREAKAWAY_FROM_JOB if necessary on older OSes where nesting isn't supported
-        let res = unsafe {
-            CreateProcessA(
+        let (h_process, pid) = unsafe {
+            let mut proc_info: PROCESS_INFORMATION = std::mem::zeroed();
+            let res = CreateProcessA(
                 null_mut(),
                 cmdline.as_ptr() as *mut _,
                 null_mut(),
@@ -326,40 +334,117 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 cwd.as_ptr() as *mut _,
                 &mut start_info as *mut _ as *mut _,
                 &mut proc_info as *mut _,
+            );
+            if res == 0 {
+                // No handle opened in case of error, returning here won't leak resources
+                return Err(format!(
+                    "CreateProcess({}) failed with error {}",
+                    cmdline.to_string_lossy(),
+                    GetLastError()
+                ));
+            }
+            CloseHandle(proc_info.hThread);
+            (
+                Handle::new(proc_info.hProcess as u64).unwrap(),
+                proc_info.dwProcessId,
             )
         };
-        if res == 0 {
-            return Err(format!(
-                "CreateProcess({}) failed with error {}",
-                cmdline.to_string_lossy(),
-                unsafe { GetLastError() }
-            ));
-        }
-        unsafe {
-            CloseHandle(proc_info.hThread);
-        }
-        let pid = unsafe { GetProcessId(proc_info.hProcess) };
-        if pid == 0 {
-            return Err(format!("GetProcessId() failed with error {}", unsafe {
-                GetLastError()
-            }));
-        }
         println!(" [.] Worker created (PID {})", pid);
-        Ok(Self {
+
+        // Drop resources held in the policy: we do not want to keep a handle
+        // opened for the whole duration of the worker process just because the worker
+        // was allowed to inherit it (and maybe closed it right away)
+        policy.release_handles();
+
+        let process = Arc::new(Self {
             pid: pid.into(),
-            h_process: proc_info.hProcess,
+            policy,
+            ipc_thread: RwLock::new(None),
+            h_process,
             appcontainer_name: Some(appcontainer_name),
-        })
+        });
+
+        // Note: this is an OS-specific code to allow Linux processes with
+        // seccomp-notify to close their IPC socket after late mitigations are applied.
+        broker_pipe.set_remote_process(process.get_pid())?; // set to pass handles later
+        let mut broker_pipe = IPCMessagePipe::new_server(broker_pipe, IPCVersion::V1)?;
+        let late_mitigations = IPCResponseV1::LateMitigations {};
+        if let Err(e) = broker_pipe.send(&late_mitigations, None) {
+            return Err(format!("Unable to send initial message to worker: {:?}", e));
+        }
+        let initial_msg = match broker_pipe.recv() {
+            Ok(Some(msg)) => msg,
+            other => {
+                return Err(format!(
+                    "Unable to read initial message from worker: {:?}",
+                    other
+                ))
+            }
+        };
+        match initial_msg {
+            IPCRequestV1::ReportLateMitigations {} => {}
+            other => {
+                return Err(format!(
+                    "Unexpected initial message from worker: {:?}",
+                    other
+                ))
+            }
+        };
+
+        let processref = Arc::clone(&process);
+        *(process.ipc_thread.write().unwrap()) = Some(std::thread::spawn(move || {
+            loop {
+                let req = match broker_pipe.recv() {
+                    Ok(Some(req)) => req,
+                    Ok(None) => break,
+                    Err(e) => panic!("Unable to read IPC message from worker: {}", e),
+                };
+                let (resp, handle) = match req {
+                    IPCRequestV1::NtCreateFile {
+                        desired_access,
+                        path,
+                        allocation_size,
+                        file_attributes,
+                        share_access,
+                        create_disposition,
+                        create_options,
+                        ea,
+                    } => handle_ntcreatefile(
+                        &processref.policy,
+                        desired_access,
+                        &path,
+                        allocation_size,
+                        file_attributes,
+                        share_access,
+                        create_disposition,
+                        create_options,
+                        &ea,
+                    ),
+                    unknown => {
+                        println!(" [!] Unexpected request from worker: {:?}", unknown);
+                        break;
+                    }
+                };
+                if let Err(e) = broker_pipe.send(&resp, handle.as_ref()) {
+                    panic!("Unable to write IPC message to worker: {}", e);
+                }
+            }
+            println!(" [+] Worker closed its IPC socket, closing IPC thread");
+        }));
+
+        Ok(process)
     }
 
     fn get_pid(&self) -> u64 {
         self.pid
     }
 
-    fn wait_for_exit(&mut self) -> Result<u64, String> {
+    fn wait_for_exit(&self) -> Result<u64, String> {
         let mut exit_code: DWORD = STILL_ACTIVE;
         loop {
-            let res = unsafe { GetExitCodeProcess(self.h_process, &mut exit_code as *mut _) };
+            let res = unsafe {
+                GetExitCodeProcess(self.h_process.as_raw() as HANDLE, &mut exit_code as *mut _)
+            };
             if res == 0 {
                 return Err(format!(
                     "GetExitCodeProcess() failed with error {}",
@@ -369,7 +454,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             if exit_code != STILL_ACTIVE {
                 return Ok(exit_code.into());
             }
-            let res = unsafe { WaitForSingleObject(self.h_process, INFINITE) };
+            let res = unsafe { WaitForSingleObject(self.h_process.as_raw() as HANDLE, INFINITE) };
             if res != WAIT_OBJECT_0 {
                 return Err(format!(
                     "WaitForSingleObject() failed with error {}",

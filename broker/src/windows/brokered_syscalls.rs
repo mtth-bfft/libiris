@@ -1,14 +1,12 @@
 use crate::os::get_proc_address::get_proc_address;
 use core::ptr::null_mut;
-use iris_ipc::{IPCRequestV1, IPCResponseV1};
+use iris_ipc::IPCResponseV1;
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::ntdef::{
     NTSTATUS, NT_SUCCESS, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE, PVOID, ULONG, UNICODE_STRING,
 };
-use winapi::shared::ntstatus::{
-    STATUS_ACCESS_DENIED, STATUS_INVALID_PARAMETER, STATUS_NOT_SUPPORTED,
-};
+use winapi::shared::ntstatus::{STATUS_ACCESS_DENIED, STATUS_INVALID_PARAMETER};
 use winapi::um::winnt::{
     SecurityIdentification, ACCESS_MASK, DELETE, FILE_APPEND_DATA, FILE_READ_ATTRIBUTES,
     FILE_READ_DATA, FILE_READ_EA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
@@ -53,39 +51,7 @@ pub(crate) type PNtCreateFile = unsafe extern "system" fn(
     ea_length: ULONG,
 ) -> NTSTATUS;
 
-pub(crate) fn handle_os_specific_request(
-    request: IPCRequestV1,
-    policy: &Policy,
-) -> (IPCResponseV1, Option<Handle>) {
-    match request {
-        IPCRequestV1::NtCreateFile {
-            desired_access,
-            path,
-            allocation_size,
-            file_attributes,
-            share_access,
-            create_disposition,
-            create_options,
-            ea,
-        } => handle_ntcreatefile(
-            policy,
-            desired_access,
-            &path,
-            allocation_size,
-            file_attributes,
-            share_access,
-            create_disposition,
-            create_options,
-            &ea,
-        ),
-        unknown => {
-            println!(" [!] Unexpected request from worker: {:?}", unknown);
-            (IPCResponseV1::GenericError(STATUS_NOT_SUPPORTED), None)
-        }
-    }
-}
-
-fn handle_ntcreatefile(
+pub(crate) fn handle_ntcreatefile(
     policy: &Policy,
     desired_access: ACCESS_MASK,
     path: &str,
@@ -97,7 +63,13 @@ fn handle_ntcreatefile(
     ea: &[u8],
 ) -> (IPCResponseV1, Option<Handle>) {
     if path.is_empty() {
-        return (IPCResponseV1::GenericError(STATUS_INVALID_PARAMETER), None);
+        return (
+            IPCResponseV1::NtCreateFile {
+                io_status: 0,
+                code: STATUS_INVALID_PARAMETER,
+            },
+            None,
+        );
     }
     // Validate desired_access
     let never_granted = desired_access
@@ -110,7 +82,13 @@ fn handle_ntcreatefile(
             " [!] Worker requested access rights 0x{:X} to {} but such access cannot be delegated",
             never_granted, path
         );
-        return (IPCResponseV1::GenericError(STATUS_ACCESS_DENIED), None);
+        return (
+            IPCResponseV1::NtCreateFile {
+                io_status: 0,
+                code: STATUS_ACCESS_DENIED,
+            },
+            None,
+        );
     }
     // TODO: validate all bit flags to only let through those we know are safe for a sandboxed process
     // TODO: DELETE_ON_CLOSE => write access required ?
@@ -167,7 +145,13 @@ fn handle_ntcreatefile(
                 "has no access to that path".to_owned()
             }
         );
-        return (IPCResponseV1::GenericError(STATUS_ACCESS_DENIED), None);
+        return (
+            IPCResponseV1::NtCreateFile {
+                io_status: 0,
+                code: STATUS_ACCESS_DENIED,
+            },
+            None,
+        );
     }
     // Validate share_access
     if share_access != (FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE) {
@@ -206,7 +190,13 @@ fn handle_ntcreatefile(
                     "cannot lock that path".to_owned()
                 }
             );
-            return (IPCResponseV1::GenericError(STATUS_ACCESS_DENIED), None);
+            return (
+                IPCResponseV1::NtCreateFile {
+                    io_status: 0,
+                    code: STATUS_ACCESS_DENIED,
+                },
+                None,
+            );
         }
     }
 

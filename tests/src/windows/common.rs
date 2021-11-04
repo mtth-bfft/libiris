@@ -5,33 +5,27 @@
 
 use core::ptr::null_mut;
 use iris_broker::Worker;
+use iris_policy::{CrossPlatformHandle, Handle};
 use std::convert::TryInto;
-use std::ffi::CString;
 use std::fs::File;
 use std::os::windows::io::AsRawHandle;
 use winapi::shared::minwindef::{BYTE, DWORD};
 use winapi::shared::ntdef::{HANDLE, NTSTATUS, PULONG, PVOID, PWSTR, ULONG, USHORT, WCHAR};
 use winapi::shared::ntstatus::{STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS};
-use winapi::um::debugapi::{
-    ContinueDebugEvent, DebugActiveProcess, DebugActiveProcessStop, WaitForDebugEvent,
-};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::CreateFileW;
 use winapi::um::fileapi::OPEN_EXISTING;
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::handleapi::{CloseHandle, DuplicateHandle};
-use winapi::um::memoryapi::ReadProcessMemory;
-use winapi::um::minwinbase::{DEBUG_EVENT, OUTPUT_DEBUG_STRING_EVENT};
 use winapi::um::processthreadsapi::OpenProcessToken;
 use winapi::um::processthreadsapi::SetThreadToken;
 use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess};
 use winapi::um::securitybaseapi::DuplicateToken;
 use winapi::um::securitybaseapi::RevertToSelf;
-use winapi::um::winbase::INFINITE;
 use winapi::um::winnt::SecurityImpersonation;
 use winapi::um::winnt::PROCESS_QUERY_INFORMATION;
 use winapi::um::winnt::TOKEN_DUPLICATE;
-use winapi::um::winnt::{DBG_CONTINUE, DUPLICATE_SAME_ACCESS, PROCESS_DUP_HANDLE, PROCESS_VM_READ};
+use winapi::um::winnt::{DUPLICATE_SAME_ACCESS, PROCESS_DUP_HANDLE, PROCESS_VM_READ};
 use winapi::um::winnt::{FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE};
 
 // NT paths are stored as UNICODE_STRINGs, which store their binary length in USHORTs
@@ -144,17 +138,6 @@ macro_rules! get_proc_address {
 pub use get_proc_address;
 
 pub fn check_worker_handles(worker: &Worker) {
-    // Freeze the worker process, so that we can atomically inspect its handles
-    // Do it as early as possible, so that if we panic!(), the worker dies with us
-    let res = unsafe { DebugActiveProcess(worker.get_pid().try_into().unwrap()) };
-    assert_ne!(
-        res,
-        0,
-        "DebugActiveProcess({}) failed with error {}",
-        worker.get_pid(),
-        unsafe { GetLastError() }
-    );
-
     let hworker = unsafe {
         OpenProcess(
             PROCESS_DUP_HANDLE | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
@@ -168,38 +151,6 @@ pub fn check_worker_handles(worker: &Worker) {
         "OpenProcess(PROCESS_DUP_HANDLE, worker) failed with error {}",
         unsafe { GetLastError() }
     );
-
-    // Wait for the worker to DebugBreak(), so that we know the process is fully initialized and in main()
-    println!("Waiting for child to break into debugger...");
-    let mut dbg_event: DEBUG_EVENT = unsafe { std::mem::zeroed() };
-    loop {
-        let res = unsafe { WaitForDebugEvent(&mut dbg_event as *mut _, INFINITE) };
-        assert_ne!(res, 0, "WaitForDebugEvent() failed with error {}", unsafe {
-            GetLastError()
-        });
-        if dbg_event.dwDebugEventCode == OUTPUT_DEBUG_STRING_EVENT {
-            let expected = CString::new("Ready for inspection").unwrap().into_bytes();
-            let mut bytes_read = vec![0u8; expected.len()];
-            let ptr = unsafe { dbg_event.u.DebugString().lpDebugStringData };
-            let res = unsafe {
-                ReadProcessMemory(
-                    hworker,
-                    ptr as *const _,
-                    bytes_read.as_mut_ptr() as *mut _,
-                    expected.len(),
-                    null_mut(),
-                )
-            };
-            if res != 0 && expected == bytes_read {
-                println!(" [.] Worker signaled us it is ready, beginning inspection");
-                break;
-            }
-        }
-        // Resume the worker, otherwise it will hang at the first event (process creation) and never reach its main()
-        unsafe {
-            ContinueDebugEvent(dbg_event.dwProcessId, dbg_event.dwThreadId, DBG_CONTINUE);
-        }
-    }
 
     // Get pointers to NtQuerySystemInformation() and NtQueryObject() (undocumented, required to properly enumerate handles)
     let ntquerysysteminformation: FnNtQuerySystemInformation =
@@ -273,7 +224,7 @@ pub fn check_worker_handles(worker: &Worker) {
             >= std::mem::size_of::<ULONG>() + handle_count * std::mem::size_of::<SYSTEM_HANDLE>()
     );
     println!(
-        "{} handles reported by NtQuerySystemInformation",
+        " [.] {} handles reported by NtQuerySystemInformation",
         handle_count
     );
 
@@ -326,7 +277,7 @@ pub fn check_worker_handles(worker: &Worker) {
         let err = GetLastError();
         assert_ne!(res, 0, "DuplicateToken() failed with error {}", err);
         CloseHandle(hworkertoken);
-        himpersonationtoken
+        Handle::new(himpersonationtoken as u64).unwrap()
     };
 
     for handle in &handles {
@@ -391,14 +342,14 @@ pub fn check_worker_handles(worker: &Worker) {
         }
 
         // Start impersonating the worker for cases where we want to reopen the object ourselves
-        let res = unsafe { SetThreadToken(null_mut(), himpersonationtoken) };
+        let res = unsafe { SetThreadToken(null_mut(), himpersonationtoken.as_raw() as HANDLE) };
         assert_ne!(res, 0, "SetThreadToken() failed with error {}", unsafe {
             GetLastError()
         });
 
         println!(
-            "> {} (name: {:?}) (shared with {:?})",
-            obj_type, name, other_holder_processes
+            " [.] 0x{:X} {} (name: {:?}) (shared with {:?})",
+            handle.Handle, obj_type, name, other_holder_processes
         );
         // Only tolerate an allow-list of types, each with type-specific conditions
         if obj_type == "event" {
@@ -461,29 +412,34 @@ pub fn check_worker_handles(worker: &Worker) {
         } else if obj_type == "file" {
             // This can be a file, file directory, or named pipe
             let name = name.expect("unexpected unnamed file opened by process");
-            let win32_path: Vec<u16> = format!("\\\\?\\GLOBALROOT{}", name)
-                .encode_utf16()
-                .chain(Some(0))
-                .collect();
-            let hsameobject = unsafe {
-                CreateFileW(
-                    win32_path.as_ptr(),
-                    handle.GrantedAccess,
-                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                    null_mut(),
-                    OPEN_EXISTING,
-                    0,
-                    null_mut(),
-                )
-            };
-            let err = unsafe { GetLastError() };
-            assert_ne!(
-                hsameobject, INVALID_HANDLE_VALUE,
-                "could not open file {} with rights {} (error {})",
-                name, handle.GrantedAccess, err
-            );
-            unsafe {
-                CloseHandle(hsameobject);
+            if !name
+                .to_lowercase()
+                .contains(&format!("\\namedpipe\\ipc-{}-", std::process::id()))
+            {
+                let win32_path: Vec<u16> = format!("\\\\?\\GLOBALROOT{}", name)
+                    .encode_utf16()
+                    .chain(Some(0))
+                    .collect();
+                let hsameobject = unsafe {
+                    CreateFileW(
+                        win32_path.as_ptr(),
+                        handle.GrantedAccess,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        null_mut(),
+                        OPEN_EXISTING,
+                        winapi::um::winbase::FILE_FLAG_BACKUP_SEMANTICS,
+                        null_mut(),
+                    )
+                };
+                let err = unsafe { GetLastError() };
+                assert_ne!(
+                    hsameobject, INVALID_HANDLE_VALUE,
+                    "should not hold a handle to file {} with rights {} (error {})",
+                    name, handle.GrantedAccess, err
+                );
+                unsafe {
+                    CloseHandle(hsameobject);
+                }
             }
         } else if obj_type == "key" {
             // A named registry key can be opened by name via NtCreateKey(), just check that the
@@ -523,15 +479,4 @@ pub fn check_worker_handles(worker: &Worker) {
     unsafe {
         CloseHandle(hworker);
     }
-
-    // Unfreeze the worker process before we wait() for it to exit, otherwise we will hang
-    //unsafe { ContinueDebugEvent(dbg_event.dwProcessId, dbg_event.dwThreadId, DBG_CONTINUE); }
-    let res = unsafe { DebugActiveProcessStop(worker.get_pid().try_into().unwrap()) };
-    assert_ne!(
-        res,
-        0,
-        "DebugActiveProcessStop({}) failed with error {}",
-        worker.get_pid(),
-        unsafe { GetLastError() }
-    );
 }

@@ -47,6 +47,7 @@ fn inherited_resources_no_leak() {
         None,
     )
     .expect("worker creation failed");
+
     check_worker_handles(&worker);
     assert_eq!(worker.wait_for_exit(), Ok(0), "worker reported an error");
 }

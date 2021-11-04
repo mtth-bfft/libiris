@@ -1,4 +1,3 @@
-use iris_policy::Policy;
 use serde::{Deserialize, Serialize};
 use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::ntdef::{LONGLONG, NTSTATUS, ULONG};
@@ -8,7 +7,7 @@ use winapi::um::winnt::ACCESS_MASK;
 pub enum IPCRequestV1 {
     // Initial message sent by workers to signal they are ready to enforce their final
     // sandboxing policy permanently
-    LowerFinalSandboxPrivilegesAsap,
+    ReportLateMitigations {},
     // Worker request to open or create a file (possibly with a directory handle attached, in which case `path` is relative to that directory)
     NtCreateFile {
         desired_access: ACCESS_MASK,
@@ -25,10 +24,11 @@ pub enum IPCRequestV1 {
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub enum IPCResponseV1 {
     // Acknowledgement of LowerFinalSandboxPrivilegesAsap
-    PolicyApplied(Policy<'static>),
+    LateMitigations {},
+    // Response to IPCRequestV1::NtCreateFile, alongside a handle if successful
     NtCreateFile {
         io_status: ULONG_PTR,
         code: NTSTATUS,
     },
-    GenericError(NTSTATUS),
+    InternalError(u64),
 }
