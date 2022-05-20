@@ -120,6 +120,7 @@ fn handle_open_file(
     if path_utf8.is_empty() || path_utf8.chars().next() != Some('/') {
         return (-(libc::EINVAL as i64), None);
     }
+    println!(" [.] Requested open({})", path_utf8);
     // FIXME: ensure the path is already resolved (no /..)
     // Clear O_PATH to alias this type of requests to O_RDONLY ones
     // since O_PATH allows fstatat()

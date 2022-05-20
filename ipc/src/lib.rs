@@ -1,3 +1,5 @@
+#![no_std]
+
 // Common modules
 
 mod ipc;
@@ -9,7 +11,7 @@ mod messagepipe;
 #[cfg_attr(target_os = "windows", path = "windows/mod.rs")]
 pub mod os;
 
-pub use ipc::{IPCMessagePipe, IPCVersion};
+pub use ipc::{IPCMessagePipe, IPCVersion, IPC_MESSAGE_MAX_SIZE};
 pub use messagepipe::CrossPlatformMessagePipe;
 pub use os::message::*;
 pub use os::messagepipe::OSMessagePipe as MessagePipe;

@@ -1,6 +1,6 @@
 use crate::api::get_ipc_pipe;
 use core::ffi::c_void;
-use iris_ipc::{IPCRequestV1, IPCResponseV1, SeccompTrapErrorV1};
+use iris_ipc::{IPC_MESSAGE_MAX_SIZE, IPCRequestV1, IPCResponseV1, SeccompTrapErrorV1};
 use iris_policy::{CrossPlatformHandle, Handle};
 use libc::{c_int, c_uint};
 use std::convert::TryInto;
@@ -109,7 +109,8 @@ pub(crate) extern "C" fn sigsys_handler(
 ) {
     // Be very careful when modifying this function: it *cannot* use
     // any syscall except those directly explicitly allowed by our
-    // seccomp filter
+    // seccomp filter. It also must be async-signal-safe, meaning it
+    // cannot allocate memory.
     if signal_no != libc::SIGSYS {
         return;
     }
@@ -154,7 +155,8 @@ pub(crate) extern "C" fn sigsys_handler(
         arg6,
         ip,
     };
-    let response_code = match send_recv(&req, None) {
+    let mut buf = [0u8; IPC_MESSAGE_MAX_SIZE];
+    let response_code = match send_recv(&req, None, &mut buf) {
         (IPCResponseV1::SyscallResult(code), None) => code,
         (IPCResponseV1::SyscallResult(0), Some(handle)) => {
             // Handle becomes the result code for successful syscalls
@@ -169,12 +171,12 @@ pub(crate) extern "C" fn sigsys_handler(
     }
 }
 
-fn send_recv(request: &IPCRequestV1, handle: Option<&Handle>) -> (IPCResponseV1, Option<Handle>) {
+fn send_recv<'a>(request: &IPCRequestV1, handle: Option<&Handle>, buffer: &'a mut [u8]) -> (IPCResponseV1<'a>, Option<Handle>) {
     let mut pipe = get_ipc_pipe();
-    pipe.send(&request, handle)
+    pipe.send(&request, handle, buffer)
         .expect("unable to send IPC request to broker");
     let (resp, handle) = pipe
-        .recv_with_handle()
+        .recv_with_handle(buffer)
         .expect("unable to receive IPC response from broker");
     let resp = resp.expect("broker closed our IPC pipe while expecting its response");
     (resp, handle)

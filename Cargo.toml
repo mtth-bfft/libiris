@@ -8,3 +8,6 @@ members = [
     "tests",
 ]
 
+[profile.release]
+lto = "fat"
+overflow-checks = true

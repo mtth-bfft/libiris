@@ -30,9 +30,9 @@ pub enum IPCRequestV1 {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
-pub enum IPCResponseV1 {
+pub enum IPCResponseV1<'a> {
     // Initial message sent by the broker to its worker
-    LateMitigations { seccomp_trap_bpf: Option<Vec<u8>> },
+    LateMitigations { seccomp_trap_bpf: Option<&'a [u8]> },
     // Generic error message, something is wrong in our library itself
     InternalError(u64),
     // Syscall result code (or 0 if the syscall is successful and a handle is attached)

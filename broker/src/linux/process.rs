@@ -3,7 +3,7 @@ use crate::process::CrossPlatformSandboxedProcess;
 use core::ffi::c_void;
 use core::ptr::null;
 use iris_ipc::{
-    CrossPlatformMessagePipe, IPCMessagePipe, IPCRequestV1, IPCResponseV1, IPCVersion, MessagePipe,
+    CrossPlatformMessagePipe, IPCMessagePipe, IPCRequestV1, IPCResponseV1, IPCVersion, MessagePipe, IPC_MESSAGE_MAX_SIZE
 };
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use libc::c_int;
@@ -81,12 +81,12 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         let clone_args = 0; // FIXME: add a retry-loop for libc::CLONE_NEWUSER | libc::CLONE_NEWCGROUP | libc::CLONE_NEWIPC | libc::CLONE_NEWNET | libc::CLONE_NEWNS | libc::CLONE_NEWPID | libc::CLONE_NEWUTS;
 
         // Set up a pipe that will get CLOEXEC-ed if execve() succeeds, and otherwise be used to send us the errno
-        let (mut sock_exec_parent, mut sock_exec_child) = MessagePipe::new()?;
+        let (mut sock_exec_parent, mut sock_exec_child) = MessagePipe::new().map_err(|e| format!("Unable to create socket: {}", e))?;
         // Set the child end as CLOEXEC so it gets closed on successful execve(), which we can detect
         sock_exec_child.as_handle().set_inheritable(false)?;
 
         // Set up a pipe that we will use to transmit a go/no-go for seccomp unotify to the worker
-        let (sock_seccomp_child, mut sock_seccomp_parent) = MessagePipe::new()?;
+        let (sock_seccomp_child, mut sock_seccomp_parent) = MessagePipe::new().map_err(|e| format!("Unable to create socket: {}", e))?;
 
         // Pack together everything that needs to be passed to the new process
         let entrypoint_params = EntrypointParameters {
@@ -187,7 +187,8 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         // filter, so that we can spawn a dedicated thread holding an Arc<> to read its memory
         // Note: it's okay not to use a well-defined and versionned IPC here, since this is
         // sent and received by the same executable.
-        match sock_seccomp_parent.recv_with_handle() {
+        let mut buffer = [0u8; IPC_MESSAGE_MAX_SIZE];
+        match sock_seccomp_parent.recv_with_handle(&mut buffer) {
             Ok((_, Some(notify_fd))) => {
                 println!(" [+] Received seccomp user notification fd {:?}", notify_fd);
                 #[cfg(seccomp_notify)]
@@ -212,7 +213,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         // Now that we have unblocked the worker from its potentially unauthorized
         // syscalls, wait for it to execve(). We get this information by watching
         // our end of a O_CLOEXEC socket shared with the worker getting an EOF.
-        if let Ok(v) = sock_exec_parent.recv() {
+        if let Ok(v) = sock_exec_parent.recv(&mut buffer) {
             if v.len() > 0 {
                 return Err(format!(
                     "execve() failed with code {}",
@@ -285,13 +286,13 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         // IPCs (and not before)
         // Note: this is an OS-specific code to allow processes with seccomp-notify to close their
         // IPC socket after late mitigations are applied.
-        broker_pipe.set_remote_process(process.get_pid())?; // set to pass handles later
-        let mut broker_pipe = IPCMessagePipe::new_server(broker_pipe, IPCVersion::V1)?;
-        let late_mitigations = IPCResponseV1::LateMitigations { seccomp_trap_bpf };
-        if let Err(e) = broker_pipe.send(&late_mitigations, None) {
+        broker_pipe.set_remote_process(process.get_pid()).map_err(|e| format!("Unable to prepare handle passing to worker: {}", e))?; // set to pass handles later
+        let mut broker_pipe = IPCMessagePipe::new_server(broker_pipe, IPCVersion::V1, &mut buffer).map_err(|e| format!("Unable to create IPC server: {}", e))?;
+        let late_mitigations = IPCResponseV1::LateMitigations { seccomp_trap_bpf: seccomp_trap_bpf.as_ref().map(|v| v.as_slice()) };
+        if let Err(e) = broker_pipe.send(&late_mitigations, None, &mut buffer) {
             return Err(format!("Unable to send initial message to worker: {:?}", e));
         }
-        let initial_msg = match broker_pipe.recv() {
+        let initial_msg = match broker_pipe.recv(&mut buffer) {
             Ok(Some(msg)) => msg,
             other => {
                 return Err(format!(
@@ -319,7 +320,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         let processref = Arc::clone(&process);
         *(process.ipc_thread.write().unwrap()) = Some(std::thread::spawn(move || {
             loop {
-                let req = match broker_pipe.recv() {
+                let req = match broker_pipe.recv(&mut buffer) {
                     Ok(Some(req)) => req,
                     Ok(None) => break,
                     Err(e) => panic!("Unable to read IPC message from worker: {}", e),
@@ -352,7 +353,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                         break;
                     }
                 };
-                if let Err(e) = broker_pipe.send(&IPCResponseV1::SyscallResult(resp), handle.as_ref()) {
+                if let Err(e) = broker_pipe.send(&IPCResponseV1::SyscallResult(resp), handle.as_ref(), &mut buffer) {
                     panic!("Unable to write IPC message to worker: {}", e);
                 }
             }
@@ -457,6 +458,10 @@ fn replace_fd_with_or_dev_null(fd: libc::c_int, replacement: Option<libc::c_int>
     }
 }
 
+// This entire function is unsafe, because modifications anywhere inside it
+// can lead to deadlocks. This function starts executing after a clone(2), so
+// it cannot call into any libstd function which might be unusable due to
+// global locks being lost or global state being corrupted.
 extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
     let mut args = unsafe { Box::from_raw(args as *mut EntrypointParameters) };
     println!(
@@ -488,7 +493,8 @@ extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
 
     // Wait for our broker to tell us whether it can read our memory (if it
     // cannot, we cannot use any seccomp filter)
-    let broker_can_read_our_memory = match args.sock_seccomp.recv() {
+    let mut buffer = [0u8; IPC_MESSAGE_MAX_SIZE];
+    let broker_can_read_our_memory = match args.sock_seccomp.recv(&mut buffer) {
         Ok(v) if v.len() == 1 => v[0] != 0,
         other => {
             println!(" [!] Unable to receive seccomp status from broker ({:?}), falling back to seccomp trap", other);

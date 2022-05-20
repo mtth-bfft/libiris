@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Matthieu Buffet <matthieu@buffet.re>"]
 edition = "2018"
 
+[lib]
+crate-type = ["lib", "cdylib"]
+
 [dependencies]
 iris-ipc = { path = "../ipc" }
 iris-policy = { path = "../policy" }

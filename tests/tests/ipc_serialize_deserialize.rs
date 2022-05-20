@@ -1,4 +1,4 @@
-use iris_ipc::{CrossPlatformMessagePipe, IPCMessagePipe, IPCRequestV1, IPCVersion, MessagePipe};
+use iris_ipc::{CrossPlatformMessagePipe, IPCMessagePipe, IPCRequestV1, IPCVersion, MessagePipe, IPC_MESSAGE_MAX_SIZE};
 
 #[test]
 fn ipc_serialize_deserialize() {
@@ -25,15 +25,16 @@ fn ipc_serialize_deserialize() {
         arg6: 0xCAFE00000006,
         ip: 0xCAFE00000007,
     };
+    let mut buffer = [0u8; IPC_MESSAGE_MAX_SIZE];
     let (broker_pipe, worker_pipe) = MessagePipe::new().unwrap();
     let (mut broker_ipc, (mut worker_ipc, vers)) = (
-        IPCMessagePipe::new_server(broker_pipe, IPCVersion::V1).unwrap(),
-        IPCMessagePipe::new_client(worker_pipe).unwrap(),
+        IPCMessagePipe::new_server(broker_pipe, IPCVersion::V1, &mut buffer).unwrap(),
+        IPCMessagePipe::new_client(worker_pipe, &mut buffer).unwrap(),
     );
     assert_eq!(vers, IPCVersion::V1);
-    worker_ipc.send(&test_message, None).unwrap();
+    worker_ipc.send(&test_message, None, &mut buffer).unwrap();
     let res: Option<IPCRequestV1> = broker_ipc
-        .recv()
+        .recv(&mut buffer)
         .expect("did not receive initial broker response");
     if res != Some(test_message) {
         panic!("unexpected message from broker: {:?}", res);
@@ -44,9 +45,10 @@ fn ipc_serialize_deserialize() {
 fn ipc_client_checks_version() {
     let future_nonexisting_version: IPCVersion = unsafe { std::mem::transmute(u8::MAX) };
     let (broker_pipe, worker_pipe) = MessagePipe::new().unwrap();
-    let broker_ipc = IPCMessagePipe::new_server(broker_pipe, future_nonexisting_version).unwrap();
+    let mut buffer = [0u8; IPC_MESSAGE_MAX_SIZE];
+    let broker_ipc = IPCMessagePipe::new_server(broker_pipe, future_nonexisting_version, &mut buffer).unwrap();
     assert!(
-        IPCMessagePipe::new_client(worker_pipe).is_err(),
+        IPCMessagePipe::new_client(worker_pipe, &mut buffer).is_err(),
         "connecting to a server with unknown version should fail"
     );
     drop(broker_ipc);

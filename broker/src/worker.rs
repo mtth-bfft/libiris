@@ -19,7 +19,7 @@ impl Worker {
         stdout: Option<Arc<Handle>>,
         stderr: Option<Arc<Handle>>,
     ) -> Result<Self, String> {
-        let (broker_pipe, worker_pipe) = MessagePipe::new()?;
+        let (broker_pipe, worker_pipe) = MessagePipe::new().map_err(|e| format!("Unable to create IPC channel: {}", e))?;
         let mut worker_pipe_handle = worker_pipe.into_handle();
         worker_pipe_handle.set_inheritable(true)?;
         let worker_pipe_handle = Arc::new(worker_pipe_handle);

@@ -2,7 +2,7 @@ use crate::late_mitigations::apply_late_mitigations;
 use core::ptr::null;
 use iris_ipc::{
     CrossPlatformMessagePipe, IPCMessagePipe, IPCResponseV1, IPCVersion, MessagePipe,
-    IPC_HANDLE_ENV_NAME,
+    IPC_HANDLE_ENV_NAME, IPC_MESSAGE_MAX_SIZE
 };
 use iris_policy::{CrossPlatformHandle, Handle};
 use std::sync::{Mutex, MutexGuard};
@@ -26,8 +26,9 @@ pub fn initialize_sandbox_as_soon_as_possible() {
     // of this environment variable, and we erase it as soon as it is used.
     let handle = unsafe { Handle::new(handle).expect("invalid IPC handle environment variable") };
     let pipe = MessagePipe::from_handle(handle);
+    let mut buf = [0u8; IPC_MESSAGE_MAX_SIZE];
     let (ipc, version) =
-        IPCMessagePipe::new_client(pipe).expect("unable to open IPC channel to broker");
+        IPCMessagePipe::new_client(pipe, &mut buf).expect("unable to open IPC channel to broker");
     if version != IPCVersion::V1 {
         panic!("unsupported IPC server version {:?}", version);
     }
@@ -39,13 +40,13 @@ pub fn initialize_sandbox_as_soon_as_possible() {
 
     let mut ipc = get_ipc_pipe();
     let msg = ipc
-        .recv()
+        .recv(&mut buf)
         .expect("unable to read worker late mitigations from broker");
     let resp = if let Some(IPCResponseV1::LateMitigations { .. }) = &msg {
         apply_late_mitigations(&msg.unwrap())
     } else {
         panic!("unexpected initial message received from broker: {:?}", msg);
     };
-    ipc.send(&resp, None)
+    ipc.send(&resp, None, &mut buf)
         .expect("unable to report late mitigation status to broker");
 }

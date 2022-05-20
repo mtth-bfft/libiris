@@ -1,4 +1,5 @@
 use iris_policy::Handle;
+use crate::ipc::IPCError;
 
 pub trait CrossPlatformMessagePipe {
     fn into_handle(self) -> Handle;
@@ -11,17 +12,17 @@ pub trait CrossPlatformMessagePipe {
      */
     fn from_handle(handle: Handle) -> Self
     where
-        Self: std::marker::Sized;
+        Self: core::marker::Sized;
 
-    fn new() -> Result<(Self, Self), String>
+    fn new() -> Result<(Self, Self), IPCError>
     where
-        Self: std::marker::Sized;
+        Self: core::marker::Sized;
 
-    fn recv(&mut self) -> Result<Vec<u8>, String>;
+    fn recv<'a>(&mut self, buffer: &'a mut [u8]) -> Result<&'a [u8], IPCError>;
 
-    fn recv_with_handle(&mut self) -> Result<(Vec<u8>, Option<Handle>), String>;
+    fn recv_with_handle<'a>(&mut self, buffer: &'a mut [u8]) -> Result<(&'a [u8], Option<Handle>), IPCError>;
 
-    fn set_remote_process(&mut self, remote_pid: u64) -> Result<(), String>;
+    fn set_remote_process(&mut self, remote_pid: u64) -> Result<(), IPCError>;
 
-    fn send(&mut self, message: &[u8], handle: Option<&Handle>) -> Result<(), String>;
+    fn send(&mut self, message: &[u8], handle: Option<&Handle>) -> Result<(), IPCError>;
 }
