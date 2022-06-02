@@ -1,8 +1,12 @@
-The smallest security boundary supported by operating systems is between processes: even if on UNIX operating systems threads can have different access rights and mitigations, they could still tamper with each others by writing to their address space, and Windows does not support this.
-=> Each sandboxing policy must be implemented by a separate process.
+# Design decisions
 
-On Windows, creating a restricted process requires setting almost all parameters of `CreateProcess`, and modifying the process memory before it runs its very basic initialization.
-=> The sandboxing library must offer an API which encapsulates primitives offered by the OS to create processes.
+The smallest security boundary supported by operating systems is between processes: even if, on UNIX operating systems, threads can have different access rights and mitigations, they could easily tamper with each others by writing to their common address space in case of an ASLR leak. Moreover, most security policies on Windows are enforced at the process level.
+
+=> *Each sandboxing policy must be implemented by a separate process.*
+
+On Windows, creating a restricted process requires setting specific attributes and pointers in almost all parameters of `CreateProcess`, in a very error-prone way. Moreover, the process memory must be patched before it runs its very basic initialization.
+
+=> *The sandboxing library must offer an API which encapsulates primitives offered by the OS to create processes.*
 
 On Linux, in some cases, modifications must be applied to the seccomp filter of sandboxed processes after they began running.
 => The sandboxed process must be aware of its sandboxing and cooperate to e.g. load a library.

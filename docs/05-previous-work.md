@@ -28,6 +28,10 @@ Work published in the Capsicum project and its patchset for Linux have been of i
 - for its approach of file restrictions through a new `O_BENEATH` flag, and its warning of race conditions when allowing `..\` in path lookups;
 - for its precise documentation.
 
+## TODO
+
+WebKitGTK, Flatpak and GNOME
+
 ## Chromium Web browser
 
         - https://chromium.googlesource.com/chromium/src.git/+/master/docs/linux/sandboxing.md
