@@ -5,9 +5,6 @@ libiris
 
 libiris is a (work in progress) cross-platform sandboxing library.
 
-Repository
-==========
-
 This repository contains:
 
 * `broker`: the broker library which allows creating workers
@@ -15,3 +12,11 @@ This repository contains:
 * `policy`: a crate which allows specifying exactly what rights a worker has
 * `ipc`: a crate which allows workers to send requests to their broker, and get resources in response
 * `tests`: an integration test suite for all the crates above
+
+# Compilation
+
+You will need:
+- a stable Rust toolchain;
+- libseccomp and its development headers (e.g. `apt install libseccomp libseccomp-dev` if you are running Debian)
+
+Then a simple `cargo build` should be all it takes.
