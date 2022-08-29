@@ -5,7 +5,6 @@ fn main() {}
 fn main() {
     use iris_worker::lower_final_sandbox_privileges_asap;
     use libc::c_int;
-    use std::convert::TryInto;
     use std::ffi::CString;
 
     lower_final_sandbox_privileges_asap();

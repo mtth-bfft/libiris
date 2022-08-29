@@ -14,7 +14,6 @@ fn os_specific_setup(_worker: &Worker) {
 #[cfg(windows)]
 fn os_specific_setup(worker: &Worker) {
     use core::ptr::null_mut;
-    use std::convert::TryInto;
     use winapi::um::errhandlingapi::GetLastError;
     use winapi::um::handleapi::{CloseHandle, DuplicateHandle};
     use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess};

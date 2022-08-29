@@ -9,7 +9,6 @@ fn check(_ip: &str, _port: u16) {
 
 #[cfg(target_family = "windows")]
 fn check(ip: &str, port: u16) -> bool {
-    use std::convert::TryInto;
     use std::ffi::CString;
     use winapi::shared::minwindef::MAKEWORD;
     use winapi::shared::ws2def::{AF_INET, IPPROTO_TCP, SOCKADDR_IN};
