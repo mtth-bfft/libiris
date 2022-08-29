@@ -2,7 +2,7 @@
 name = "iris-broker"
 version = "0.5.0"
 authors = ["Matthieu Buffet <matthieu@buffet.re>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 iris-policy = { path = "../policy" }

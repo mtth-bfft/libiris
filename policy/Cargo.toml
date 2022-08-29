@@ -2,7 +2,7 @@
 name = "iris-policy"
 version = "0.1.0"
 authors = ["Matthieu Buffet <matthieu@buffet.re>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 serde = { version = "1.0.125", features = ["derive"] }
