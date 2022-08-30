@@ -52,9 +52,8 @@ fn os_specific_setup(worker: &Worker) {
 #[should_panic(expected = "process")]
 fn inherited_resources_detects_leak() {
     let worker_binary = get_worker_bin_path();
-    let policy = Policy::new(); // don't allow any resource to be inherited by the worker process
     let worker = Worker::new(
-        &policy,
+        &Policy::nothing_allowed(), // don't allow any resource to be inherited, check that it receives nothing
         &worker_binary,
         &[&worker_binary],
         &[],

@@ -13,7 +13,7 @@ fn fcntl_fsetfd_blocked() {
     let (tmpout, tmpoutpath) = open_tmp_file();
     let tmpout = downcast_to_handle(tmpout);
     let (_, tmpwritablepath) = open_tmp_file();
-    let mut policy = Policy::new();
+    let mut policy = Policy::nothing_allowed();
     // Make the file append-only
     policy
         .allow_file_access(&tmpwritablepath.to_string_lossy(), true, true, true)

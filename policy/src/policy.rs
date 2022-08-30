@@ -15,7 +15,12 @@ pub struct Policy<'a> {
 }
 
 impl<'a> Policy<'a> {
+    #[deprecated(note="Use nothing_allowed() instead to explicitly create an empty policy")]
     pub fn new() -> Self {
+        Self::nothing_allowed()
+    }
+
+    pub fn nothing_allowed() -> Self {
         Self {
             inherit_handles: Vec::new(),
             file_access: HashMap::new(),

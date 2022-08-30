@@ -73,7 +73,7 @@ fn access_file() {
                                 let tmpout = downcast_to_handle(tmpout);
                                 let (mut tmpok, tmpokpath) = open_tmp_file();
                                 tmpok.write_all(b"OK").unwrap();
-                                let mut policy = Policy::new();
+                                let mut policy = Policy::nothing_allowed();
                                 policy
                                     .allow_file_access(
                                         &tmpokpath.to_string_lossy(),

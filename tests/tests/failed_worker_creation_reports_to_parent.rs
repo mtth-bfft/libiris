@@ -4,9 +4,8 @@ use std::ffi::CString;
 #[test]
 fn failed_execve_reports_to_parent() {
     let worker_binary = CString::new("nonexistent").unwrap();
-    let policy = Policy::new();
     let worker = Worker::new(
-        &policy,
+        &Policy::nothing_allowed(),
         &worker_binary,
         &[&worker_binary],
         &[],

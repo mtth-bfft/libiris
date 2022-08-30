@@ -3,10 +3,9 @@ use iris_broker::{Policy, Worker};
 
 #[test]
 fn environment_vars_sanitized() {
-    let policy = Policy::new();
     let worker_binary = get_worker_bin_path();
     let mut worker = Worker::new(
-        &policy,
+        &Policy::nothing_allowed(),
         &worker_binary,
         &[&worker_binary],
         &[],

@@ -3,12 +3,11 @@ use iris_broker::{downcast_to_handle, Policy, Worker};
 
 #[test]
 fn spawn() {
-    let policy = Policy::new();
     let worker_binary = get_worker_bin_path();
     let (tmpout, tmpoutpath) = open_tmp_file();
     let tmpout = downcast_to_handle(tmpout);
     let mut worker = Worker::new(
-        &policy,
+        &Policy::nothing_allowed(),
         &worker_binary,
         &[&worker_binary],
         &[],

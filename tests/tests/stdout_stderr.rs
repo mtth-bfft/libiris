@@ -4,7 +4,6 @@ use std::io::{Seek, SeekFrom, Write};
 
 #[test]
 fn stdout_stderr() {
-    let policy = Policy::new();
     let (mut tmpin, tmpinpath) = open_tmp_file();
     let (tmpout, tmpoutpath) = open_tmp_file();
     let (tmperr, tmperrpath) = open_tmp_file();
@@ -12,7 +11,7 @@ fn stdout_stderr() {
     tmpin.seek(SeekFrom::Start(0)).unwrap();
     let worker_binary = get_worker_bin_path();
     let mut worker = Worker::new(
-        &policy,
+        &Policy::nothing_allowed(),
         &worker_binary,
         &[&worker_binary],
         &[],

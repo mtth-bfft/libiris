@@ -33,15 +33,12 @@ fn os_specific_setup() {
 fn inherited_resources_no_leak() {
     os_specific_setup();
 
-    // Don't allow any resource to be inherited by the worker process, to check that it does not get unexpected ones
-    let policy = Policy::new();
-
     let worker_binary = get_worker_bin_path();
     // TODO: remove stdout redirection to avoid it showing up in the test results? Or find a better solution
     let (tmpout, tmpoutpath) = open_tmp_file();
     let tmpout = downcast_to_handle(tmpout);
     let mut worker = Worker::new(
-        &policy,
+        &Policy::nothing_allowed(), // don't allow anything to be inherited, check that it receives nothing
         &worker_binary,
         &[&worker_binary],
         &[],

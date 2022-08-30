@@ -5,8 +5,8 @@ use iris_broker::{downcast_to_handle, Policy, Worker};
 fn inherited_dup_handles() {
     let (tmpout, tmpoutpath) = open_tmp_file(); // duplicate tmpout as stdout and stderr and a handle to be inherited
     let (tmpin, tmpinpath) = open_tmp_file(); // duplicate tmpin as stdin and a handle to be inherited
-    let mut policy = Policy::new();
     let (tmpout, tmpin) = (downcast_to_handle(tmpout), downcast_to_handle(tmpin));
+    let mut policy = Policy::nothing_allowed();
     policy.allow_inherit_handle(&tmpout).unwrap();
     policy.allow_inherit_handle(&tmpin).unwrap();
 
