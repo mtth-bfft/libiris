@@ -1,17 +1,12 @@
-# Identities
+# Windows security model and sandboxing primitives
 
-Several types of objects can have distinct identities: local users, users from an Active Directory domain if the computer is federated into one, service processes running in the background, etc.
-All identities are identified by their **Security IDentifiers (SID)**, a list of integers split hierarchically in the form:
+All identities (local users, services running in the background, scheduled tasks, users from an Active Directory domain if the host is federated into one, etc.) are identified by their **Security IDentifiers (SID)**, a list of integers split hierarchically in the form:
 
 	S-<revision number, must be 1>-<authority>[-<subauthority>]*-<relative ID>
 
 Lots of SIDs are so-called **well-known**[3], meaning they are the same across all Windows hosts. A common example is S-1-5-18 (LocalSystem, the most privileged identity used by the operating system itself).
 
-# Mandatory Access Control model
-
-
-
-# Discretionary Access Control model
+## Discretionary Access Control model
 
 Windows represents most data exposed to userland processes in the form of **objects**, a kernel data structure which provides userland references in the form of **handles** (indexes in a per-process table of pointers).
 
@@ -66,13 +61,12 @@ Other privileges may be granted to a sandboxed process without trivially breakin
 - SeUndockPrivilege: unused as far as documentation goes;
 - SeUnsolicitedInputPrivilege: unused as far as documentation goes;
 
-# Access tokens
+## Access tokens
 
 Each user, when logging in, is given a **token** containing their SID, and a list of groups to which 
 
-Whenever a user logs in, a new Session object is created for them, and a Token object is given to the first process in the session. Every time a child process is created, a (possibly modified) copy of that token is given to the child. These tokens contain all the information about their processes' ambient authority, they are what's checked when performing privileged operations.
+Whenever a user logs in, a new Session object is created for them, and a Token object is given to the first process in the session. Every time a child process is created, by default, a copy of that token is given to the child. These tokens contain all the information about their processes' ambient authority (you can see this using e.g. Sysinternals Process Explorer):
 
-Each token contains (you can see this using e.g. Sysinternals Process Explorer):
 - a primary user, identified by SID ;
 - a primary group, identified by SID (this is a deprecated feature of the POSIX subsystem, not used anymore) ;
 - a list of groups, identified by SID ;
@@ -107,17 +101,13 @@ When an operation is performed on a securable object, the `SeAccessCheck()` (htt
 4. Is there at least one restricted SID in the DACL? If so, do an access check with restricted SIDs only. If it fails, deny access
 5. For each ACE in the DACL, if the trustee SID is the user or is held and enabled in the token groups, apply the ACE's action to the ACE's access mask
 
-
-
-# Windows Sandboxing Primitives
-
-## Discretionary Access Control overview
+# Sandboxing Mechanisms
 
 ## Jobs
 
-## Windowing system isolation
-
 ## Restricted Tokens
+
+## Windowing system isolation
 
 ## AppContainers
 
@@ -140,7 +130,6 @@ File access can be restricted in a new process by creating it with a restricted 
 	internetClient - Grants client access to the Internet
 	internetClientServer - Grants client and server access to the Internet
 	privateNetworkClientServer - Grants client and server access to local private networks.
-
 
 ## Process Mitigation Options
 
