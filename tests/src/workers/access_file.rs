@@ -381,7 +381,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     assert_eq!(args.len(), 9);
     let test_function = args[1].parse::<u8>().unwrap();
-    let okpath = CString::new(args[2].as_str()).unwrap();
+    let path = CString::new(args[2].as_str()).unwrap();
     let readable = args[3] == "1";
     let writable = args[4] == "1";
     let restrict_to_append_only = args[5] == "1";
@@ -413,7 +413,7 @@ fn main() {
 
     check(
         test_function,
-        &okpath,
+        &path,
         readable,
         writable,
         restrict_to_append_only,

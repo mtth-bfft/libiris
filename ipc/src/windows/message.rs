@@ -9,7 +9,7 @@ pub enum IPCRequest {
     // Initial message sent by workers to signal they are ready to enforce their final
     // sandboxing policy permanently
     LowerFinalSandboxPrivilegesAsap,
-    // Worker request to open or create a file (possibly with a directory handle attached, in which case `path` is relative to that directory)
+    // Worker request to open or create a file
     NtCreateFile {
         desired_access: ACCESS_MASK,
         path: String,
@@ -20,6 +20,15 @@ pub enum IPCRequest {
         create_options: ULONG,
         ea: Vec<u8>,
     },
+    // Worker request to open or create a registry key
+    NtCreateKey {
+        desired_access: ACCESS_MASK,
+        path: String,
+        title_index: ULONG,
+        class: Option<String>,
+        create_options: ULONG,
+        do_create: bool,
+    },
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -28,6 +37,10 @@ pub enum IPCResponse {
     PolicyApplied(Policy<'static>),
     NtCreateFile {
         io_status: ULONG_PTR,
+        code: NTSTATUS,
+    },
+    NtCreateKey {
+        disposition: ULONG,
         code: NTSTATUS,
     },
     GenericError(NTSTATUS),

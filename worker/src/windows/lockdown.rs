@@ -11,7 +11,9 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::minwindef::{BYTE, DWORD, WORD};
-use winapi::shared::ntdef::{HANDLE, NTSTATUS, OBJECT_ATTRIBUTES, PULONG, PVOID, ULONG};
+use winapi::shared::ntdef::{
+    HANDLE, NTSTATUS, OBJECT_ATTRIBUTES, PULONG, PVOID, ULONG, UNICODE_STRING,
+};
 use winapi::shared::ntstatus::{STATUS_INVALID_PARAMETER, STATUS_NOT_SUPPORTED};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::libloaderapi::{GetProcAddress, LoadLibraryA};
@@ -652,6 +654,83 @@ extern "system" fn hook_ntopenfile(
     }
 }
 
+extern "system" fn hook_ntcreatekey(
+    key_handle: *mut HANDLE,
+    desired_access: ACCESS_MASK,
+    object_attributes: *mut OBJECT_ATTRIBUTES,
+    title_index: ULONG,
+    class: *mut UNICODE_STRING,
+    create_options: ULONG,
+    out_disposition: *mut ULONG,
+) -> NTSTATUS {
+    if key_handle.is_null() || object_attributes.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    unsafe {
+        (*key_handle) = null_mut();
+        if !out_disposition.is_null() {
+            (*out_disposition) = 0;
+        }
+    }
+    let h_rootdirectory = unsafe { (*object_attributes).RootDirectory };
+    if !h_rootdirectory.is_null() || title_index != 0 {
+        return STATUS_NOT_SUPPORTED;
+    }
+    let path = unsafe { (*object_attributes).ObjectName };
+    if path.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let path = unsafe {
+        std::slice::from_raw_parts(
+            (*path).Buffer,
+            (*path).Length as usize / std::mem::size_of::<u16>(),
+        )
+    };
+    let path = String::from_utf16_lossy(path);
+    let class = unsafe {
+        if class.is_null() {
+            None
+        } else {
+            Some(String::from_utf16_lossy(std::slice::from_raw_parts(
+                (*class).Buffer,
+                (*class).Length as usize / std::mem::size_of::<u16>(),
+            )))
+        }
+    };
+    let request = IPCRequest::NtCreateKey {
+        desired_access,
+        path,
+        title_index,
+        class,
+        create_options,
+        do_create: true,
+    };
+    match send_recv(&request, None) {
+        (IPCResponse::NtCreateKey { disposition, code }, handle) => {
+            if let Some(handle) = handle {
+                unsafe {
+                    let handle: usize = handle
+                        .into_raw()
+                        .try_into()
+                        .expect("invalid handle value returned from broker");
+                    (*key_handle) = handle as HANDLE;
+                }
+            }
+            if !out_disposition.is_null() {
+                unsafe {
+                    (*out_disposition) = disposition;
+                };
+            }
+            code as NTSTATUS
+        }
+        (IPCResponse::GenericError(code), None) => return code as NTSTATUS,
+        other => panic!(
+            "Unexpected response from broker to NtCreateKey request: {:?}",
+            other
+        ),
+    }
+}
+
 // TODO: merge with Linux
 fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Option<Handle>) {
     let mut pipe = get_ipc_pipe();
@@ -689,5 +768,6 @@ pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePi
         hook_ntcreatefile as *const fn(),
     );
     hook_function("ntdll.dll", "NtOpenFile", hook_ntopenfile as *const fn());
+    hook_function("ntdll.dll", "NtCreateKey", hook_ntcreatekey as *const fn());
     println!(" [.] Worker ready for work");
 }

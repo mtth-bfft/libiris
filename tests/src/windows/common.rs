@@ -25,14 +25,13 @@ use winapi::um::minwinbase::{DEBUG_EVENT, OUTPUT_DEBUG_STRING_EVENT};
 use winapi::um::processthreadsapi::OpenProcessToken;
 use winapi::um::processthreadsapi::SetThreadToken;
 use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess};
-use winapi::um::securitybaseapi::DuplicateToken;
-use winapi::um::securitybaseapi::RevertToSelf;
+use winapi::um::securitybaseapi::{DuplicateToken, RevertToSelf};
 use winapi::um::winbase::INFINITE;
-use winapi::um::winnt::SecurityImpersonation;
-use winapi::um::winnt::PROCESS_QUERY_INFORMATION;
-use winapi::um::winnt::TOKEN_DUPLICATE;
-use winapi::um::winnt::{DBG_CONTINUE, DUPLICATE_SAME_ACCESS, PROCESS_DUP_HANDLE, PROCESS_VM_READ};
-use winapi::um::winnt::{FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE};
+use winapi::um::winnt::{
+    SecurityImpersonation, DBG_CONTINUE, DUPLICATE_SAME_ACCESS, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, PROCESS_DUP_HANDLE, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+    TOKEN_DUPLICATE,
+};
 
 // NT paths are stored as UNICODE_STRINGs, which store their binary length in USHORTs
 const MAX_NT_OBJECT_PATH_LEN: usize = 32767;

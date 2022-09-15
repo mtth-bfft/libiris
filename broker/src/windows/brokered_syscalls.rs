@@ -4,7 +4,8 @@ use iris_ipc::{IPCRequest, IPCResponse};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::ntdef::{
-    NTSTATUS, NT_SUCCESS, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE, PVOID, ULONG, UNICODE_STRING,
+    InitializeObjectAttributes, NTSTATUS, NT_SUCCESS, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE,
+    PVOID, ULONG, UNICODE_STRING,
 };
 use winapi::shared::ntstatus::{
     STATUS_ACCESS_DENIED, STATUS_INVALID_PARAMETER, STATUS_NOT_SUPPORTED,
@@ -12,8 +13,11 @@ use winapi::shared::ntstatus::{
 use winapi::um::winnt::{
     SecurityIdentification, ACCESS_MASK, DELETE, FILE_APPEND_DATA, FILE_READ_ATTRIBUTES,
     FILE_READ_DATA, FILE_READ_EA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA, HANDLE, LARGE_INTEGER, LONGLONG,
-    READ_CONTROL, SECURITY_DYNAMIC_TRACKING, SECURITY_QUALITY_OF_SERVICE, SYNCHRONIZE, WCHAR,
+    FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA, HANDLE, KEY_CREATE_SUB_KEY,
+    KEY_ENUMERATE_SUB_KEYS, KEY_NOTIFY, KEY_QUERY_VALUE, KEY_SET_VALUE, KEY_WOW64_32KEY,
+    KEY_WOW64_64KEY, LARGE_INTEGER, LONGLONG, READ_CONTROL, REG_OPENED_EXISTING_KEY,
+    REG_OPTION_NON_VOLATILE, REG_OPTION_VOLATILE, SECURITY_DYNAMIC_TRACKING,
+    SECURITY_QUALITY_OF_SERVICE, SYNCHRONIZE, WCHAR, WRITE_DAC, WRITE_OWNER,
 };
 
 // Constants from winternl.h not yet exported by winapi
@@ -33,11 +37,15 @@ pub(crate) struct IO_STATUS_BLOCK {
 }
 
 // Mapping from policy-allowed rights to Windows access bits
+const FILE_ALWAYS_GRANTED_RIGHTS: u32 = READ_CONTROL | SYNCHRONIZE;
 const FILE_READ_RIGHTS: u32 = FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA;
 const FILE_WRITE_ANYWHERE_RIGHTS: u32 =
-    FILE_WRITE_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES | DELETE;
+    FILE_WRITE_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES | DELETE | WRITE_DAC | WRITE_OWNER;
 const FILE_WRITE_APPEND_ONLY_RIGHTS: u32 = FILE_APPEND_DATA;
-const FILE_ALWAYS_GRANTED_RIGHTS: u32 = READ_CONTROL | SYNCHRONIZE;
+const KEY_ALWAYS_GRANTED_RIGHTS: u32 =
+    READ_CONTROL | SYNCHRONIZE | KEY_NOTIFY | KEY_WOW64_32KEY | KEY_WOW64_64KEY;
+const KEY_READ_RIGHTS: u32 = KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE;
+const KEY_WRITE_RIGHTS: u32 = KEY_CREATE_SUB_KEY | KEY_SET_VALUE | DELETE | WRITE_DAC | WRITE_OWNER;
 
 pub(crate) type PNtCreateFile = unsafe extern "system" fn(
     file_handle: *mut HANDLE,
@@ -51,6 +59,22 @@ pub(crate) type PNtCreateFile = unsafe extern "system" fn(
     create_options: ULONG,
     ea_buffer: PVOID,
     ea_length: ULONG,
+) -> NTSTATUS;
+
+type PNtCreateKey = unsafe extern "system" fn(
+    key_handle: *mut HANDLE,
+    desired_access: ACCESS_MASK,
+    object_attributes: *mut OBJECT_ATTRIBUTES,
+    title_index: ULONG,
+    class: *mut UNICODE_STRING,
+    create_options: ULONG,
+    out_disposition: *mut ULONG,
+) -> NTSTATUS;
+
+type PNtOpenKey = unsafe extern "system" fn(
+    key_handle: *mut HANDLE,
+    desired_access: ACCESS_MASK,
+    object_attributes: *mut OBJECT_ATTRIBUTES,
 ) -> NTSTATUS;
 
 pub(crate) fn handle_os_specific_request(
@@ -77,6 +101,22 @@ pub(crate) fn handle_os_specific_request(
             create_disposition,
             create_options,
             &ea,
+        ),
+        IPCRequest::NtCreateKey {
+            desired_access,
+            path,
+            title_index,
+            class,
+            create_options,
+            do_create,
+        } => handle_ntcreatekey(
+            policy,
+            desired_access,
+            path,
+            title_index,
+            class,
+            create_options,
+            do_create,
         ),
         unknown => {
             println!(" [!] Unexpected request from worker: {:?}", unknown);
@@ -264,4 +304,137 @@ fn handle_ntcreatefile(
         }
     };
     return (IPCResponse::NtCreateFile { io_status, code }, handle);
+}
+
+fn handle_ntcreatekey(
+    policy: &Policy,
+    desired_access: ACCESS_MASK,
+    path: String,
+    title_index: ULONG,
+    class: Option<String>,
+    create_options: ULONG,
+    do_create: bool,
+) -> (IPCResponse, Option<Handle>) {
+    if path.is_empty() {
+        return (IPCResponse::GenericError(STATUS_INVALID_PARAMETER), None);
+    }
+    let never_granted =
+        desired_access & !(KEY_READ_RIGHTS | KEY_WRITE_RIGHTS | KEY_ALWAYS_GRANTED_RIGHTS);
+    if never_granted != 0 {
+        println!(
+            " [!] Worker requested access rights 0x{:X} to {} but such access cannot be delegated",
+            never_granted, path
+        );
+        return (IPCResponse::GenericError(STATUS_ACCESS_DENIED), None);
+    }
+    if create_options & !(REG_OPTION_VOLATILE | REG_OPTION_NON_VOLATILE) != 0 {
+        println!(
+            " [!] Worker requested unsupported registry key options 0x{:X} on {}",
+            create_options & !(REG_OPTION_VOLATILE | REG_OPTION_NON_VOLATILE),
+            path
+        );
+        return (IPCResponse::GenericError(STATUS_NOT_SUPPORTED), None);
+    }
+    let (can_read, can_write) = policy.get_regkey_allowed_access(&path);
+    let (wants_read, wants_write) = (
+        (desired_access & KEY_READ_RIGHTS) != 0,
+        (desired_access & KEY_WRITE_RIGHTS) != 0,
+    );
+    if (wants_read && !can_read)
+        || (wants_write && !can_write)
+        || (!wants_read && !wants_write && !can_read && !can_write)
+    {
+        println!(
+            " [!] Worker denied {}{} access (0x{:X}) to registry key {}",
+            if wants_read { "read" } else { "" },
+            if wants_write { "write" } else { "" },
+            desired_access,
+            &path
+        );
+        return (IPCResponse::GenericError(STATUS_ACCESS_DENIED), None);
+    }
+    let mut unicode_name: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+    let unicode_bytes = (unicode_name.len() - 1) * std::mem::size_of::<WCHAR>();
+    let mut unicode_name = UNICODE_STRING {
+        Length: unicode_bytes as u16,
+        MaximumLength: unicode_bytes as u16,
+        Buffer: unicode_name.as_mut_ptr(),
+    };
+    let mut class_unicode = if let Some(ref s) = class {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    } else {
+        vec![0]
+    };
+    let mut class_unicode = UNICODE_STRING {
+        Length: ((class_unicode.len() - 1) * std::mem::size_of::<WCHAR>()) as u16,
+        MaximumLength: ((class_unicode.len() - 1) * std::mem::size_of::<WCHAR>()) as u16,
+        Buffer: class_unicode.as_mut_ptr(),
+    };
+    let ntopenkey = match get_proc_address("ntdll.dll", "NtOpenKey") {
+        ptr if ptr.is_null() => panic!("Could not locate NtOpenKey in ntdll"),
+        ptr => unsafe { std::mem::transmute::<PVOID, PNtOpenKey>(ptr) },
+    };
+    let ntcreatekey = match get_proc_address("ntdll.dll", "NtCreateKey") {
+        ptr if ptr.is_null() => panic!("Could not locate NtCreateKey in ntdll"),
+        ptr => unsafe { std::mem::transmute::<PVOID, PNtCreateKey>(ptr) },
+    };
+    let (disposition, code, handle) = unsafe {
+        if !do_create || !can_write {
+            let mut handle = null_mut();
+            let mut obj_attr: OBJECT_ATTRIBUTES = std::mem::zeroed();
+            InitializeObjectAttributes(
+                &mut obj_attr as *mut _,
+                &mut unicode_name as *mut _,
+                OBJ_CASE_INSENSITIVE,
+                null_mut(),
+                null_mut(),
+            );
+            let status = ntopenkey(&mut handle, desired_access, &mut obj_attr as *mut _);
+            println!(" [.] NtOpenKey status 0x{:X}", status);
+            if NT_SUCCESS(status) {
+                (
+                    REG_OPENED_EXISTING_KEY,
+                    status,
+                    Some(Handle::new(handle as u64).unwrap()),
+                )
+            } else {
+                (0, status, None)
+            }
+        } else {
+            let mut handle = null_mut();
+            let mut disposition: ULONG = 0;
+            let mut obj_attr: OBJECT_ATTRIBUTES = std::mem::zeroed();
+            InitializeObjectAttributes(
+                &mut obj_attr as *mut _,
+                &mut unicode_name as *mut _,
+                OBJ_CASE_INSENSITIVE,
+                null_mut(),
+                null_mut(),
+            );
+            let status = ntcreatekey(
+                &mut handle,
+                desired_access,
+                &mut obj_attr as *mut _,
+                title_index,
+                if class.is_some() {
+                    &mut class_unicode as *mut _
+                } else {
+                    null_mut()
+                },
+                create_options,
+                &mut disposition,
+            );
+            println!(" [.] NtCreateKey status 0x{:X}", status);
+            if NT_SUCCESS(status) {
+                (
+                    disposition,
+                    status,
+                    Some(Handle::new(handle as u64).unwrap()),
+                )
+            } else {
+                (0, status, None)
+            }
+        }
+    };
+    return (IPCResponse::NtCreateKey { disposition, code }, handle);
 }

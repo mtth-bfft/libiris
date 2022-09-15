@@ -54,3 +54,6 @@ path = "src/workers/fcntl_fsetfl_blocked.rs"
 name = "network_connect_worker"
 path = "src/workers/network_connect.rs"
 
+[[bin]]
+name = "windows_registry_worker"
+path = "src/workers/windows_registry.rs"

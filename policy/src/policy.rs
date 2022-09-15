@@ -1,4 +1,6 @@
-use crate::os::path::canonicalize_path;
+use crate::os::path::derive_all_file_paths_from_path;
+#[cfg(windows)]
+use crate::os::path::derive_all_reg_key_paths_from_path;
 use crate::Handle;
 use glob::Pattern;
 use serde::{Deserialize, Serialize};
@@ -12,10 +14,11 @@ pub struct Policy<'a> {
     inherit_handles: Vec<&'a Handle>,
     file_access: HashMap<String, (bool, bool, bool)>,
     file_lock: HashMap<String, (bool, bool, bool)>,
+    regkey_access: HashMap<String, (bool, bool)>,
 }
 
 impl<'a> Policy<'a> {
-    #[deprecated(note="Use nothing_allowed() instead to explicitly create an empty policy")]
+    #[deprecated(note = "Use nothing_allowed() instead to explicitly create an empty policy")]
     pub fn new() -> Self {
         Self::nothing_allowed()
     }
@@ -25,6 +28,7 @@ impl<'a> Policy<'a> {
             inherit_handles: Vec::new(),
             file_access: HashMap::new(),
             file_lock: HashMap::new(),
+            regkey_access: HashMap::new(),
         }
     }
 
@@ -33,6 +37,7 @@ impl<'a> Policy<'a> {
             inherit_handles: Vec::new(),
             file_access: self.file_access.clone(),
             file_lock: self.file_lock.clone(),
+            regkey_access: self.regkey_access.clone(),
         }
     }
 
@@ -57,7 +62,7 @@ impl<'a> Policy<'a> {
                 "Invalid parameters: to allow appending to a path, it must be writable".to_owned(),
             );
         }
-        for path in canonicalize_path(path) {
+        for path in derive_all_file_paths_from_path(path) {
             if let Err(e) = Pattern::new(&path) {
                 return Err(format!("Invalid file path pattern: {}", e));
             }
@@ -82,6 +87,25 @@ impl<'a> Policy<'a> {
                     restrict_to_append_only,
                 ),
             );
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    pub fn allow_regkey_access(
+        &mut self,
+        path: &str,
+        readable: bool,
+        writable: bool,
+    ) -> Result<(), String> {
+        let (prev_readable, prev_writable) = self
+            .regkey_access
+            .get(path)
+            .copied()
+            .unwrap_or((false, false));
+        for path in derive_all_reg_key_paths_from_path(path)? {
+            self.regkey_access
+                .insert(path, (prev_readable || readable, prev_writable || writable));
         }
         Ok(())
     }
@@ -116,6 +140,23 @@ impl<'a> Policy<'a> {
         )
     }
 
+    #[cfg(windows)]
+    pub fn get_regkey_allowed_access(&self, path: &str) -> (bool, bool) {
+        let mut result_readable = false;
+        let mut result_writable = false;
+        for (pattern, (readable, writable)) in self.regkey_access.iter() {
+            let pattern = Pattern::new(pattern).unwrap();
+            if pattern.matches(path) {
+                result_readable |= readable;
+                result_writable |= writable;
+            }
+            if result_readable && result_writable {
+                break;
+            }
+        }
+        (result_readable, result_writable)
+    }
+
     pub fn allow_file_lock(
         &mut self,
         path: &str,
@@ -123,7 +164,7 @@ impl<'a> Policy<'a> {
         writers: bool,
         deleters: bool,
     ) -> Result<(), String> {
-        for path in canonicalize_path(path) {
+        for path in derive_all_file_paths_from_path(path) {
             if let Err(e) = Pattern::new(&path) {
                 return Err(format!("Invalid file path pattern: {}", e));
             }

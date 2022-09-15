@@ -11,3 +11,7 @@ mod os;
 pub use handle::{CrossPlatformHandle, Handle};
 pub use os::handle::{downcast_to_handle, set_unmanaged_handle_inheritable};
 pub use policy::Policy;
+
+pub use os::path::derive_all_file_paths_from_path;
+#[cfg(windows)]
+pub use os::path::derive_all_reg_key_paths_from_path;
