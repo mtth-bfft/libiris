@@ -1,6 +1,8 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+use common::common_test_setup;
 use iris_worker::lower_final_sandbox_privileges_asap;
+use log::info;
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
 
@@ -107,7 +109,7 @@ fn check(
         panic!("Unknown function {}", test_function);
     };
 
-    println!("Opened file descriptor");
+    info!("Opened file descriptor");
     if fd >= 0 {
         check_fd(fd, request_read, request_write, request_only_append);
         let res = unsafe { libc::close(fd) };
@@ -369,7 +371,7 @@ fn check(
     } else {
         panic!("Unknown function {}", test_function);
     }
-    println!("Opened handle with access rights 0x{:X}", requested_rights);
+    info!("Opened handle with access rights 0x{:X}", requested_rights);
     if hfile != null_mut() {
         check_handle(hfile, request_read, request_write, request_only_append);
         assert_ne!(unsafe { CloseHandle(hfile) }, 0);
@@ -378,6 +380,8 @@ fn check(
 
 fn main() {
     lower_final_sandbox_privileges_asap();
+    common_test_setup();
+
     let args: Vec<String> = std::env::args().collect();
     assert_eq!(args.len(), 9);
     let test_function = args[1].parse::<u8>().unwrap();
@@ -389,8 +393,8 @@ fn main() {
     let request_write = args[7] == "1";
     let request_only_append = args[8] == "1";
 
-    println!(
-        " [.] {} should be {}readable {}writable{}",
+    info!(
+        "{} should be {}readable {}writable{}",
         args[2],
         if readable { "" } else { "non-" },
         if writable { "" } else { "non-" },
@@ -400,8 +404,8 @@ fn main() {
             ""
         }
     );
-    println!(
-        " [.] Checking if it is{}{}{}",
+    info!(
+        "Checking if it is{}{}{}",
         if request_read { " readable" } else { "" },
         if request_write { " writable" } else { "" },
         if request_only_append {
@@ -410,7 +414,6 @@ fn main() {
             ""
         }
     );
-
     check(
         test_function,
         &path,

@@ -2,6 +2,7 @@ use crate::ipc::IPC_MESSAGE_MAX_SIZE;
 use crate::messagepipe::CrossPlatformMessagePipe;
 use core::ptr::null_mut;
 use iris_policy::{CrossPlatformHandle, Handle};
+use log::debug;
 use std::convert::TryInto;
 use std::ffi::CString;
 use winapi::shared::minwindef::DWORD;
@@ -96,7 +97,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     return Err(format!("ConnectNamedPipe() failed with code {}", err));
                 }
             }
-            println!("Using ipc pipe {}", name_nul.to_string_lossy());
+            debug!("Using ipc pipe {}", name_nul.to_string_lossy());
             let mut new_mode: DWORD = PIPE_READMODE_MESSAGE;
             let res = unsafe {
                 SetNamedPipeHandleState(

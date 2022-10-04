@@ -1,5 +1,6 @@
 use iris_ipc::{IPCRequest, IPCResponse};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use log::warn;
 use std::convert::TryInto;
 use std::ffi::CString;
 
@@ -15,7 +16,7 @@ pub(crate) fn handle_os_specific_request(
             append_only,
         } => handle_open_file(policy, path, read, write, append_only),
         unknown => {
-            println!(" [!] Unexpected request from worker: {:?}", unknown);
+            warn!("Unexpected request from worker: {:?}", unknown);
             (IPCResponse::GenericCode(-(libc::EINVAL as i64)), None)
         }
     }
@@ -50,8 +51,8 @@ pub(crate) fn handle_open_file(
         || (requests_read && !can_read)
         || (requests_write && (!can_write || (!requests_append_only && can_only_append)))
     {
-        println!(
-            " [!] Worker denied{}{}{} access to {} ({})",
+        warn!(
+            "Worker denied{}{}{} access to {} ({})",
             if requests_read && !can_read {
                 " read"
             } else {

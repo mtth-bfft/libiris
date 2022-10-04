@@ -1,14 +1,19 @@
 #[cfg(target_family = "windows")]
 #[test]
-fn fcntl_fsetfd_blocked() {}
+fn fcntl_fsetfd_blocked() {
+    use log::info;
+
+    info!("There is no fcntl() on Windows");
+}
 
 #[cfg(target_family = "unix")]
 #[test]
 fn fcntl_fsetfd_blocked() {
-    use common::{cleanup_tmp_file, get_worker_bin_path, open_tmp_file};
+    use common::{cleanup_tmp_file, common_test_setup, get_worker_bin_path, open_tmp_file};
     use iris_broker::{downcast_to_handle, Policy, Worker};
     use std::ffi::CString;
 
+    common_test_setup();
     let worker_binary = get_worker_bin_path();
     let (tmpout, tmpoutpath) = open_tmp_file();
     let tmpout = downcast_to_handle(tmpout);

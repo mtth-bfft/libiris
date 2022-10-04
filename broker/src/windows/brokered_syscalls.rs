@@ -2,6 +2,7 @@ use crate::os::get_proc_address::get_proc_address;
 use core::ptr::null_mut;
 use iris_ipc::{IPCRequest, IPCResponse};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use log::{error, warn};
 use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::ntdef::{
     InitializeObjectAttributes, NTSTATUS, NT_SUCCESS, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE,
@@ -119,7 +120,7 @@ pub(crate) fn handle_os_specific_request(
             do_create,
         ),
         unknown => {
-            println!(" [!] Unexpected request from worker: {:?}", unknown);
+            error!("Unexpected request from worker: {:?}", unknown);
             (IPCResponse::GenericError(STATUS_NOT_SUPPORTED), None)
         }
     }
@@ -146,8 +147,8 @@ fn handle_ntcreatefile(
             | FILE_WRITE_APPEND_ONLY_RIGHTS
             | FILE_ALWAYS_GRANTED_RIGHTS);
     if never_granted != 0 {
-        println!(
-            " [!] Worker requested access rights 0x{:X} to {} but such access cannot be delegated",
+        warn!(
+            "Worker requested access rights 0x{:X} to {} but such access cannot be delegated",
             never_granted, path
         );
         return (IPCResponse::GenericError(STATUS_ACCESS_DENIED), None);
@@ -174,8 +175,8 @@ fn handle_ntcreatefile(
         || (requests_write_anywhere && (!can_write || can_only_append))
         || (requests_write_append_only && !can_write)
     {
-        println!(
-            " [!] Worker denied{}{}{} access to {} ({})",
+        warn!(
+            "Worker denied{}{}{} access to {} ({})",
             if requests_read && !can_read {
                 " read"
             } else {
@@ -217,8 +218,8 @@ fn handle_ntcreatefile(
             || ((share_access & FILE_SHARE_WRITE) == 0 && !can_lock_writers)
             || ((share_access & FILE_SHARE_DELETE) == 0 && !can_lock_deleters)
         {
-            println!(
-                " [!] Worker denied from locking other processes from{}{}{} {} ({})",
+            warn!(
+                "Worker denied from locking other processes from{}{}{} {} ({})",
                 if (share_access & FILE_SHARE_READ) == 0 {
                     " reading"
                 } else {
@@ -321,15 +322,15 @@ fn handle_ntcreatekey(
     let never_granted =
         desired_access & !(KEY_READ_RIGHTS | KEY_WRITE_RIGHTS | KEY_ALWAYS_GRANTED_RIGHTS);
     if never_granted != 0 {
-        println!(
-            " [!] Worker requested access rights 0x{:X} to {} but such access cannot be delegated",
+        warn!(
+            "Worker requested access rights 0x{:X} to {} but such access cannot be delegated",
             never_granted, path
         );
         return (IPCResponse::GenericError(STATUS_ACCESS_DENIED), None);
     }
     if create_options & !(REG_OPTION_VOLATILE | REG_OPTION_NON_VOLATILE) != 0 {
-        println!(
-            " [!] Worker requested unsupported registry key options 0x{:X} on {}",
+        warn!(
+            "Worker requested unsupported registry key options 0x{:X} on {}",
             create_options & !(REG_OPTION_VOLATILE | REG_OPTION_NON_VOLATILE),
             path
         );
@@ -344,8 +345,8 @@ fn handle_ntcreatekey(
         || (wants_write && !can_write)
         || (!wants_read && !wants_write && !can_read && !can_write)
     {
-        println!(
-            " [!] Worker denied {}{} access (0x{:X}) to registry key {}",
+        warn!(
+            "Worker denied {}{} access (0x{:X}) to registry key {}",
             if wants_read { "read" } else { "" },
             if wants_write { "write" } else { "" },
             desired_access,
@@ -390,7 +391,6 @@ fn handle_ntcreatekey(
                 null_mut(),
             );
             let status = ntopenkey(&mut handle, desired_access, &mut obj_attr as *mut _);
-            println!(" [.] NtOpenKey status 0x{:X}", status);
             if NT_SUCCESS(status) {
                 (
                     REG_OPENED_EXISTING_KEY,
@@ -424,7 +424,6 @@ fn handle_ntcreatekey(
                 create_options,
                 &mut disposition,
             );
-            println!(" [.] NtCreateKey status 0x{:X}", status);
             if NT_SUCCESS(status) {
                 (
                     disposition,

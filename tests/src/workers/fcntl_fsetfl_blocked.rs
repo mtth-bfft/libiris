@@ -3,11 +3,13 @@ fn main() {}
 
 #[cfg(target_family = "unix")]
 fn main() {
+    use common::common_test_setup;
     use iris_worker::lower_final_sandbox_privileges_asap;
     use libc::c_int;
     use std::ffi::CString;
 
     lower_final_sandbox_privileges_asap();
+    common_test_setup();
     let args: Vec<String> = std::env::args().collect();
     assert_eq!(args.len(), 2);
     let path = CString::new(args[1].as_str()).unwrap();

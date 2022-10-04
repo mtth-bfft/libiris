@@ -5,6 +5,7 @@ use core::ptr::{null, null_mut};
 use core::sync::atomic::compiler_fence;
 use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use log::{debug, info};
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -122,8 +123,8 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
             unsafe { GetLastError() }
         );
     }
-    println!(
-        " [.] Hooking {} function {} : previously at {:?} , now at {:?}",
+    debug!(
+        "Hooking {} function {} : previously at {:?} , now at {:?}",
         dll_name, func_name, orig_ptr, new_ptr
     );
 
@@ -215,8 +216,8 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
             };
             let module_original_name =
                 unsafe { CStr::from_ptr(pe_base.offset((*exports_directory).Name as isize)) };
-            println!(
-                " [.] Checking if {} at {:?} exports functions to hook...",
+            debug!(
+                "Checking if {} at {:?} exports functions to hook...",
                 module_original_name.to_string_lossy(),
                 pe_base
             );
@@ -229,8 +230,8 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
                 let rva_address = unsafe { function_rvas.offset(export_nb as isize) };
                 let exported_ptr = unsafe { pe_base.offset((*rva_address) as isize) };
                 if exported_ptr == (orig_ptr as *const i8) {
-                    println!(
-                        " [+] Hooking export ordinal {}",
+                    debug!(
+                        "Hooking export ordinal {}",
                         export_nb + unsafe { (*exports_directory).Base }
                     );
                     let (a, b) = (pe_base as usize, new_ptr as usize);
@@ -239,7 +240,7 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
                     } else {
                         if trampoline_addr.is_none() {
                             // TODO: perform an IPC for the broker to do this setup (we might have ACG enabled and fail to do this)
-                            println!(" [.] Trampoline needed");
+                            debug!("Trampoline needed");
                             let alloc_granularity = {
                                 let mut sysinfo: SYSTEM_INFO = unsafe { std::mem::zeroed() };
                                 unsafe {
@@ -247,7 +248,7 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
                                 }
                                 sysinfo.dwAllocationGranularity as usize
                             };
-                            println!(" [.] Allocation granularity: {} bytes", alloc_granularity);
+                            debug!("Allocation granularity: {} bytes", alloc_granularity);
                             let mut ptr_candidate =
                                 align_ptr(pe_base as *mut i8, alloc_granularity);
                             let mut mem_info: MEMORY_BASIC_INFORMATION =
@@ -286,14 +287,13 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
                                     )
                                 };
                                 if res == null_mut() {
-                                    println!(
-                                        " [.] VirtualAlloc({:?}) failed with error {}",
+                                    panic!(
+                                        "VirtualAlloc({:?}) failed with error {}",
                                         ptr_candidate,
                                         unsafe { GetLastError() }
                                     );
-                                    continue;
                                 }
-                                println!(" [.] Trampoline at {:?}", ptr_candidate);
+                                debug!("Trampoline at {:?}", ptr_candidate);
                                 write_trampoline(ptr_candidate, new_ptr);
                                 let mut unused: DWORD = 0;
                                 let res = unsafe {
@@ -312,8 +312,7 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
                                             MEM_RELEASE,
                                         )
                                     };
-                                    println!(" [.] VirtualProtect({:?}, PAGE_EXECUTE_READ) failed with error {}", ptr_candidate, unsafe { GetLastError() });
-                                    continue;
+                                    panic!("VirtualProtect({:?}, PAGE_EXECUTE_READ) failed with error {}", ptr_candidate, unsafe { GetLastError() });
                                 }
                                 // Ensure instruction cache is coherent before making anyone jump into our trampoline
                                 let res = unsafe {
@@ -331,12 +330,11 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
                                             MEM_RELEASE,
                                         )
                                     };
-                                    println!(
-                                        " [.] FlushInstructionCache({:?}) failed with error {}",
+                                    panic!(
+                                        "FlushInstructionCache({:?}) failed with error {}",
                                         ptr_candidate,
                                         unsafe { GetLastError() }
                                     );
-                                    continue;
                                 }
                                 break;
                             }
@@ -394,7 +392,7 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
                         break;
                     }
                     if thunk == orig_ptr as u64 {
-                        println!(" [.] Hooking import number {}", thunk_nb);
+                        debug!("Hooking import number {}", thunk_nb);
                         if arch == IMAGE_FILE_MACHINE_AMD64 {
                             hotpatch_u64(
                                 (new_ptr as usize).try_into().expect("pointer too large"),
@@ -734,17 +732,14 @@ extern "system" fn hook_ntcreatekey(
 // TODO: merge with Linux
 fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Option<Handle>) {
     let mut pipe = get_ipc_pipe();
-    println!(
-        " [.] Sending request {:?} (handle: {:?})",
-        &request, &handle
-    );
+    debug!("Sending IPC request {:?} (handle: {:?})", &request, &handle);
     pipe.send(&request, handle)
         .expect("unable to send IPC request to broker");
     let (resp, handle) = pipe
         .recv_with_handle()
         .expect("unable to receive IPC response from broker");
     let resp = resp.expect("broker closed our IPC pipe while expecting its response");
-    println!(" [.] Received response {:?} (handle: {:?})", &resp, &handle);
+    debug!("Received IPC response {:?} (handle: {:?})", &resp, &handle);
     (resp, handle)
 }
 
@@ -769,5 +764,5 @@ pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePi
     );
     hook_function("ntdll.dll", "NtOpenFile", hook_ntopenfile as *const fn());
     hook_function("ntdll.dll", "NtCreateKey", hook_ntcreatekey as *const fn());
-    println!(" [.] Worker ready for work");
+    info!("Worker ready for work");
 }

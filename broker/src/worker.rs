@@ -6,6 +6,7 @@ use iris_ipc::{
     IPC_HANDLE_ENV_NAME,
 };
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use log::{debug, warn};
 use std::ffi::{CStr, CString};
 
 pub struct Worker {
@@ -74,23 +75,18 @@ impl Worker {
                     Ok(Some(m)) => m,
                     Ok(None) => {
                         if !has_lowered_privileges {
-                            println!(" [!] Manager thread exiting, child closed its IPC socket before lowering privileges");
+                            warn!("Manager thread exiting, child closed its IPC socket before lowering privileges");
                             break;
                         }
-                        println!(
-                            " [.] Manager thread exiting cleanly, worker closed its IPC socket"
-                        );
+                        debug!("Manager thread exiting cleanly, worker closed its IPC socket");
                         break;
                     }
                     Err(e) => {
-                        println!(
-                            " [!] Manager thread exiting: error when receiving IPC: {}",
-                            e
-                        );
+                        warn!("Manager thread exiting: error when receiving IPC: {}", e);
                         break;
                     }
                 };
-                println!(" [.] Received request: {:?}", &request);
+                debug!("Received request: {:?}", &request);
                 let (resp, handle) = match request {
                     // Handle OS-agnostic requests
                     IPCRequest::LowerFinalSandboxPrivilegesAsap if !has_lowered_privileges => {
@@ -99,9 +95,9 @@ impl Worker {
                     }
                     other => handle_os_specific_request(other, &policy),
                 };
-                println!(" [.] Sending response: {:?}", &resp);
+                debug!("Sending response: {:?}", &resp);
                 if let Err(e) = broker_pipe.send(&resp, handle.as_ref()) {
-                    println!(" [!] Manager thread exiting: error when sending IPC: {}", e);
+                    warn!("Broker thread exiting: error when sending IPC: {}", e);
                     break;
                 }
             }

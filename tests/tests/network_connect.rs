@@ -1,5 +1,6 @@
-use common::{cleanup_tmp_file, get_worker_bin_path, open_tmp_file};
+use common::{cleanup_tmp_file, common_test_setup, get_worker_bin_path, open_tmp_file};
 use iris_broker::{downcast_to_handle, Policy, Worker};
+use log::info;
 use std::ffi::CString;
 use std::net::SocketAddr;
 use std::net::TcpListener;
@@ -8,15 +9,16 @@ use std::thread;
 #[ignore] // not ready yet
 #[test]
 fn network_connect_loopback() {
+    common_test_setup();
     let listener = TcpListener::bind("127.0.0.1:0").expect("unable to bind port on localhost");
     let port = match listener.local_addr() {
         Ok(SocketAddr::V4(addr)) => addr.port(),
         _ => panic!("Unable to query socket port"),
     };
-    println!(" [.] Waiting for connection on 127.0.0.1:{}", port);
+    info!("Waiting for connection on 127.0.0.1:{}", port);
     thread::spawn(move || match listener.accept() {
-        Ok((_sock, addr)) => println!(" [+] Ok, received connect from {:?}", addr),
-        Err(e) => println!(" [!] ERROR when accepting connection: {}", e),
+        Ok((_sock, addr)) => info!("Ok, received connect from {:?}", addr),
+        Err(e) => panic!("Could not accept() incoming connections: {}", e),
     });
 
     let worker_binary = get_worker_bin_path();

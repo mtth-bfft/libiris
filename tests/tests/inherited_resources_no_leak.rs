@@ -1,4 +1,6 @@
-use common::{check_worker_handles, cleanup_tmp_file, get_worker_bin_path, open_tmp_file};
+use common::{
+    check_worker_handles, cleanup_tmp_file, common_test_setup, get_worker_bin_path, open_tmp_file,
+};
 use iris_broker::{downcast_to_handle, CrossPlatformHandle, Policy, Worker};
 use std::fs::File;
 
@@ -31,6 +33,7 @@ fn os_specific_setup() {
 #[ignore] // not ready for now
 #[test]
 fn inherited_resources_no_leak() {
+    common_test_setup();
     os_specific_setup();
 
     let worker_binary = get_worker_bin_path();

@@ -1,14 +1,16 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+use common::common_test_setup;
 use iris_worker::lower_final_sandbox_privileges_asap;
+use log::info;
 
 #[cfg(target_family = "unix")]
 fn check(_ip: &str, _port: u16) {
-    println!("Not implemented");
+    info!("Not implemented");
 }
 
 #[cfg(target_family = "windows")]
-fn check(ip: &str, port: u16) -> bool {
+fn check(ip: &str, port: u16) {
     use std::ffi::CString;
     use winapi::shared::minwindef::MAKEWORD;
     use winapi::shared::ws2def::{AF_INET, IPPROTO_TCP, SOCKADDR_IN};
@@ -20,13 +22,11 @@ fn check(ip: &str, port: u16) -> bool {
     let mut wsa_data: WSADATA = unsafe { std::mem::zeroed() };
     let res = unsafe { WSAStartup(MAKEWORD(2, 2), &mut wsa_data as *mut _) };
     if res != 0 {
-        println!("WSAStartup failed with code {}", res);
-        return false;
+        panic!("WSAStartup failed with code {}", res);
     }
     let sock = unsafe { socket(AF_INET, SOCK_STREAM, IPPROTO_TCP as i32) };
     if sock == INVALID_SOCKET {
-        println!("socket() failed with code {}", unsafe { WSAGetLastError() });
-        return false;
+        panic!("socket() failed with code {}", unsafe { WSAGetLastError() });
     }
     let mut addr: SOCKADDR_IN = unsafe { std::mem::zeroed() };
     addr.sin_family = AF_INET as u16;
@@ -45,20 +45,19 @@ fn check(ip: &str, port: u16) -> bool {
         )
     };
     if res == SOCKET_ERROR {
-        println!("connect() failed with code {}", unsafe {
+        panic!("connect() failed with code {}", unsafe {
             WSAGetLastError()
         });
-        return false;
     }
-    true
 }
 
 fn main() {
     lower_final_sandbox_privileges_asap();
+    common_test_setup();
+
     let args: Vec<String> = std::env::args().collect();
     assert_eq!(args.len(), 3, "invalid argument count");
     let (ip, port) = (&args[1], args[2].parse::<u16>().expect("invalid port"));
-    println!(" [.] Connecting to {} on port {} ...", ip, port);
+    info!("Connecting to {} on port {} ...", ip, port);
     check(ip, port);
-    panic!();
 }

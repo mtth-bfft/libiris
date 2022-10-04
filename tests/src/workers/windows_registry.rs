@@ -1,12 +1,15 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+use log::info;
+
 #[cfg(unix)]
 fn main() {
-    println!("There's no registry on Unix");
+    info!("There's no registry on Unix");
 }
 
 #[cfg(windows)]
 fn main() {
+    use common::common_test_setup;
     use core::ptr::null_mut;
     use iris_worker::lower_final_sandbox_privileges_asap;
     use std::ffi::CString;
@@ -35,6 +38,8 @@ fn main() {
     ) -> NTSTATUS;
 
     lower_final_sandbox_privileges_asap();
+    common_test_setup();
+
     let args: Vec<String> = std::env::args().collect();
     assert_eq!(args.len(), 7);
     let test_function = args[1].parse::<u8>().unwrap();
@@ -43,14 +48,14 @@ fn main() {
     let writable = args[4] == "1";
     let request_read = args[5] == "1";
     let request_write = args[6] == "1";
-    println!(
-        " [.] {} should be {}readable {}writable",
+    info!(
+        "{} should be {}readable {}writable",
         args[2],
         if readable { "" } else { "non-" },
         if writable { "" } else { "non-" },
     );
-    println!(
-        " [.] Checking if it is{}{}",
+    info!(
+        "Checking if it is{}{}",
         if request_read { " readable" } else { "" },
         if request_write { " writable" } else { "" },
     );

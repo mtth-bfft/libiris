@@ -5,6 +5,7 @@
 
 use core::ptr::null_mut;
 use iris_broker::Worker;
+use log::{debug, info, warn};
 use std::convert::TryInto;
 use std::ffi::CString;
 use std::fs::File;
@@ -169,7 +170,7 @@ pub fn check_worker_handles(worker: &Worker) {
     );
 
     // Wait for the worker to DebugBreak(), so that we know the process is fully initialized and in main()
-    println!("Waiting for child to break into debugger...");
+    debug!("Waiting for child to break into debugger...");
     let mut dbg_event: DEBUG_EVENT = unsafe { std::mem::zeroed() };
     loop {
         let res = unsafe { WaitForDebugEvent(&mut dbg_event as *mut _, INFINITE) };
@@ -190,7 +191,7 @@ pub fn check_worker_handles(worker: &Worker) {
                 )
             };
             if res != 0 && expected == bytes_read {
-                println!(" [.] Worker signaled us it is ready, beginning inspection");
+                debug!("Worker signaled us it is ready, beginning inspection");
                 break;
             }
         }
@@ -271,8 +272,8 @@ pub fn check_worker_handles(worker: &Worker) {
         buffer.len()
             >= std::mem::size_of::<ULONG>() + handle_count * std::mem::size_of::<SYSTEM_HANDLE>()
     );
-    println!(
-        "{} handles reported by NtQuerySystemInformation",
+    info!(
+        "Checking {} handles reported by NtQuerySystemInformation...",
         handle_count
     );
 
@@ -395,7 +396,7 @@ pub fn check_worker_handles(worker: &Worker) {
             GetLastError()
         });
 
-        println!(
+        debug!(
             "> {} (name: {:?}) (shared with {:?})",
             obj_type, name, other_holder_processes
         );
@@ -451,12 +452,12 @@ pub fn check_worker_handles(worker: &Worker) {
         } else if obj_type == "alpc port" {
             // ALPC port access usually isn't filtered, the identity of callers is checked at runtime instead
             // Check that the ALPC port can be opened with the worker's token
-            println!("/!\\ FIXME alpc");
+            warn!("/!\\ FIXME alpc");
         } else if obj_type == "directory" {
             // /!\ This is a kernel object directory, not a file directory
             // Since this is a named object (can be opened by NtOpenDirectoryObject()), just check
             // that the process token allows opening it
-            println!("/!\\ FIXME directory");
+            warn!("/!\\ FIXME directory");
         } else if obj_type == "file" {
             // This can be a file, file directory, or named pipe
             let name = name.expect("unexpected unnamed file opened by process");
@@ -487,7 +488,7 @@ pub fn check_worker_handles(worker: &Worker) {
         } else if obj_type == "key" {
             // A named registry key can be opened by name via NtCreateKey(), just check that the
             // process token allows opening it
-            println!("/!\\ FIXME key");
+            warn!("/!\\ FIXME key");
         } else if obj_type == "process" {
             // Only accept process handles to the worker process itself
             assert_eq!(

@@ -1,9 +1,10 @@
-use common::{cleanup_tmp_file, get_worker_bin_path, open_tmp_file};
+use common::{cleanup_tmp_file, common_test_setup, get_worker_bin_path, open_tmp_file};
 use iris_broker::{downcast_to_handle, Policy, Worker};
 use std::io::{Seek, SeekFrom, Write};
 
 #[test]
 fn stdout_stderr() {
+    common_test_setup();
     let (mut tmpin, tmpinpath) = open_tmp_file();
     let (tmpout, tmpoutpath) = open_tmp_file();
     let (tmperr, tmperrpath) = open_tmp_file();

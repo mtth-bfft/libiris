@@ -1,8 +1,9 @@
-use common::{cleanup_tmp_file, get_worker_bin_path, open_tmp_file};
+use common::{cleanup_tmp_file, common_test_setup, get_worker_bin_path, open_tmp_file};
 use iris_broker::{downcast_to_handle, Policy, Worker};
 
 #[test]
 fn inherited_dup_handles() {
+    common_test_setup();
     let (tmpout, tmpoutpath) = open_tmp_file(); // duplicate tmpout as stdout and stderr and a handle to be inherited
     let (tmpin, tmpinpath) = open_tmp_file(); // duplicate tmpin as stdin and a handle to be inherited
     let (tmpout, tmpin) = (downcast_to_handle(tmpout), downcast_to_handle(tmpin));

@@ -7,6 +7,7 @@ edition = "2021"
 [dependencies]
 iris-ipc = { path = "../ipc" }
 iris-policy = { path = "../policy" }
+log = "0.4.17"
 
 [target.'cfg(target_os="linux")'.dependencies]
 libc = "0.2.94"

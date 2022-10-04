@@ -4,9 +4,10 @@ use iris_ipc::{
     IPC_HANDLE_ENV_NAME,
 };
 use iris_policy::{CrossPlatformHandle, Handle};
+use log::{debug, info};
 
 pub fn lower_final_sandbox_privileges_asap() {
-    println!(" [.] Lowering final sandbox privileges");
+    info!("Lowering final sandbox privileges");
 
     let handle = std::env::var(IPC_HANDLE_ENV_NAME)
         .expect("missing environment variable containing the IPC handle");
@@ -32,9 +33,9 @@ pub fn lower_final_sandbox_privileges_asap() {
             other
         ),
     };
-    println!(" [.] Policy applied: {:?}", pol);
+    debug!("Policy applied: {:?}", pol);
 
     lockdown::lower_final_sandbox_privileges(&pol, ipc);
 
-    println!(" [.] Now running with final privileges");
+    info!("Now running with final privileges");
 }

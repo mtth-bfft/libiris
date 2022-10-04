@@ -3,6 +3,7 @@ use core::ptr::null;
 use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use libc::c_int;
+use log::{debug, warn};
 use seccomp_sys::{
     scmp_arg_cmp, scmp_compare, scmp_filter_attr, seccomp_attr_set, seccomp_init, seccomp_load,
     seccomp_release, seccomp_rule_add, seccomp_syscall_resolve_name, SCMP_ACT_ALLOW, SCMP_ACT_TRAP,
@@ -161,7 +162,7 @@ pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePi
         );
     }
     if old_sigaction.sa_sigaction != libc::SIG_DFL && old_sigaction.sa_sigaction != libc::SIG_IGN {
-        println!(" [!] SIGSYS handler overwritten, the worker process might fail unexpectedly");
+        panic!("SIGSYS handler is already used by something else, cannot use seccomp-bpf");
     }
 
     let res = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
@@ -189,11 +190,11 @@ pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePi
         let syscall_nr = match get_syscall_number(&syscall_name) {
             Ok(n) => n,
             Err(e) => {
-                eprintln!(" [.] Unable to find syscall {} : {}", syscall_name, e);
+                debug!("Syscall probably not supported {} : {}", syscall_name, e);
                 continue;
             }
         };
-        println!(" [.] Allowing syscall {} / {}", syscall_name, syscall_nr);
+        debug!("Allowing syscall {} / {}", syscall_name, syscall_nr);
         let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 0) };
         if res != 0 {
             panic!(
@@ -206,10 +207,7 @@ pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePi
     // Add special case handling for fcntl() with F_GETFL only
     // - F_SETFL would allow a worker to clear the O_APPEND flag on an opened file
     let syscall_nr = get_syscall_number("fcntl").unwrap();
-    println!(
-        " [.] Allowing syscall fcntl / {} for F_GETFL only",
-        syscall_nr
-    );
+    debug!("Allowing syscall fcntl / {} for F_GETFL only", syscall_nr);
     let a0_pid_comparator = scmp_arg_cmp {
         arg: 0, // first syscall argument
         op: scmp_compare::SCMP_CMP_EQ,
@@ -218,15 +216,12 @@ pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePi
     };
     let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a0_pid_comparator) };
     if res != 0 {
-        println!(" [!] seccomp_rule_add(SCMP_ACT_ALLOW, fcntl, SCMP_A0(SCMP_CMP_EQ, F_GETFL)) failed with code {}", -res);
+        panic!("seccomp_rule_add(SCMP_ACT_ALLOW, fcntl, SCMP_A0(SCMP_CMP_EQ, F_GETFL)) failed with code {}", -res);
     }
 
     // Add special case handling for kill() on ourselves only (useful for e.g. raise())
     let syscall_nr = get_syscall_number("kill").unwrap();
-    println!(
-        " [.] Allowing syscall kill / {} on ourselves only",
-        syscall_nr
-    );
+    debug!("Allowing syscall kill / {} on ourselves only", syscall_nr);
     let mypid = std::process::id();
     let a0_pid_comparator = scmp_arg_cmp {
         arg: 0, // first syscall argument
@@ -236,11 +231,11 @@ pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePi
     };
     let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a0_pid_comparator) };
     if res != 0 {
-        println!(" [!] seccomp_rule_add(SCMP_ACT_ALLOW, kill, SCMP_A0(SCMP_CMP_EQ, getpid())) failed with code {}", -res);
+        panic!("seccomp_rule_add(SCMP_ACT_ALLOW, kill, SCMP_A0(SCMP_CMP_EQ, getpid())) failed with code {}", -res);
     }
 
     let syscall_nr = get_syscall_number("tgkill").unwrap();
-    println!(
+    debug!(
         " [.] Allowing syscall tgkill / {} on ourselves only",
         syscall_nr
     );
@@ -252,14 +247,11 @@ pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePi
     };
     let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a0_pid_comparator) };
     if res != 0 {
-        println!(" [!] seccomp_rule_add(SCMP_ACT_ALLOW, tgkill, SCMP_A0(SCMP_CMP_EQ, getpid())) failed with code {}", -res);
+        panic!("seccomp_rule_add(SCMP_ACT_ALLOW, tgkill, SCMP_A0(SCMP_CMP_EQ, getpid())) failed with code {}", -res);
     }
 
     let syscall_nr = get_syscall_number("tkill").unwrap();
-    println!(
-        " [.] Allowing syscall tkill / {} on ourselves only",
-        syscall_nr
-    );
+    debug!("Allowing syscall tkill / {} on ourselves only", syscall_nr);
     let mytid = unsafe { libc::syscall(libc::SYS_gettid) };
     let a0_tid_comparator = scmp_arg_cmp {
         arg: 0, // first syscall argument
@@ -272,13 +264,26 @@ pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePi
         panic!("seccomp_rule_add(SCMP_ACT_ALLOW, tkill, SCMP_A0(SCMP_CMP_EQ, gettid())) failed with code {}", -res);
     }
 
+    let syscall_nr = get_syscall_number("ioctl").unwrap();
+    debug!("Allowing syscall ioctl / {} for TCGETS only", syscall_nr);
+    let a1_tcgets_comparator = scmp_arg_cmp {
+        arg: 1, // second syscall argument (first is the file descriptor)
+        op: scmp_compare::SCMP_CMP_EQ,
+        datum_a: 21505,
+        datum_b: 0, // unused with SCMP_CMP_EQ
+    };
+    let res =
+        unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a1_tcgets_comparator) };
+    if res != 0 {
+        panic!("seccomp_rule_add(SCMP_ACT_ALLOW, ioctl, SCMP_A0(SCMP_CMP_EQ, TCGETS)) failed with code {}", -res);
+    }
+
     let res = unsafe { seccomp_load(filter) };
     if res != 0 {
         panic!("seccomp_load() failed with error {}", -res);
     }
-
     unsafe { seccomp_release(filter) };
-    println!("OK");
+    debug!("Process seccomp filter applied successfully");
 }
 
 pub(crate) fn get_syscall_number(name: &str) -> Result<i32, String> {
@@ -323,6 +328,7 @@ pub(crate) extern "C" fn sigsys_handler(
     // Be very careful when modifying this function: it *cannot* use
     // any syscall except those directly explicitly allowed by our
     // seccomp filter
+    // TODO: atomically set-compare a flag and panic!() if it's already set
     if signal_no != libc::SIGSYS {
         return;
     }
@@ -340,11 +346,10 @@ pub(crate) extern "C" fn sigsys_handler(
     let a3 = read_i64_from_ptr(ucontext, libc::REG_R10);
     let a4 = read_i64_from_ptr(ucontext, libc::REG_R8);
     let a5 = read_i64_from_ptr(ucontext, libc::REG_R9);
-    let msg = format!(
-        " [.] Syscall nr={} ({}, {}, {}, {}, {}, {}) intercepted by seccomp-trap\n",
+    debug!(
+        "Intercepted syscall nr={} ({}, {}, {}, {}, {}, {}) with seccomp-trap",
         syscall_nr, a0, a1, a2, a3, a4, a5
     );
-    unsafe { libc::write(2, msg.as_ptr() as *const _, msg.len()) };
 
     let response_code = match syscall_nr {
         libc::SYS_access => {
@@ -407,11 +412,11 @@ pub(crate) extern "C" fn sigsys_handler(
             }
         }
         _ => {
-            println!(" [!] Syscall not supported yet, denied by default");
+            warn!("Syscall not supported yet, denied by default");
             -(libc::EPERM as i64)
         }
     };
-    println!(" [.] Syscall result: {}", response_code);
+    debug!("Syscall result: {}", response_code);
     unsafe {
         (*ucontext).uc_mcontext.gregs[libc::REG_RAX as usize] = response_code;
     }
@@ -419,12 +424,14 @@ pub(crate) extern "C" fn sigsys_handler(
 
 fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Option<Handle>) {
     let mut pipe = get_ipc_pipe();
+    debug!("Sending IPC request {:?}", &request);
     pipe.send(&request, handle)
         .expect("unable to send IPC request to broker");
     let (resp, handle) = pipe
         .recv_with_handle()
         .expect("unable to receive IPC response from broker");
     let resp = resp.expect("broker closed our IPC pipe while expecting its response");
+    debug!("Received IPC response {:?}", &resp);
     (resp, handle)
 }
 
@@ -435,8 +442,8 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc
     if path.is_empty() {
         return -(libc::ENOENT as i64);
     }
-    println!(
-        " [.] Requesting access to file path {:?} (flags={})",
+    debug!(
+        "Requesting access to file path {:?} (flags={})",
         path, flags
     );
     // If path is relative, prepend the process CWD.
@@ -466,7 +473,7 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc
 }
 
 fn handle_access(path: &str, mode: libc::c_int) -> i64 {
-    println!(" [.] access({:?}, {}) called", path, mode);
+    debug!("Requesting access({:?}, {})", path, mode);
     // Workers cannot execute anything anyway
     if (mode & libc::X_OK) != 0 {
         -(libc::EACCES as i64)
@@ -490,10 +497,7 @@ fn handle_access(path: &str, mode: libc::c_int) -> i64 {
 }
 
 fn handle_chdir(path: &str) -> i64 {
-    println!(
-        " [.] chdir({:?}) called, emulating it without syscall...",
-        path
-    );
+    debug!("chdir({:?}) called, emulating it without syscall", path);
     set_cwd(path);
     0
 }

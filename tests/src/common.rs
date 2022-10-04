@@ -1,11 +1,14 @@
 use iris_broker::set_unmanaged_handle_inheritable;
+use log::{debug, info};
+use simple_logger::SimpleLogger;
 use std::ffi::{CString, OsString};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::sync::Once;
 
 // Common functions used by all tests for setup / check / teardown
 pub fn main() {
-    println!("This crate is not designed to be run directly, use 'cargo test' to run each module in tests/*.rs");
+    panic!("This crate is not designed to be run directly, use 'cargo test' to run each module in tests/*.rs");
 }
 
 // OS-specific modules
@@ -17,6 +20,17 @@ pub mod os;
 pub use os::check_worker_handles;
 
 // Cross-platform implementations
+
+static INIT_LOGGING: Once = Once::new();
+pub fn common_test_setup() {
+    INIT_LOGGING.call_once(|| {
+        SimpleLogger::new()
+            .init()
+            .expect("unable to initialize logging");
+    });
+    std::env::set_var("RUST_BACKTRACE", "full");
+}
+
 pub fn open_tmp_file() -> (File, PathBuf) {
     let mut tmpdir = std::env::temp_dir();
     for i in 1..1000 {
@@ -27,7 +41,7 @@ pub fn open_tmp_file() -> (File, PathBuf) {
             .create_new(true)
             .open(&tmpdir)
         {
-            println!(" [.] Storing temporary output to {}", tmpdir.display());
+            debug!("Storing temporary output to {}", tmpdir.display());
             set_unmanaged_handle_inheritable(&f, true).unwrap();
             return (f, tmpdir);
         }
@@ -76,6 +90,6 @@ pub fn get_worker_bin_path() -> CString {
             break;
         }
     }
-    println!(" [.] Worker binary: {}", worker_binary.display());
+    info!("Worker binary: {}", worker_binary.display());
     CString::new(worker_binary.as_os_str().to_string_lossy().as_bytes()).unwrap()
 }

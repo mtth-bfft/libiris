@@ -3,6 +3,7 @@ use crate::os::sid::Sid;
 use crate::process::CrossPlatformSandboxedProcess;
 use core::ptr::null_mut;
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use log::{debug, info};
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -212,7 +213,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         // so we sort to deduplicate)
         handles_to_inherit.sort();
         handles_to_inherit.dedup();
-        println!(" [.] Setting handles to inherit: {:?}", &handles_to_inherit);
+        debug!("Setting handles to inherit: {:?}", &handles_to_inherit);
         ptal.set(
             PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
             handles_to_inherit.as_ptr() as *const _,
@@ -344,7 +345,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 GetLastError()
             }));
         }
-        println!(" [.] Worker created (PID {})", pid);
+        info!("Worker created (PID {})", pid);
         Ok(Self {
             pid: pid.into(),
             h_process: proc_info.hProcess,

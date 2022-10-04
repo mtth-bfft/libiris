@@ -3,6 +3,7 @@ use core::ffi::c_void;
 use core::ptr::null;
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use libc::c_int;
+use log::debug;
 use std::convert::{TryFrom, TryInto};
 use std::ffi::{CStr, CString};
 use std::io::Error;
@@ -129,7 +130,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             ));
         }
 
-        println!(" [.] Worker PID={} created", pid);
+        debug!("Worker PID={} created", pid);
 
         Ok(Self {
             pid: pid.try_into().unwrap(),
@@ -165,8 +166,8 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
 
 extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
     let args = unsafe { Box::from_raw(args as *mut EntrypointParameters) };
-    println!(
-        " [.] Worker {} started with PID={}",
+    debug!(
+        "Worker {} started with PID={}",
         args.exe.to_string_lossy(),
         unsafe { libc::getpid() }
     );
