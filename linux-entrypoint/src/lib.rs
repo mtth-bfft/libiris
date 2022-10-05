@@ -1,6 +1,10 @@
 #![no_std]
 
+#[macro_use]
+mod error;
+
 use core::ffi::{CStr, c_void};
+use core::fmt::Write;
 use libc::c_int;
 
 pub struct EntrypointParameters {
@@ -13,48 +17,6 @@ pub struct EntrypointParameters {
     pub stdin: Option<c_int>,
     pub stdout: Option<c_int>,
     pub stderr: Option<c_int>,
-}
-
-unsafe fn errno() -> c_int {
-    *(libc::__errno_location())
-}
-
-unsafe fn reset_errno() {
-    *(libc::__errno_location()) = 0;
-}
-
-fn log_err(msg: &str) {
-    unsafe {
-        libc::write(libc::STDERR_FILENO, msg.as_ptr() as *const _, msg.len());
-    }
-}
-
-unsafe fn setup_std_file_descriptor(num: c_int, replace_with: Option<c_int>) {
-    libc::close(num);
-    if let Some(fd) = replace_with {
-        let res = libc::dup(fd);
-        if res < 0 {
-            log_err("dup() failed\n");
-            libc::exit(errno());
-        }
-        else if res != num {
-            log_err("dup() returned unexpected file descriptor number\n");
-            libc::exit(errno());
-        }
-    } else {
-        // Use libc::open instead of stdlib because it would set CLOEXEC to avoid leaking
-        // (which defeats the purpose)
-        let dev_null_path = CStr::from_ptr(b"/dev/null\0".as_ptr() as *const _);
-        let fd = libc::open(dev_null_path.as_ptr(), libc::O_RDONLY);
-        if fd < 0 {
-            log_err("open(/dev/null) failed\n");
-            libc::exit(errno());
-        }
-        else if fd != libc::STDIN_FILENO {
-            log_err("open(/dev/null) returned unexpected file descriptor number\n");
-            libc::exit(100005);
-        }
-    }
 }
 
 // You should be extra-careful when editing this function: it is executed as
@@ -70,21 +32,18 @@ pub extern "C" fn clone_entrypoint(args: *mut c_void) -> c_int {
         let fds_path = CStr::from_ptr(b"/proc/self/fd/\0".as_ptr() as *const _);
         let fds_fd = libc::open(fds_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC);
         if fds_fd < 0 {
-            log_err("open(/proc/self/fd/) failed\n");
-            return errno();
+            log_fatal!("open(/proc/self/fd/) failed with errno {}\n", errno());
         }
         let fds_dir = libc::fdopendir(fds_fd);
         if fds_dir.is_null() {
-            log_err("fdopendir(/proc/self/fd/) failed\n");
-            return errno();
+            log_fatal!("fdopendir(/proc/self/fd/) failed with errno {}\n", errno());
         }
         loop {
             reset_errno();
             let entry = libc::readdir(fds_dir);
             if entry.is_null() {
                 if errno() != 0 {
-                    log_err("readdir(/proc/self/fd/) failed\n");
-                    return errno();
+                    log_fatal!("readdir(/proc/self/fd/) failed with errno {}\n", errno());
                 }
                 break;
             }
@@ -94,17 +53,11 @@ pub extern "C" fn clone_entrypoint(args: *mut c_void) -> c_int {
             let num_str = CStr::from_ptr((*entry).d_name.as_ptr());
             let num_str = match num_str.to_str() {
                 Ok(s) => s,
-                Err(_) => {
-                    log_err("unable to parse /proc/self/fd/ entry as string\n");
-                    return 100001;
-                },
+                Err(_) => log_fatal!("unable to parse /proc/self/fd entry as string\n"),
             };
             let fd: libc::c_int = match num_str.parse::<i32>() {
                 Ok(n) => n,
-                Err(_) => {
-                    log_err("unable to parse /proc/self/fd/ entry as integer\n");
-                    return 100002;
-                },
+                Err(_) => log_fatal!("unable to parse /proc/self/fd/{} entry as integer\n", num_str),
             };
             // Exclude the file descriptor from the read_dir itself (if we close it, we might
             // break the /proc/self/fd/ enumeration)
@@ -125,8 +78,7 @@ pub extern "C" fn clone_entrypoint(args: *mut c_void) -> c_int {
             if !allow {
                 let res = libc::close(fd);
                 if res != 0 {
-                    log_err("failed to close inherited file descriptor\n");
-                    return 100006;
+                    log_fatal!("closing inherited file descriptor {} failed with errno {}\n", fd, errno());
                 }
             }
         }
@@ -149,5 +101,37 @@ pub extern "C" fn clone_entrypoint(args: *mut c_void) -> c_int {
         let errno_bytes = (errno as u32).to_be_bytes();
         libc::write(args.execve_errno_pipe, errno_bytes.as_ptr() as *const _, core::mem::size_of_val(&errno_bytes));
         libc::exit(errno);
+    }
+}
+
+unsafe fn errno() -> c_int {
+    *(libc::__errno_location())
+}
+
+unsafe fn reset_errno() {
+    *(libc::__errno_location()) = 0;
+}
+
+unsafe fn setup_std_file_descriptor(num: c_int, replace_with: Option<c_int>) {
+    libc::close(num);
+    if let Some(fd) = replace_with {
+        let res = libc::dup(fd);
+        if res < 0 {
+            log_fatal!("dup() failed with errno {}\n", errno());
+        }
+        else if res != num {
+            log_fatal!("dup() returned file descriptor number {}, expected {}\n", res, num);
+        }
+    } else {
+        // Use libc::open instead of stdlib because it would set CLOEXEC to avoid leaking
+        // (which defeats the purpose)
+        let dev_null_path = CStr::from_ptr(b"/dev/null\0".as_ptr() as *const _);
+        let res = libc::open(dev_null_path.as_ptr(), libc::O_RDONLY);
+        if res < 0 {
+            log_fatal!("open(/dev/null) failed with errno {}\n", errno());
+        }
+        else if res != num {
+            log_fatal!("open(/dev/null) returned file descriptor number {}, expected {}\n", res, num);
+        }
     }
 }
