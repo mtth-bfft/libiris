@@ -13,6 +13,7 @@ This repository contains:
 * `worker`: the library loaded by sandboxed processes (*workers*) when they start
 * `policy`: a crate to specify exactly what a worker can do
 * `broker`: the library which allows creating workers, based on a policy
+* `linux-entrypoint`: the very first function executed by Linux workers when they start, separated because it needs to be compiled without the Rust standard library (which may be in an inconsistent state, e.g. locks held by threads which do not exist after `clone()`)
 * `ipc`: a crate which allows workers to send requests to their broker, and get resources in response
 * `tests`: an integration test suite for all the crates above
 

@@ -2,10 +2,11 @@ use crate::process::CrossPlatformSandboxedProcess;
 use core::ffi::c_void;
 use core::ptr::null;
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use linux_entrypoint::{EntrypointParameters, clone_entrypoint};
 use libc::c_int;
 use log::debug;
 use std::convert::{TryFrom, TryInto};
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::io::Error;
 
 const DEFAULT_CLONE_STACK_SIZE: usize = 1 * 1024 * 1024;
@@ -16,17 +17,6 @@ pub struct OSSandboxedProcess {
     // know about the thread created unsafely
     #[allow(dead_code)]
     initial_thread_stack: Vec<u8>,
-}
-
-struct EntrypointParameters {
-    exe: CString,
-    argv: Vec<CString>,
-    envp: Vec<CString>,
-    allowed_file_descriptors: Vec<c_int>,
-    execve_errno_pipe: c_int,
-    stdin: Option<c_int>,
-    stdout: Option<c_int>,
-    stderr: Option<c_int>,
 }
 
 impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
@@ -77,16 +67,21 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         };
         child_pipe.set_inheritable(false)?; // set the pipe as CLOEXEC so it gets closed on successful execve(), which we can detect
 
-        // Pack together everything that needs to be passed to the new process
-        let entrypoint_params = EntrypointParameters {
-            exe: exe.to_owned(),
-            argv: argv.iter().map(|x| (*x).to_owned()).collect(),
-            envp: envp.iter().map(|x| (*x).to_owned()).collect(),
-            allowed_file_descriptors: policy
+        // Pack together everything that needs to be passed to the new process,
+        // and ensure their lifetime is long enough to pass clone()
+        let argv: Vec<*const i8> = argv.iter().map(|x| x.as_ptr()).chain(std::iter::once(null())).collect();
+        let envp: Vec<*const i8> = envp.iter().map(|x| x.as_ptr()).chain(std::iter::once(null())).collect();
+        let allowed_file_descriptors: Vec<c_int> = policy
                 .get_inherited_handles()
                 .iter()
                 .map(|n| n.as_raw().try_into().unwrap())
-                .collect(),
+                .collect();
+        let entrypoint_params = EntrypointParameters {
+            exe: exe.as_ptr(),
+            argv: argv.as_ptr(),
+            envp: envp.as_ptr(),
+            allowed_file_descriptors: allowed_file_descriptors.as_ptr(),
+            allowed_file_descriptors_count: allowed_file_descriptors.len(),
             execve_errno_pipe: child_pipe.as_raw().try_into().unwrap(),
             stdin: stdin.map(|h| c_int::try_from(h.as_raw()).unwrap()),
             stdout: stdout.map(|h| c_int::try_from(h.as_raw()).unwrap()),
@@ -96,7 +91,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
 
         let pid = unsafe {
             libc::clone(
-                process_entrypoint,
+                clone_entrypoint,
                 stack_end_ptr,
                 clone_args,
                 entrypoint_params as *const _ as *mut c_void,
@@ -161,129 +156,5 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 return Ok((128 + libc::WTERMSIG(wstatus)).try_into().unwrap());
             }
         }
-    }
-}
-
-extern "C" fn process_entrypoint(args: *mut c_void) -> c_int {
-    let args = unsafe { Box::from_raw(args as *mut EntrypointParameters) };
-    debug!(
-        "Worker {} started with PID={}",
-        args.exe.to_string_lossy(),
-        unsafe { libc::getpid() }
-    );
-    let dev_null_path = CString::new("/dev/null").unwrap();
-
-    // TODO: set the umask
-
-    // Close stdin and replace it with /dev/null (so that any read(stdin) deterministically returns EOF)
-    // We use libc::open in the lines below, because Rust's stdlib sets CLOEXEC to avoid leaking file descriptors.
-    unsafe {
-        libc::close(libc::STDIN_FILENO);
-    }
-    if let Some(fd) = args.stdin {
-        let res = unsafe { libc::dup(fd) };
-        if res < 0 || res != libc::STDIN_FILENO {
-            let errno = std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(200);
-            return errno;
-        }
-    } else {
-        unsafe {
-            libc::open(dev_null_path.as_ptr(), libc::O_RDONLY);
-        }
-    }
-
-    // Close stdout and replace it with the user-provided file descriptor, or /dev/null
-    // (so that any write(stdout) deterministically is ignored)
-    unsafe {
-        libc::close(libc::STDOUT_FILENO);
-    }
-    if let Some(fd) = args.stdout {
-        let res = unsafe { libc::dup(fd) };
-        if res < 0 || res != libc::STDOUT_FILENO {
-            let errno = std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(201);
-            return errno;
-        }
-    } else {
-        unsafe {
-            libc::open(dev_null_path.as_ptr(), libc::O_WRONLY);
-        }
-    }
-
-    // Close stderr and replace it with the user-provided file descriptor, or /dev/null
-    // (so that any write(stderr) deterministically is ignored)
-    unsafe {
-        libc::close(libc::STDERR_FILENO);
-    }
-    if let Some(fd) = args.stderr {
-        let res = unsafe { libc::dup(fd) };
-        if res < 0 || res != libc::STDERR_FILENO {
-            let errno = std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(202);
-            return errno;
-        }
-    } else {
-        unsafe {
-            libc::open(dev_null_path.as_ptr(), libc::O_WRONLY);
-        }
-    }
-
-    // Cleanup leftover file descriptors from our parent or from code injected into our process
-    for entry in std::fs::read_dir("/proc/self/fd/").expect("unable to read /proc/self/fd/") {
-        let entry = entry.expect("unable to read entry from /proc/self/fd/");
-        if !entry
-            .file_type()
-            .expect("unable to read file type from /proc/self/fd")
-            .is_symlink()
-        {
-            continue;
-        }
-        let mut path = entry.path();
-        loop {
-            match std::fs::read_link(&path) {
-                Ok(target) => path = target,
-                Err(_) => break,
-            }
-        }
-        // Exclude the file descriptor from the read_dir itself (if we close it, we might
-        // break the /proc/self/fd/ enumeration)
-        if path.to_string_lossy() == format!("/proc/{}/fd", std::process::id()) {
-            continue;
-        }
-        if let Ok(fd) = entry.file_name().to_string_lossy().parse::<i32>() {
-            if fd <= libc::STDERR_FILENO || fd == args.execve_errno_pipe {
-                continue; // don't close the CLOEXEC pipe used to check if execve() worked, otherwise it loses its purpose
-            }
-            if !args.allowed_file_descriptors.contains(&fd) {
-                unsafe {
-                    libc::close(fd);
-                }
-            }
-        }
-    }
-
-    let argv: Vec<*const i8> = args
-        .argv
-        .iter()
-        .map(|x| x.as_ptr())
-        .chain(std::iter::once(null()))
-        .collect();
-    let envp: Vec<*const i8> = args
-        .envp
-        .iter()
-        .map(|x| x.as_ptr())
-        .chain(std::iter::once(null()))
-        .collect();
-    unsafe { libc::execve(args.exe.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
-
-    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-    let errno_bytes = (errno as u32).to_be_bytes();
-    unsafe {
-        libc::write(args.execve_errno_pipe, errno_bytes.as_ptr() as *const _, 4);
-        libc::exit(errno);
     }
 }
