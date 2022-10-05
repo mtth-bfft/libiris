@@ -299,14 +299,6 @@ pub(crate) fn get_syscall_number(name: &str) -> Result<i32, String> {
 }
 
 // FIXME: replace this static lifetime with the lifetime of an additional "syscall context" parameter
-/*
-fn read_cstring_from_ptr(ptr: i64) -> &'static CStr {
-    unsafe {
-        CStr::from_ptr(ptr as *const _)
-    }
-}
-*/
-
 fn read_string_from_ptr(ptr: i64) -> Option<&'static str> {
     let cstr = unsafe { CStr::from_ptr(ptr as *const _) };
     let utf8 = match cstr.to_str() {
@@ -401,8 +393,8 @@ pub(crate) extern "C" fn sigsys_handler(
             }
         }
         libc::SYS_openat => {
-            // TODO: resolve the file descriptor or CWD if given as argument and path isn't absolute.
-            // /!\ readlink(/proc/self/fd/%d) might not be up to date: may have been moved after being opened. Use fstat(fd)?
+            // Note: the dirfd passed cannot be accurately resolved to a valid path (you can
+            // readlink(/proc/self/fd/%d) but it might not be up to date if the folder has been moved
             let (dirfd, path, flags, mode) =
                 (a0 as i32, read_string_from_ptr(a1), a2 as i32, a3 as i32);
             if let Some(path) = path {
@@ -436,21 +428,21 @@ fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Opt
 }
 
 fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc::c_int) -> i64 {
-    if dirfd != libc::AT_FDCWD {
-        return -(libc::EINVAL as i64);
-    }
-    if path.is_empty() {
-        return -(libc::ENOENT as i64);
-    }
+    let path = match path.chars().next() {
+        Some('/') => path.to_owned(),
+        Some(_)  => {
+            if dirfd != libc::AT_FDCWD {
+                warn!("openat(dirfd, relative path) is only supported with AT_FDCWD in Linux sandboxes");
+                return (-(libc::EPERM)).into();
+            }
+            get_cwd().clone() + "/" + &path
+        },
+        None => return (-libc::EPERM).into(),
+    };
     debug!(
         "Requesting access to file path {:?} (flags={})",
-        path, flags
+        &path, flags
     );
-    // If path is relative, prepend the process CWD.
-    let mut path = path.to_owned();
-    if path.chars().next() != Some('/') {
-        path = get_cwd().clone() + "/" + &path;
-    }
     let request = IPCRequest::OpenFile {
         path,
         read: (flags & (libc::O_WRONLY)) == 0 && (flags & (libc::O_PATH)) == 0,

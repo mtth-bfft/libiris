@@ -72,24 +72,23 @@ fn check(
         && (!request_write || (writable && (!restrict_to_append_only || request_only_append)))
         && (request_read || request_write)
         && (readable || writable);
-
+    let mode = if request_read && !request_write {
+        libc::O_RDONLY
+    } else if !request_read && request_write {
+        libc::O_WRONLY
+    } else if request_read && request_write {
+        libc::O_RDWR
+    } else {
+        libc::O_PATH
+    } | if request_only_append {
+        libc::O_APPEND
+    } else {
+        0
+    };
+    unsafe {
+        *(libc::__errno_location()) = 0;
+    }
     let fd = if test_function == 1 {
-        let mode = if request_read && !request_write {
-            libc::O_RDONLY
-        } else if !request_read && request_write {
-            libc::O_WRONLY
-        } else if request_read && request_write {
-            libc::O_RDWR
-        } else {
-            libc::O_PATH
-        } | if request_only_append {
-            libc::O_APPEND
-        } else {
-            0
-        };
-        unsafe {
-            *(libc::__errno_location()) = 0;
-        }
         let res = unsafe { libc::syscall(libc::SYS_open, path.as_ptr(), mode, 0, 0, 0, 0) };
         let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
         assert!(
@@ -103,8 +102,18 @@ fn check(
         let fd: c_int = res.try_into().unwrap();
         fd
     } else if test_function == 2 {
-        // TODO: test with openat()
-        return;
+        let res = unsafe { libc::syscall(libc::SYS_openat, libc::STDERR_FILENO, path.as_ptr(), mode, 0, 0, 0) };
+        let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        assert!(
+            (should_work && res >= 0) || (!should_work && res == -1 && err == libc::EACCES),
+            "openat({}, mode={}) = {} (err = {})",
+            path.to_string_lossy(),
+            mode,
+            res,
+            err
+        );
+        let fd: c_int = res.try_into().unwrap();
+        fd
     } else {
         panic!("Unknown function {}", test_function);
     };

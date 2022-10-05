@@ -5,7 +5,7 @@ libiris
 
 libiris is a (work in progress) cross-platform sandboxing library. This project is not a production-ready sandbox, instead it aims at being a good development harness for codebases which need modifications for sandboxing.
 
-Sandboxing means reducing your program's *ambient authority* (what it can legitimately do) and the *attack surface* exposed to it (the amount of code it can trigger bugs in, to escape the sandbox). This requires understanding internals about each OS your program supports, and requires splitting your program into multiple processes (for reasons detailed in the [docs](./docs/)). This takes a lot of time and effort, and has no any user-visible added value. The goal of this project is to reduce entry costs, so that more developers try to sandbox their projects, and to document common solutions, so that developers without a security background are incentivized to reuse them.
+Sandboxing means reducing your program's *ambient authority* (what it can legitimately do) and the *attack surface* exposed to it (the amount of code it can trigger bugs in, to escape the sandbox). This requires understanding internals about each OS your program supports, and requires splitting your program into multiple processes (for reasons detailed in the [docs](./docs/)). This takes a lot of time and effort, and has no any user-visible added value. The goal of this project is to reduce entry costs, so that more developers try to sandbox their projects, and to document common solutions, so that developers without a security background are incentivized to reuse them instead of starting from scratch.
 
 This repository contains:
 
@@ -25,6 +25,10 @@ You will need:
 - this repository.
 
 Then a simple `cargo build` should be all it takes.
+
+# Known limitations
+
+There is no built-in way to track which path is associated with a file descriptor (on Unix) or a handle (on Windows), and tracking in the broker process would open a large attack surface for race conditions and state desynchronisation. Even if such an association was maintained with proper locking in brokers, workers from different brokers could still collaborate to e.g. move files, making their broker table desynchronized with reality. For this reason, operations on file descriptors are allowed unconditionnally, and the only access control possible is at file descriptor opening time. For instance, all system calls like `openat()` can only be partially supported in Linux workers, if callers do not use a file-descriptor-relative-path.
 
 # Contributing
 
