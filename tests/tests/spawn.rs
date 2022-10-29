@@ -1,10 +1,10 @@
-use common::{cleanup_tmp_file, common_test_setup, get_worker_bin_path, open_tmp_file};
+use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
 use iris_broker::{downcast_to_handle, Policy, Worker};
 
 #[test]
 fn spawn() {
     common_test_setup();
-    let worker_binary = get_worker_bin_path();
+    let worker_binary = get_worker_abs_path("spawn_worker");
     let (tmpout, tmpoutpath) = open_tmp_file();
     let tmpout = downcast_to_handle(tmpout);
     let mut worker = Worker::new(

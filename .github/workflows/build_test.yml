@@ -7,36 +7,41 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        run_os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.run_os }}
+        runner: [ubuntu-latest, windows-latest, win10-1809-ltsc-x64]
+        compile_arch: [x86_64, i686]
+        compile_profile: [debug, release]
+        include:
+          - runner: ubuntu-latest
+            compile_target: unknown-linux-musl
+          - runner: windows-latest
+            compile_target: pc-windows-msvc
+          - runner: win10-1809-ltsc-x64
+            compile_target: pc-windows-msvc
+          - compile_profile: release
+            cargo_arg: --release
+          - compile_profile: debug
+            cargo_arg: ""
+    runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@v2
     - uses: actions-rs/toolchain@v1
       with:
         toolchain: stable
+        target: ${{ matrix.compile_arch }}-${{ matrix.compile_target }}
     - name: Install libseccomp
       run: |
         sudo apt update
-        sudo apt install libseccomp-dev libseccomp2
-      if: ${{ matrix.run_os == 'ubuntu-latest' }}
-    - name: Build and run integration tests
+        sudo apt install -y libseccomp-dev libseccomp2
+      if: ${{ matrix.compile_target == 'unknown-linux-musl' }}
+    - name: Build
       env:
         RUSTFLAGS: -D warnings
       uses: actions-rs/cargo@v1
       with:
         command: build
-        args: --workspace --all-targets --all-features --release --verbose
+        args: ${{ matrix.cargo_arg }} --target ${{ matrix.compile_arch }}-${{ matrix.compile_target }} --workspace --all-targets --all-features --verbose
     - name: Run integration tests
-      run: cargo test --all --release --verbose
-
-  fmt:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          components: rustfmt
-      - name: Check rustfmt compliance
-        run: cargo fmt --all -- --check
-
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: ${{ matrix.cargo_arg }} --target ${{ matrix.compile_arch }}-${{ matrix.compile_target }} --all --verbose

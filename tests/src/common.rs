@@ -1,7 +1,7 @@
 use iris_broker::set_unmanaged_handle_inheritable;
 use log::{debug, info};
 use simple_logger::SimpleLogger;
-use std::ffi::{CString, OsString};
+use std::ffi::CString;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Once;
@@ -59,37 +59,34 @@ pub fn cleanup_tmp_file(path: &Path) {
     ));
 }
 
-pub fn get_worker_bin_path() -> CString {
+pub fn get_worker_abs_path(name: &str) -> CString {
     let exe = std::env::current_exe().unwrap();
-    let test_name = exe
-        .file_stem()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .rsplitn(2, '-')
-        .last()
-        .unwrap();
-    let file_name = format!("{}_worker", test_name);
-    let ext = exe.extension().and_then(|e| Some(OsString::from(e)));
-    let mut dir = exe.clone();
-    let mut worker_binary;
-    loop {
-        dir = dir
-            .parent()
-            .expect(&format!(
-                "worker binary {} not found in any parent directory of {}",
-                &file_name,
-                exe.to_string_lossy()
-            ))
-            .to_path_buf();
-        worker_binary = dir.with_file_name(&file_name);
-        if let Some(ext) = &ext {
-            worker_binary.set_extension(ext);
+    let file_name = format!("{}{}", name, exe.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or("".to_owned()));
+    let workers_subdir_path = {
+        let mut p = exe.clone();
+        p.pop();
+        p.push("workers");
+        p.push(&file_name);
+        p
+    };
+    let abspath = if workers_subdir_path.exists() { // try in ./workers/ for CI
+        Some(workers_subdir_path)
+    } else { // try in ../ for cargo test
+        if let Some(parent_dir) = exe.parent() {
+            debug!("Trying worker binary {}", parent_dir.with_file_name(&file_name).display());
+            if parent_dir.with_file_name(&file_name).exists() {
+                Some(parent_dir.with_file_name(&file_name))
+            } else {
+                None
+            }
+        } else {
+            None
         }
-        if worker_binary.exists() {
-            break;
-        }
-    }
-    info!("Worker binary: {}", worker_binary.display());
-    CString::new(worker_binary.as_os_str().to_string_lossy().as_bytes()).unwrap()
+    };
+    let abspath = abspath.expect(&format!(
+        "worker binary {} not found in same directory, workers/ subdirectory, or parent directory of {}",
+        &file_name, exe.to_string_lossy()
+    ));
+    info!("Worker executable: {}", abspath.display());
+    CString::new(abspath.as_os_str().to_string_lossy().as_bytes()).unwrap()
 }

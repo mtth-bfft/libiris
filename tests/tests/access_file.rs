@@ -1,4 +1,4 @@
-use common::{cleanup_tmp_file, common_test_setup, get_worker_bin_path, open_tmp_file};
+use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
 use iris_broker::{downcast_to_handle, Policy, Worker};
 use std::ffi::CString;
 use std::io::Write;
@@ -56,7 +56,7 @@ fn transform_path(path: &str) -> String {
 #[test]
 fn access_file() {
     common_test_setup();
-    let worker_binary = get_worker_bin_path();
+    let worker_binary = get_worker_abs_path("access_file_worker");
     for test_function in 1..=2 {
         for readable in vec![true, false] {
             for writable in vec![true, false] {

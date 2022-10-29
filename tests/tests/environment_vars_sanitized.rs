@@ -1,10 +1,10 @@
-use common::{common_test_setup, get_worker_bin_path};
+use common::{common_test_setup, get_worker_abs_path};
 use iris_broker::{Policy, Worker};
 
 #[test]
 fn environment_vars_sanitized() {
     common_test_setup();
-    let worker_binary = get_worker_bin_path();
+    let worker_binary = get_worker_abs_path("environment_vars_sanitized_worker");
     let mut worker = Worker::new(
         &Policy::nothing_allowed(),
         &worker_binary,

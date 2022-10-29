@@ -1,4 +1,4 @@
-use common::{check_worker_handles, common_test_setup, get_worker_bin_path};
+use common::{check_worker_handles, common_test_setup, get_worker_abs_path};
 use iris_broker::{Policy, Worker};
 
 // Voluntarily set up resources (opened handles and file descriptors)
@@ -52,7 +52,7 @@ fn os_specific_setup(worker: &Worker) {
 #[should_panic(expected = "process")]
 fn inherited_resources_detects_leak() {
     common_test_setup();
-    let worker_binary = get_worker_bin_path();
+    let worker_binary = get_worker_abs_path("inherited_resources_detects_leak_worker");
     let worker = Worker::new(
         &Policy::nothing_allowed(), // don't allow any resource to be inherited, check that it receives nothing
         &worker_binary,

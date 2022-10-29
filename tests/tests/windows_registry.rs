@@ -1,5 +1,5 @@
 #![cfg(windows)]
-use common::{cleanup_tmp_file, common_test_setup, get_worker_bin_path, open_tmp_file};
+use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
 use core::ptr::null_mut;
 use iris_broker::{downcast_to_handle, Policy, Worker};
 use iris_policy::derive_all_reg_key_paths_from_path;
@@ -34,7 +34,7 @@ fn teardown_tmp_reg_key() {
 #[test]
 fn reg_read_write_works() {
     common_test_setup();
-    let worker_binary = get_worker_bin_path();
+    let worker_binary = get_worker_abs_path("windows_registry_worker");
     let nt_key_path = derive_all_reg_key_paths_from_path("HKEY_CURRENT_USER\\test1")
         .unwrap()
         .pop()

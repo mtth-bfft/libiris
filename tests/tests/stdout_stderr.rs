@@ -1,4 +1,4 @@
-use common::{cleanup_tmp_file, common_test_setup, get_worker_bin_path, open_tmp_file};
+use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
 use iris_broker::{downcast_to_handle, Policy, Worker};
 use std::io::{Seek, SeekFrom, Write};
 
@@ -10,7 +10,7 @@ fn stdout_stderr() {
     let (tmperr, tmperrpath) = open_tmp_file();
     tmpin.write_all(b"OK_STDIN").unwrap();
     tmpin.seek(SeekFrom::Start(0)).unwrap();
-    let worker_binary = get_worker_bin_path();
+    let worker_binary = get_worker_abs_path("stdout_stderr_worker");
     let mut worker = Worker::new(
         &Policy::nothing_allowed(),
         &worker_binary,
