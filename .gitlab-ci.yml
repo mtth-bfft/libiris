@@ -1,6 +1,5 @@
 variables:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
 
 #build_linux:
 #  image: rust:latest
@@ -27,6 +26,7 @@ build_windows:
   variables:
     RUSTUP_HOME: .rustup
     CARGO_HOME: .cargo
+    RUSTFLAGS: -D warnings -Ctarget-feature=+crt-static
   before_script:
     - Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
     - .\rustup-init.exe -y --default-toolchain stable-x86_64-pc-windows-msvc
