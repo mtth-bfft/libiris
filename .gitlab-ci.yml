@@ -2,33 +2,34 @@ variables:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
-build_linux:
-  image: rust:latest
-  tags:
-    - linux
-    - shared
-  before_script:
-    - apt update && apt install -y libseccomp-dev libseccomp2
-  script:
-    - cargo build --workspace --all-targets --all-features --verbose
-    - mkdir -p artifacts-tests/workers/
-    - cargo build --tests --message-format=json | tests/copy_artifacts.py artifacts-tests/
-  artifacts:
-    expire_in: 1h
-    name: tests-linux
-    paths:
-      - artifacts-tests/
+#build_linux:
+#  image: rust:latest
+#  tags:
+#    - linux
+#    - shared
+#  before_script:
+#    - apt update && apt install -y libseccomp-dev libseccomp2
+#  script:
+#    - cargo build --workspace --all-targets --all-features --verbose
+#    - mkdir -p artifacts-tests/workers/
+#    - cargo build --tests --message-format=json | tests/copy_artifacts.py artifacts-tests/
+#  artifacts:
+#    expire_in: 1h
+#    name: tests-linux
+#    paths:
+#      - artifacts-tests/
 
 build_windows:
   tags:
-    - shared-windows
+    - windows
+    - selfhosted
+    - builder
   variables:
     RUSTUP_HOME: .rustup
     CARGO_HOME: .cargo
   before_script:
     - Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
     - .\rustup-init.exe -y --default-toolchain stable-x86_64-pc-windows-msvc
-    - choco install python --yes --force --no-progress
     - $env:Path=[System.Environment]::GetEnvironmentVariable("Path","Machine")+";"+[System.Environment]::GetEnvironmentVariable("Path","User")
   script:
     - cargo build --workspace --all-targets --all-features --verbose
@@ -39,6 +40,18 @@ build_windows:
     name: tests-windows
     paths:
       - artifacts-tests/
+
+test_windows:
+  tags:
+    - windows
+    - selfhosted
+    - win10
+    - latest
+  needs:
+    - job: build_windows
+      artifacts: true
+  script:
+    - tests/run.ps1 artifacts-tests/
 
 #test_linux:
 #  image: debian:latest
