@@ -41,12 +41,25 @@ build_windows:
     paths:
       - artifacts-tests/
 
-test_windows:
+test_win10_latest_x64:
   tags:
     - windows
     - selfhosted
     - win10
+    - amd64
     - latest
+  needs:
+    - job: build_windows
+      artifacts: true
+  script:
+    - tests/run.ps1 artifacts-tests/
+
+test_win7_x64:
+  tags:
+    - windows
+    - selfhosted
+    - win7
+    - amd64
   needs:
     - job: build_windows
       artifacts: true
