@@ -1,5 +1,4 @@
 use crate::os::proc_thread_attribute_list::ProcThreadAttributeList;
-use crate::os::sid::Sid;
 use crate::process::CrossPlatformSandboxedProcess;
 use core::ptr::null_mut;
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
@@ -14,18 +13,18 @@ use winapi::shared::winerror::ERROR_ALREADY_EXISTS;
 use winapi::shared::winerror::HRESULT_FROM_WIN32;
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
+use winapi::um::libloaderapi::{GetProcAddress, LoadLibraryA};
 use winapi::um::minwinbase::STILL_ACTIVE;
 use winapi::um::processthreadsapi::{
     CreateProcessA, GetExitCodeProcess, GetProcessId, PROCESS_INFORMATION,
 };
 use winapi::um::synchapi::WaitForSingleObject;
 use winapi::um::sysinfoapi::GetSystemWindowsDirectoryA;
-use winapi::um::userenv::{CreateAppContainerProfile, DeleteAppContainerProfile};
 use winapi::um::winbase::{
     DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, INFINITE, STARTF_FORCEOFFFEEDBACK,
     STARTF_USESTDHANDLES, STARTUPINFOEXA, WAIT_OBJECT_0,
 };
-use winapi::um::winnt::{HANDLE, SECURITY_CAPABILITIES};
+use winapi::um::winnt::{HANDLE, SECURITY_CAPABILITIES, HRESULT, PCWSTR, PSID, PSID_AND_ATTRIBUTES};
 
 // Waiting for these constants from WinSDK to be included in winapi
 const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: DWORD_PTR = 0x20002;
@@ -87,17 +86,56 @@ pub(crate) struct OSSandboxedProcess {
     appcontainer_name: Option<String>,
 }
 
+type CreateAppContainerProfileFn = unsafe extern "C" fn(
+    appcontainer_name: PCWSTR,
+    display_name: PCWSTR,
+    description: PCWSTR,
+    capabilities: PSID_AND_ATTRIBUTES,
+    capability_count: DWORD,
+    appcontainer_sid: *mut PSID,
+) -> HRESULT;
+type DeleteAppContainerProfileFn = unsafe extern "C" fn(PCWSTR) -> HRESULT;
+
+struct AppContainerProfileFunctions {
+    create: CreateAppContainerProfileFn,
+    delete: DeleteAppContainerProfileFn,
+}
+
+lazy_static! {
+    static ref APPCONTAINER_PROFILE_FN: Option<AppContainerProfileFunctions> = {
+        let dllname = CString::new("userenv.dll").unwrap();
+        let h_dll = unsafe { LoadLibraryA(dllname.as_ptr()) };
+        if h_dll.is_null() {
+            None
+        } else {
+            let procname = CString::new("CreateAppContainerProfile").unwrap();
+            let create = unsafe { GetProcAddress(h_dll, procname.as_ptr()) };
+            let procname = CString::new("DeleteAppContainerProfile").unwrap();
+            let delete = unsafe { GetProcAddress(h_dll, procname.as_ptr()) };
+            if create.is_null() || delete.is_null() {
+                None
+            } else {
+                let create = unsafe { std::mem::transmute::<_, CreateAppContainerProfileFn>(create) };
+                let delete = unsafe { std::mem::transmute::<_, DeleteAppContainerProfileFn>(delete) };
+                Some(AppContainerProfileFunctions { create, delete })
+            }
+        }
+    };
+}
+
 impl Drop for OSSandboxedProcess {
     fn drop(&mut self) {
         unsafe {
             CloseHandle(self.h_process);
         }
-        if let Some(appcontainer_name) = &self.appcontainer_name {
-            let name_buf: Vec<u16> = appcontainer_name
-                .encode_utf16()
-                .chain(std::iter::once(0))
-                .collect();
-            unsafe { DeleteAppContainerProfile(name_buf.as_ptr() as *const _) };
+        if let Some(appcontainer_profile_fn) = APPCONTAINER_PROFILE_FN.as_ref() {
+            if let Some(appcontainer_name) = &self.appcontainer_name {
+                let name_buf: Vec<u16> = appcontainer_name
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+                unsafe { (appcontainer_profile_fn.delete)(name_buf.as_ptr() as *const _) };
+            }
         }
     }
 }
@@ -254,63 +292,69 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         )?;
 
         // Start as an AppContainer whenever possible
-        let mut capabilities: SECURITY_CAPABILITIES = unsafe { std::mem::zeroed() };
-        let appcontainer_id =
-            unsafe { PER_PROCESS_APPCONTAINER_ID.fetch_add(1, Ordering::Relaxed) };
-        let appcontainer_name = format!(
-            "IrisAppContainer_{}_{}",
-            std::process::id(),
-            appcontainer_id
-        );
-        let name_buf: Vec<u16> = appcontainer_name
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-        let mut res = unsafe {
-            CreateAppContainerProfile(
-                name_buf.as_ptr() as *const _,
-                name_buf.as_ptr() as *const _,
-                name_buf.as_ptr() as *const _,
-                null_mut(),
-                0,
-                &mut capabilities.AppContainerSid as *mut _,
-            )
-        };
-        if res == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS) {
-            // There is a leftover appcontainer profile from a previous process with our PID which did not clean up on exit. Retry
-            unsafe { DeleteAppContainerProfile(name_buf.as_ptr() as *const _) };
-            res = unsafe {
-                CreateAppContainerProfile(
+        let appcontainer_name = if let Some(appcontainer_profile_fn) = APPCONTAINER_PROFILE_FN.as_ref() {
+            let mut capabilities: SECURITY_CAPABILITIES = unsafe { std::mem::zeroed() };
+            let appcontainer_id =
+                unsafe { PER_PROCESS_APPCONTAINER_ID.fetch_add(1, Ordering::Relaxed) };
+            let appcontainer_name = format!(
+                "IrisAppContainer_{}_{}",
+                std::process::id(),
+                appcontainer_id
+            );
+            info!("Using appcontainer API to create {}", &appcontainer_name);
+            let name_buf: Vec<u16> = appcontainer_name
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+            let mut res = unsafe {
+                (appcontainer_profile_fn.create)(
                     name_buf.as_ptr() as *const _,
                     name_buf.as_ptr() as *const _,
                     name_buf.as_ptr() as *const _,
                     null_mut(),
                     0,
-                    &mut capabilities.AppContainerSid as *mut _,
+                    &mut capabilities.AppContainerSid as *mut PSID,
                 )
             };
-        }
-        if res != 0 {
-            return Err(format!(
-                "CreateAppContainerProfile({}) failed with error {}",
-                appcontainer_name, res
-            ));
-        }
-        let appcontainer_sid = Sid::from_appcontainer_name(&appcontainer_name)?;
-        capabilities.AppContainerSid = appcontainer_sid.as_ptr();
-        ptal.set(
-            PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
-            &capabilities as *const _ as *const _,
-            std::mem::size_of_val(&capabilities),
-        )?;
+            if res == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS) {
+                // There is a leftover appcontainer profile from a previous process with our PID which did not clean up on exit. Retry
+                unsafe { (appcontainer_profile_fn.delete)(name_buf.as_ptr() as *const _) };
+                res = unsafe {
+                    (appcontainer_profile_fn.create)(
+                        name_buf.as_ptr() as *const _,
+                        name_buf.as_ptr() as *const _,
+                        name_buf.as_ptr() as *const _,
+                        null_mut(),
+                        0,
+                        &mut capabilities.AppContainerSid as *mut PSID,
+                    )
+                };
+            }
+            if res != 0 {
+                return Err(format!(
+                    "CreateAppContainerProfile({}) failed with error {}",
+                    appcontainer_name, res
+                ));
+            }
+            ptal.set(
+                PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+                &capabilities as *const _ as *const _,
+                std::mem::size_of_val(&capabilities),
+            )?;
 
-        // Start as a Less Privileged AppContainer whenever possible
-        let lpac_policy = PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
-        ptal.set(
-            PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY,
-            &lpac_policy as *const _ as *const _,
-            std::mem::size_of_val(&lpac_policy),
-        )?;
+            // Start as a Less Privileged AppContainer whenever possible
+            let lpac_policy = PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
+            ptal.set(
+                PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY,
+                &lpac_policy as *const _ as *const _,
+                std::mem::size_of_val(&lpac_policy),
+            )?;
+
+            Some(appcontainer_name)
+        } else {
+            info!("AppContainers not supported, using weaker sandboxing APIs");
+            None
+        };
 
         // Start a child process (enable handle inheritance, but only because we set the allowed list explicitly earlier)
         let mut proc_info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
@@ -349,7 +393,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         Ok(Self {
             pid: pid.into(),
             h_process: proc_info.hProcess,
-            appcontainer_name: Some(appcontainer_name),
+            appcontainer_name,
         })
     }
 
