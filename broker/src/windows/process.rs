@@ -2,7 +2,7 @@ use crate::os::proc_thread_attribute_list::ProcThreadAttributeList;
 use crate::process::CrossPlatformSandboxedProcess;
 use core::ptr::null_mut;
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
-use log::{debug, info};
+use log::{debug, info, warn};
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -260,11 +260,15 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
 
         // Always prevent child process creation, as it would break many security features we implement here
         let child_proc_policy = PROCESS_CREATION_CHILD_PROCESS_RESTRICTED;
-        ptal.set(
+        if let Err(e) = ptal.set(
             PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY,
             &child_proc_policy as *const _ as *const _,
             std::mem::size_of_val(&child_proc_policy),
-        )?;
+        ) {
+            warn!("Child process creation policy not supported on this system ({}), only using legacy job restriction", e);
+        } else {
+            info!("Child process creation policy set to 0x{:X}", &child_proc_policy);
+        }
 
         // Always apply sane defaults for process mitigation policies
         let mut mitigation_policy: DWORD = 0;
@@ -285,11 +289,15 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         //mitigation_policy |= PROCESS_CREATION_MITIGATION_POLICY_IMAGE_LOAD_NO_REMOTE_ALWAYS_ON;
         //mitigation_policy |= PROCESS_CREATION_MITIGATION_POLICY_FONT_DISABLE_ALWAYS_ON;
         //mitigation_policy |= PROCESS_CREATION_MITIGATION_POLICY_PROHIBIT_DYNAMIC_CODE_ALWAYS_ON;
-        ptal.set(
+        if let Err(e) = ptal.set(
             PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
             &mitigation_policy as *const _ as *const _,
             std::mem::size_of_val(&mitigation_policy),
-        )?;
+        ) {
+            warn!("Process mitigation policies not supported on this system ({}), only using legacy job restriction", e);
+        } else {
+            info!("Process mitigation policies set to 0x{:X}", &mitigation_policy);
+        }
 
         // Start as an AppContainer whenever possible
         let appcontainer_name = if let Some(appcontainer_profile_fn) = APPCONTAINER_PROFILE_FN.as_ref() {
