@@ -390,16 +390,6 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                     continue;
                 }
             }
-            // Debrief about the current settings
-            if filter_inherited_handles {
-                info!("Filtering inherited handles to only: {:?}", &handles_to_inherit);
-            }
-            if with_mitigation_policies {
-                info!("Process mitigation policies set to 0x{:X}", &mitigation_policy);
-            }
-            if let Some(appcontainer_name) = appcontainer_name.as_ref() {
-                info!("Using AppContainer {}", appcontainer_name);
-            }
 
             // Start the actual child process
             let mut proc_info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
@@ -432,10 +422,16 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 )
             };
             if res == 0 {
+                let err = unsafe { GetLastError() };
+                if with_mitigation_policies {
+                    with_mitigation_policies = false;
+                    warn!("Process mitigation policies might not be supported on this system (process creation failed with code {})", err);
+                    continue;
+                }
                 return Err(format!(
                     "CreateProcess({}) failed with error {}",
                     cmdline.to_string_lossy(),
-                    unsafe { GetLastError() }
+                    err
                 ));
             }
             unsafe {
@@ -446,6 +442,16 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 return Err(format!("GetProcessId() failed with error {}", unsafe {
                     GetLastError()
                 }));
+            }
+            // Debrief about the settings that worked
+            if filter_inherited_handles {
+                info!("Filtering inherited handles to only: {:?}", &handles_to_inherit);
+            }
+            if with_mitigation_policies {
+                info!("Process mitigation policies set to 0x{:X}", &mitigation_policy);
+            }
+            if let Some(appcontainer_name) = appcontainer_name.as_ref() {
+                info!("Using AppContainer {}", appcontainer_name);
             }
             info!("Worker created (PID {})", pid);
             return Ok(Self {
