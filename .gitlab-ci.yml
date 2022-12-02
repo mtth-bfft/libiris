@@ -1,22 +1,22 @@
 variables:
   CARGO_TERM_COLOR: always
 
-#build_linux:
-#  image: rust:latest
-#  tags:
-#    - linux
-#    - shared
-#  before_script:
-#    - apt update && apt install -y libseccomp-dev libseccomp2
-#  script:
-#    - cargo build --workspace --all-targets --all-features --verbose
-#    - mkdir -p artifacts-tests/workers/
-#    - cargo build --tests --message-format=json | tests/copy_artifacts.py artifacts-tests/
-#  artifacts:
-#    expire_in: 1h
-#    name: tests-linux
-#    paths:
-#      - artifacts-tests/
+build_linux:
+  image: rust:latest
+  tags:
+    - linux
+    - shared
+  before_script:
+    - apt update && apt install -y libseccomp-dev libseccomp2 python3 python-is-python3
+  script:
+    - cargo build --workspace --all-targets --all-features --verbose
+    - mkdir -p artifacts-tests/workers/
+    - cargo build --tests --message-format=json | python tests/copy_artifacts.py artifacts-tests/
+  artifacts:
+    expire_in: 1h
+    name: tests-linux
+    paths:
+      - artifacts-tests/
 
 build_windows:
   tags:
@@ -66,14 +66,15 @@ test_win7_x64:
   script:
     - tests/run.ps1 artifacts-tests/
 
-#test_linux:
-#  image: debian:latest
-#  tags:
-#    - linux
-#  needs:
-#    - job: build_linux
-#      artifacts: true
-#  before_script:
-#    - apt update && apt install -y libseccomp2
-#  script:
-#    - tests/run.sh artifacts-tests/
+test_linux:
+  image: debian:latest
+  tags:
+    - linux
+    - shared
+  needs:
+    - job: build_linux
+      artifacts: true
+  before_script:
+    - apt update && apt install -y libseccomp2
+  script:
+    - tests/run.sh artifacts-tests/
