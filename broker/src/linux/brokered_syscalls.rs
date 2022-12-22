@@ -30,10 +30,7 @@ pub(crate) fn handle_open_file(
     requests_append_only: bool,
 ) -> (IPCResponse, Option<Handle>) {
     // Ensure the path is an absolute path
-    if path.is_empty()
-        || path.chars().next() != Some('/')
-        || (requests_append_only && !requests_write)
-    {
+    if path.is_empty() || !path.starts_with('/') || (requests_append_only && !requests_write) {
         return (IPCResponse::GenericCode(-(libc::EINVAL as i64)), None);
     }
     // Ensure the path is already resolved
@@ -110,5 +107,5 @@ pub(crate) fn handle_open_file(
         }
         Handle::new(res.try_into().unwrap()).unwrap()
     };
-    return (IPCResponse::GenericCode(0), Some(handle));
+    (IPCResponse::GenericCode(0), Some(handle))
 }

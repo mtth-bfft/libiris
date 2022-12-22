@@ -1,7 +1,7 @@
 use iris_policy::Policy;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub enum IPCRequest {
     // Initial message sent by workers to signal they are ready to enforce their final
     // sandboxing policy permanently
@@ -15,7 +15,7 @@ pub enum IPCRequest {
     },
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub enum IPCResponse {
     // Acknowledgement of LowerFinalSandboxPrivilegesAsap
     PolicyApplied(Policy<'static>),

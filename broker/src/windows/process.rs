@@ -24,7 +24,9 @@ use winapi::um::winbase::{
     DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, INFINITE, STARTF_FORCEOFFFEEDBACK,
     STARTF_USESTDHANDLES, STARTUPINFOEXA, WAIT_OBJECT_0,
 };
-use winapi::um::winnt::{HANDLE, SECURITY_CAPABILITIES, HRESULT, PCWSTR, PSID, PSID_AND_ATTRIBUTES};
+use winapi::um::winnt::{
+    HANDLE, HRESULT, PCWSTR, PSID, PSID_AND_ATTRIBUTES, SECURITY_CAPABILITIES,
+};
 
 // Waiting for these constants from WinSDK to be included in winapi
 const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: DWORD_PTR = 0x20002;
@@ -113,8 +115,10 @@ lazy_static! {
             if create.is_null() || delete.is_null() {
                 None
             } else {
-                let create = unsafe { std::mem::transmute::<_, CreateAppContainerProfileFn>(create) };
-                let delete = unsafe { std::mem::transmute::<_, DeleteAppContainerProfileFn>(delete) };
+                let create =
+                    unsafe { std::mem::transmute::<_, CreateAppContainerProfileFn>(create) };
+                let delete =
+                    unsafe { std::mem::transmute::<_, DeleteAppContainerProfileFn>(delete) };
                 Some(AppContainerProfileFunctions { create, delete })
             }
         }
@@ -159,7 +163,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             }
         }
 
-        // Build the full commandline with quotes to protect prevent C:\Program Files\a.exe from launching C:\Program.exe
+        // Build the full commandline with quotes to prevent C:\Program Files\a.exe from launching C:\Program.exe
         let mut cmdline = vec![b'"'];
         cmdline.extend_from_slice(exe.to_bytes());
         cmdline.push(b'"');
@@ -209,7 +213,8 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             .cloned()
             .collect();
 
-        // Build the starting directory as C:\Windows so that it doesn't keep a handle on any other directory
+        // Build the starting directory as C:\Windows (which is readable even by
+        // the strictest AppContainers) so that it doesn't keep a handle on any other directory
         let mut cwd = vec![0u8; MAX_PATH + 1];
         let res = unsafe {
             GetSystemWindowsDirectoryA(cwd.as_mut_ptr() as *mut _, cwd.len().try_into().unwrap())
@@ -238,14 +243,25 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             if !in_appcontainer {
                 in_less_privileged_appcontainer = false; // meaningless without an AppContainer
             }
-            let num_attributes = [in_appcontainer, in_less_privileged_appcontainer, filter_inherited_handles, block_child_process_by_token_policy, with_mitigation_policies].iter().filter(|v| **v).count() as DWORD;
+            let num_attributes = [
+                in_appcontainer,
+                in_less_privileged_appcontainer,
+                filter_inherited_handles,
+                block_child_process_by_token_policy,
+                with_mitigation_policies,
+            ]
+            .iter()
+            .filter(|v| **v)
+            .count() as DWORD;
             let mut ptal = ProcThreadAttributeList::new(num_attributes)?;
 
             // Start as an AppContainer whenever possible
             let mut security_capabilities: SECURITY_CAPABILITIES = unsafe { std::mem::zeroed() };
             let lpac_policy = PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
             let appcontainer_name = if in_appcontainer {
-                let appcontainer_name = if let Some(appcontainer_profile_fn) = APPCONTAINER_PROFILE_FN.as_ref() {
+                let appcontainer_name = if let Some(appcontainer_profile_fn) =
+                    APPCONTAINER_PROFILE_FN.as_ref()
+                {
                     let appcontainer_id =
                         unsafe { PER_PROCESS_APPCONTAINER_ID.fetch_add(1, Ordering::Relaxed) };
                     let appcontainer_name = format!(
@@ -295,14 +311,18 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                         std::mem::size_of_val(&security_capabilities),
                     ) {
                         in_appcontainer = false;
-                        warn!("Using an AppContainer failed ({}), only using legacy restricted token", e);
+                        warn!(
+                            "Using an AppContainer failed ({}), only using legacy restricted token",
+                            e
+                        );
                         continue;
                     }
                     Some(appcontainer_name)
-                }
-                else {
+                } else {
                     in_appcontainer = false;
-                    warn!("AppContainers not supported on this system, using legacy restricted token");
+                    warn!(
+                        "AppContainers not supported on this system, using legacy restricted token"
+                    );
                     continue;
                 };
 
@@ -365,7 +385,8 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             if with_mitigation_policies {
                 mitigation_policy |= PROCESS_CREATION_MITIGATION_POLICY_DEP_ENABLE;
                 mitigation_policy |= PROCESS_CREATION_MITIGATION_POLICY_SEHOP_ENABLE;
-                mitigation_policy |= PROCESS_CREATION_MITIGATION_POLICY_FORCE_RELOCATE_IMAGES_ALWAYS_ON;
+                mitigation_policy |=
+                    PROCESS_CREATION_MITIGATION_POLICY_FORCE_RELOCATE_IMAGES_ALWAYS_ON;
                 mitigation_policy |=
                     PROCESS_CREATION_MITIGATION_POLICY_FORCE_RELOCATE_IMAGES_ALWAYS_ON_REQ_RELOCS;
                 mitigation_policy |= PROCESS_CREATION_MITIGATION_POLICY_BOTTOM_UP_ASLR_ALWAYS_ON;
@@ -445,10 +466,16 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             }
             // Debrief about the settings that worked
             if filter_inherited_handles {
-                info!("Filtering inherited handles to only: {:?}", &handles_to_inherit);
+                info!(
+                    "Filtering inherited handles to only: {:?}",
+                    &handles_to_inherit
+                );
             }
             if with_mitigation_policies {
-                info!("Process mitigation policies set to 0x{:X}", &mitigation_policy);
+                info!(
+                    "Process mitigation policies set to 0x{:X}",
+                    &mitigation_policy
+                );
             }
             if let Some(appcontainer_name) = appcontainer_name.as_ref() {
                 info!("Using AppContainer {}", appcontainer_name);
@@ -458,7 +485,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 pid: pid.into(),
                 h_process: proc_info.hProcess,
                 appcontainer_name,
-            })
+            });
         }
     }
 

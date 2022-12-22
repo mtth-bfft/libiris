@@ -6,20 +6,15 @@ use log::info;
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
 
+const FILE_READ: u8 = 1;
+const FILE_WRITE_APPEND_ONLY: u8 = 2;
+const FILE_WRITE_ANYWHERE: u8 = 4;
+
 #[cfg(unix)]
-fn check(
-    test_function: u8,
-    path: &CStr,
-    readable: bool,
-    writable: bool,
-    restrict_to_append_only: bool,
-    request_read: bool,
-    request_write: bool,
-    request_only_append: bool,
-) {
+fn check(test_function: u8, path: &CStr, granted_by_policy: u8, access_to_request: u8) {
     use libc::c_int;
 
-    fn check_fd(fd: c_int, readable: bool, writable: bool, restrict_to_append_only: bool) {
+    fn check_fd(fd: c_int, should_be_granted: u8) {
         let mut buf = vec![0u8; 1024];
         // Try to read (set up by the broker to contain "OK")
         unsafe {
@@ -27,12 +22,12 @@ fn check(
         }
         let res = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut _, buf.len()) };
         let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        if readable {
-            assert_eq!(res, 2);
-            assert_eq!(b"OK", &buf[..res.try_into().unwrap()]);
-        } else {
+        if (should_be_granted & FILE_READ) == 0 {
             assert_eq!(res, -1, "read() should have failed");
             assert_eq!(err, libc::EBADF, "read() failed with the wrong errno");
+        } else {
+            assert_eq!(res, 2);
+            assert_eq!(b"OK", &buf[..res.try_into().unwrap()]);
         }
         // Try to write at the beginning
         unsafe {
@@ -45,7 +40,10 @@ fn check(
         );
         let res = unsafe { libc::write(fd, buf.as_mut_ptr() as *mut _, 2) };
         let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        if writable {
+        if (should_be_granted & (FILE_WRITE_APPEND_ONLY | FILE_WRITE_ANYWHERE)) == 0 {
+            assert_eq!(res, -1, "write() should have failed");
+            assert_eq!(err, libc::EBADF, "write() failed with the wrong errno");
+        } else {
             assert_eq!(res, 2, "write() failed with error {}", err);
             assert_eq!(err, 0, "write() unexpectedly set the errno to {}", err);
             // Check the result: should be "KO" if writable anywhere, "OKKO" if writable only in APPEND mode
@@ -59,31 +57,43 @@ fn check(
             );
             assert_eq!(
                 stat.st_size,
-                if restrict_to_append_only { 4 } else { 2 },
+                if (should_be_granted & FILE_WRITE_APPEND_ONLY) == 0 {
+                    2
+                } else {
+                    4
+                },
                 "unexpected result file size"
             );
-        } else {
-            assert_eq!(res, -1, "write() should have failed");
-            assert_eq!(err, libc::EBADF, "write() failed with the wrong errno");
         }
     }
 
-    let should_work = (!request_read || readable)
-        && (!request_write || (writable && (!restrict_to_append_only || request_only_append)))
-        && (request_read || request_write)
-        && (readable || writable);
-    let mode = if request_read && !request_write {
+    let should_work = ((access_to_request & FILE_READ) == 0
+        || (granted_by_policy & FILE_READ) != 0)
+        && ((access_to_request & FILE_WRITE_ANYWHERE) == 0
+            || (granted_by_policy & FILE_WRITE_ANYWHERE) != 0)
+        && ((access_to_request & FILE_WRITE_APPEND_ONLY) == 0
+            || (granted_by_policy & (FILE_WRITE_APPEND_ONLY | FILE_WRITE_ANYWHERE)) != 0)
+        && access_to_request != 0
+        && granted_by_policy != 0;
+
+    let mode = if (access_to_request & FILE_READ) != 0
+        && (access_to_request & (FILE_WRITE_ANYWHERE | FILE_WRITE_APPEND_ONLY)) == 0
+    {
         libc::O_RDONLY
-    } else if !request_read && request_write {
+    } else if (access_to_request & FILE_READ) == 0
+        && (access_to_request & (FILE_WRITE_ANYWHERE | FILE_WRITE_APPEND_ONLY)) != 0
+    {
         libc::O_WRONLY
-    } else if request_read && request_write {
+    } else if (access_to_request & FILE_READ) != 0
+        && (access_to_request & (FILE_WRITE_ANYWHERE | FILE_WRITE_APPEND_ONLY)) != 0
+    {
         libc::O_RDWR
     } else {
         libc::O_PATH
-    } | if request_only_append {
-        libc::O_APPEND
-    } else {
+    } | if (access_to_request & FILE_WRITE_APPEND_ONLY) == 0 {
         0
+    } else {
+        libc::O_APPEND
     };
     unsafe {
         *(libc::__errno_location()) = 0;
@@ -102,7 +112,17 @@ fn check(
         let fd: c_int = res.try_into().unwrap();
         fd
     } else if test_function == 2 {
-        let res = unsafe { libc::syscall(libc::SYS_openat, libc::STDERR_FILENO, path.as_ptr(), mode, 0, 0, 0) };
+        let res = unsafe {
+            libc::syscall(
+                libc::SYS_openat,
+                libc::STDERR_FILENO,
+                path.as_ptr(),
+                mode,
+                0,
+                0,
+                0,
+            )
+        };
         let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
         assert!(
             (should_work && res >= 0) || (!should_work && res == -1 && err == libc::EACCES),
@@ -120,23 +140,14 @@ fn check(
 
     info!("Opened file descriptor");
     if fd >= 0 {
-        check_fd(fd, request_read, request_write, request_only_append);
+        check_fd(fd, access_to_request);
         let res = unsafe { libc::close(fd) };
         assert_eq!(res, 0, "failed to close file descriptor after test");
     }
 }
 
 #[cfg(windows)]
-fn check(
-    test_function: u8,
-    path: &CStr,
-    readable: bool,
-    writable: bool,
-    restrict_to_append_only: bool,
-    request_read: bool,
-    request_write: bool,
-    request_only_append: bool,
-) {
+fn check(test_function: u8, path: &CStr, granted_by_policy: u8, access_to_request: u8) {
     use core::ptr::null_mut;
     use winapi::shared::basetsd::ULONG_PTR;
     use winapi::shared::minwindef::{DWORD, FARPROC};
@@ -154,10 +165,10 @@ fn check(
     use winapi::um::libloaderapi::{GetProcAddress, LoadLibraryA};
     use winapi::um::winbase::FILE_BEGIN;
     use winapi::um::winnt::{
-        ACCESS_MASK, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES, FILE_READ_DATA,
-        FILE_READ_EA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
-        FILE_WRITE_DATA, FILE_WRITE_EA, HANDLE, LARGE_INTEGER, PHANDLE, PVOID, READ_CONTROL,
-        SYNCHRONIZE, WCHAR,
+        ACCESS_MASK, DELETE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES,
+        FILE_READ_DATA, FILE_READ_EA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA, HANDLE, LARGE_INTEGER, PHANDLE,
+        PVOID, READ_CONTROL, SYNCHRONIZE, WCHAR,
     };
     const FILE_OPEN: DWORD = 0x00000001;
     const FILE_OPENED: ULONG_PTR = 0x00000001;
@@ -194,11 +205,10 @@ fn check(
         open_options: ULONG,
     ) -> NTSTATUS;
 
-    fn check_handle(handle: HANDLE, readable: bool, writable: bool, restrict_to_append_only: bool) {
+    fn check_handle(handle: HANDLE, should_be_granted: u8) {
         let mut buf = vec![0u8; 1024];
         let mut bytes_read: DWORD = 0;
         // Try to read (set up by the broker to contain "OK")
-        //unsafe { winapi::um::debugapi::DebugBreak(); }
         unsafe {
             SetLastError(0);
         }
@@ -212,7 +222,10 @@ fn check(
             )
         };
         let err = unsafe { GetLastError() };
-        if readable {
+        if (should_be_granted & FILE_READ) == 0 {
+            assert_eq!(res, 0, "ReadFile succeeded");
+            assert_eq!(err, ERROR_ACCESS_DENIED, "unexpected ReadFile error code");
+        } else {
             assert_ne!(res, 0, "ReadFile failed (error code {})", err);
             assert_eq!(err, 0, "ReadFile set error code {} unexpectedly", err);
             assert_eq!(bytes_read, 2, "wrong number of bytes read");
@@ -221,9 +234,6 @@ fn check(
                 &buf[..bytes_read as usize],
                 "read unexpected contents from file"
             );
-        } else {
-            assert_eq!(res, 0, "ReadFile succeeded");
-            assert_eq!(err, ERROR_ACCESS_DENIED, "unexpected ReadFile error code");
         }
         // Try to write at the beginning
         let res = unsafe { SetFilePointer(handle, 0, null_mut(), FILE_BEGIN) };
@@ -241,22 +251,26 @@ fn check(
             )
         };
         let err = unsafe { GetLastError() };
-        if writable {
+        if (should_be_granted & (FILE_WRITE_ANYWHERE | FILE_WRITE_APPEND_ONLY)) == 0 {
+            assert_eq!(res, 0, "WriteFile should have failed");
+            assert_eq!(err, ERROR_ACCESS_DENIED, "unexpected WriteFile error code");
+        } else {
             assert_ne!(res, 0, "WriteFile failed (error {})", err);
             assert_eq!(bytes_written, 2, "unexpected number of bytes written");
             assert_eq!(err, 0, "WriteFile set error to {} unexpectedly", err);
             // Check the result: should be "KO" if writable anywhere, "OKKO" if writable only in APPEND mode
             // Do this check using GetFileSize() which requires no permission on the file (reading would fail
-            // when !readable)
+            // when not readable by policy)
             let size = unsafe { GetFileSize(handle, null_mut()) };
             assert_eq!(
                 size,
-                if restrict_to_append_only { 4 } else { 2 },
+                if (should_be_granted & FILE_WRITE_APPEND_ONLY) == 0 {
+                    2
+                } else {
+                    4
+                },
                 "unexpected result file size"
             );
-        } else {
-            assert_eq!(res, 0, "WriteFile should have failed");
-            assert_eq!(err, ERROR_ACCESS_DENIED, "unexpected WriteFile error code");
         }
     }
 
@@ -273,12 +287,6 @@ fn check(
     let ntopenfile = unsafe { std::mem::transmute::<FARPROC, pntopenfile>(ntopenfile) };
 
     let path = path.to_string_lossy();
-    let file_sharing = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-    let readonly_access_rights =
-        FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | READ_CONTROL | SYNCHRONIZE;
-    let write_anywhere_access_rights =
-        FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA | READ_CONTROL | SYNCHRONIZE;
-    let write_appendonly_access_rights = FILE_APPEND_DATA | READ_CONTROL | SYNCHRONIZE;
     let mut obj_attr: OBJECT_ATTRIBUTES = unsafe { std::mem::zeroed() };
     let mut us_obj_name: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
     let buffer_len: u16 = ((us_obj_name.len() - 1) * std::mem::size_of::<WCHAR>())
@@ -306,28 +314,34 @@ fn check(
     };
 
     let requested_rights = SYNCHRONIZE
-        | if request_read {
-            readonly_access_rights
+        | READ_CONTROL
+        | if (access_to_request & FILE_READ) != 0 {
+            FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA
         } else {
             0
         }
-        | if request_write && !request_only_append {
-            write_anywhere_access_rights
+        | if (access_to_request & FILE_WRITE_ANYWHERE) != 0 {
+            FILE_WRITE_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES | DELETE
         } else {
             0
         }
-        | if request_write && request_only_append {
-            write_appendonly_access_rights
+        | if (access_to_request & FILE_WRITE_APPEND_ONLY) != 0 {
+            FILE_APPEND_DATA
         } else {
             0
         };
 
-    let should_work = (!request_read || readable)
-        && (!request_write || (writable && (!restrict_to_append_only || request_only_append)))
-        && (request_read || request_write)
-        && (readable || writable);
+    let should_work = ((access_to_request & FILE_READ) == 0
+        || (granted_by_policy & FILE_READ) != 0)
+        && ((access_to_request & FILE_WRITE_ANYWHERE) == 0
+            || (granted_by_policy & FILE_WRITE_ANYWHERE) != 0)
+        && ((access_to_request & FILE_WRITE_APPEND_ONLY) == 0
+            || (granted_by_policy & (FILE_WRITE_APPEND_ONLY | FILE_WRITE_ANYWHERE)) != 0)
+        && access_to_request != 0
+        && granted_by_policy != 0;
 
     let mut hfile: HANDLE = null_mut();
+    let file_sharing = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
     if test_function == 1 {
         let res = unsafe {
             ntcreatefile(
@@ -382,7 +396,7 @@ fn check(
     }
     info!("Opened handle with access rights 0x{:X}", requested_rights);
     if hfile != null_mut() {
-        check_handle(hfile, request_read, request_write, request_only_append);
+        check_handle(hfile, access_to_request);
         assert_ne!(unsafe { CloseHandle(hfile) }, 0);
     }
 }
@@ -395,9 +409,9 @@ fn main() {
     assert_eq!(args.len(), 9);
     let test_function = args[1].parse::<u8>().unwrap();
     let path = CString::new(args[2].as_str()).unwrap();
-    let readable = args[3] == "1";
-    let writable = args[4] == "1";
-    let restrict_to_append_only = args[5] == "1";
+    let policy_readable = args[3] == "1";
+    let policy_writable = args[4] == "1";
+    let policy_append_only = args[5] == "1";
     let request_read = args[6] == "1";
     let request_write = args[7] == "1";
     let request_only_append = args[8] == "1";
@@ -405,9 +419,9 @@ fn main() {
     info!(
         "{} should be {}readable {}writable{}",
         args[2],
-        if readable { "" } else { "non-" },
-        if writable { "" } else { "non-" },
-        if writable && restrict_to_append_only {
+        if policy_readable { "" } else { "non-" },
+        if policy_writable { "" } else { "non-" },
+        if policy_writable && policy_append_only {
             " (append only)"
         } else {
             ""
@@ -423,14 +437,27 @@ fn main() {
             ""
         }
     );
-    check(
-        test_function,
-        &path,
-        readable,
-        writable,
-        restrict_to_append_only,
-        request_read,
-        request_write,
-        request_only_append,
-    );
+    let granted_by_policy = if policy_readable { FILE_READ } else { 0 }
+        | if policy_writable && !policy_append_only {
+            FILE_WRITE_ANYWHERE
+        } else {
+            0
+        }
+        | if policy_writable && policy_append_only {
+            FILE_WRITE_APPEND_ONLY
+        } else {
+            0
+        };
+    let access_to_request = if request_read { FILE_READ } else { 0 }
+        | if request_write && !request_only_append {
+            FILE_WRITE_ANYWHERE
+        } else {
+            0
+        }
+        | if request_write && request_only_append {
+            FILE_WRITE_APPEND_ONLY
+        } else {
+            0
+        };
+    check(test_function, &path, granted_by_policy, access_to_request)
 }

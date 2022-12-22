@@ -7,7 +7,7 @@ use serde::{de::DeserializeOwned, Serialize};
 // Maximum message size that can be serialized and deserialized over an
 // IPC channel. Larger messages should use other (more efficient)
 // strategies to send/receive data, like shared memory sections.
-pub(crate) const IPC_MESSAGE_MAX_SIZE: u32 = 1 * 1024 * 1024;
+pub(crate) const IPC_MESSAGE_MAX_SIZE: u32 = 1024 * 1024;
 
 pub struct IPCMessagePipe {
     pipe: OSMessagePipe,
@@ -39,7 +39,7 @@ impl IPCMessagePipe {
             .with_fixint_encoding()
             .reject_trailing_bytes();
         let bytes = self.pipe.recv()?;
-        if bytes.len() == 0 {
+        if bytes.is_empty() {
             return Ok(None);
         }
         let msg = match bincode_config.deserialize(&bytes) {
@@ -58,7 +58,7 @@ impl IPCMessagePipe {
             .with_fixint_encoding()
             .reject_trailing_bytes();
         let (bytes, handle) = self.pipe.recv_with_handle()?;
-        if bytes.len() == 0 {
+        if bytes.is_empty() {
             return Ok((None, handle));
         }
         let msg = match bincode_config.deserialize(&bytes) {

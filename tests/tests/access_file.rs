@@ -58,15 +58,15 @@ fn access_file() {
     common_test_setup();
     let worker_binary = get_worker_abs_path("access_file_worker");
     for test_function in 1..=2 {
-        for readable in vec![true, false] {
-            for writable in vec![true, false] {
-                for restrict_to_append_only in vec![true, false] {
+        for readable in [true, false] {
+            for writable in [true, false] {
+                for restrict_to_append_only in [true, false] {
                     if !writable && restrict_to_append_only {
                         continue; // nonsensical case
                     }
-                    for request_read in vec![true, false] {
-                        for request_write in vec![true, false] {
-                            for request_only_append in vec![true, false] {
+                    for request_read in [true, false] {
+                        for request_write in [true, false] {
+                            for request_only_append in [true, false] {
                                 if !request_write && request_only_append {
                                     continue; // nonsensical case
                                 }
@@ -119,7 +119,7 @@ fn access_file() {
                                     Ok(0),
                                     "worker reported an error, see its output log:\n{}",
                                     std::fs::read_to_string(tmpoutpath)
-                                        .unwrap_or("<unable to read log>".to_owned())
+                                        .unwrap_or_else(|_| "<unable to read log>".to_owned())
                                 );
                                 cleanup_tmp_file(&tmpoutpath);
                                 cleanup_tmp_file(&tmpokpath);

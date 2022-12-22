@@ -2,14 +2,14 @@ use crate::process::CrossPlatformSandboxedProcess;
 use core::ffi::c_void;
 use core::ptr::null;
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
-use linux_entrypoint::{EntrypointParameters, clone_entrypoint};
 use libc::c_int;
+use linux_entrypoint::{clone_entrypoint, EntrypointParameters};
 use log::debug;
 use std::convert::{TryFrom, TryInto};
 use std::ffi::CStr;
 use std::io::Error;
 
-const DEFAULT_CLONE_STACK_SIZE: usize = 1 * 1024 * 1024;
+const DEFAULT_CLONE_STACK_SIZE: usize = 1024 * 1024;
 
 pub struct OSSandboxedProcess {
     pid: u32,
@@ -29,14 +29,12 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         stdout: Option<&Handle>,
         stderr: Option<&Handle>,
     ) -> Result<Self, String> {
-        if argv.len() < 1 {
+        if argv.is_empty() {
             return Err("Invalid argument: empty argv".to_owned());
         }
-        for handle in vec![stdin, stdout, stderr] {
-            if let Some(handle) = handle {
-                if !handle.is_inheritable()? {
-                    return Err("Stdin, stdout, and stderr handles must not be set to be closed on exec() for them to be usable by a worker".to_owned());
-                }
+        for handle in [stdin, stdout, stderr].iter().flatten() {
+            if !handle.is_inheritable()? {
+                return Err("Stdin, stdout, and stderr handles must not be set to be closed on exec() for them to be usable by a worker".to_owned());
             }
         }
 
@@ -69,13 +67,21 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
 
         // Pack together everything that needs to be passed to the new process,
         // and ensure their lifetime is long enough to pass clone()
-        let argv: Vec<*const i8> = argv.iter().map(|x| x.as_ptr()).chain(std::iter::once(null())).collect();
-        let envp: Vec<*const i8> = envp.iter().map(|x| x.as_ptr()).chain(std::iter::once(null())).collect();
+        let argv: Vec<*const i8> = argv
+            .iter()
+            .map(|x| x.as_ptr())
+            .chain(std::iter::once(null()))
+            .collect();
+        let envp: Vec<*const i8> = envp
+            .iter()
+            .map(|x| x.as_ptr())
+            .chain(std::iter::once(null()))
+            .collect();
         let allowed_file_descriptors: Vec<c_int> = policy
-                .get_inherited_handles()
-                .iter()
-                .map(|n| n.as_raw().try_into().unwrap())
-                .collect();
+            .get_inherited_handles()
+            .iter()
+            .map(|n| n.as_raw().try_into().unwrap())
+            .collect();
         let entrypoint_params = EntrypointParameters {
             exe: exe.as_ptr(),
             argv: argv.as_ptr(),

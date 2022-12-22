@@ -72,12 +72,9 @@ impl<'a> Policy<'a> {
                 .copied()
                 .unwrap_or((false, false, false));
             let mut restrict_to_append_only = restrict_to_append_only;
-            if writable {
-                if prev_writable {
-                    // grant the union of both rights: only restrict if both restrict
-                    restrict_to_append_only =
-                        prev_restrict_to_append_only && restrict_to_append_only;
-                }
+            if writable && prev_writable {
+                // grant the union of both rights: only restrict if both restrict
+                restrict_to_append_only = prev_restrict_to_append_only && restrict_to_append_only;
             }
             self.file_access.insert(
                 path.to_owned(),
@@ -201,5 +198,11 @@ impl<'a> Policy<'a> {
             }
         }
         (result_readers, result_writers, result_deleters)
+    }
+}
+
+impl<'a> Default for Policy<'a> {
+    fn default() -> Self {
+        Self::nothing_allowed()
     }
 }

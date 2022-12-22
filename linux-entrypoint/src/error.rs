@@ -18,7 +18,7 @@ impl StackBuffer {
 impl core::fmt::Write for StackBuffer {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         let capacity = self.buf.len() - 1; // always keep a null byte
-        // Truncate the rest, don't panic!()
+                                           // Truncate the rest, don't panic!()
         for (i, &b) in self.buf[self.used_bytes..capacity]
             .iter_mut()
             .zip(s.as_bytes().iter())

@@ -7,11 +7,8 @@ pub fn check_worker_handles(worker: &Worker) {
     {
         let entry = entry.expect("unable to read /proc/x/fd/ entry");
         let mut path = entry.path();
-        loop {
-            match std::fs::read_link(&path) {
-                Ok(target) => path = target,
-                Err(_) => break,
-            }
+        while let Ok(target) = std::fs::read_link(&path) {
+            path = target;
         }
         let path = path.to_string_lossy();
         // Stdin, stdout, and stderr can be redirected to /dev/null (harmless)
