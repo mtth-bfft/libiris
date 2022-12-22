@@ -1,11 +1,14 @@
 libiris
 =======
 
-![Build Status](https://github.com/mtth-bfft/libiris/actions/workflows/build_test.yml/badge.svg?branch=main)
+| Build | Tests                      |
+|-------|----------------------------|
+| ![Linux](https://gitlab.com/libiris/libiris/badges/main/pipeline.svg?ignore_skipped=true&style=flat-square&job=build_linux&key_text=Linux&key_width=60) | ![Debian 11](https://gitlab.com/libiris/libiris/badges/main/pipeline.svg?ignore_skipped=true&style=flat-square&job=test_linux&key_text=Debian%2011&key_width=70) |
+| ![Windows](https://gitlab.com/libiris/libiris/badges/main/pipeline.svg?ignore_skipped=true&style=flat-square&job=build_windows&key_text=Windows&key_width=60) | ![7 SP1](https://gitlab.com/libiris/libiris/badges/main/pipeline.svg?ignore_skipped=true&style=flat-square&job=test_win7_x64&key_text=7%20SP1&key_width=70)&nbsp;&nbsp;![7 SP1](https://gitlab.com/libiris/libiris/badges/main/pipeline.svg?ignore_skipped=true&style=flat-square&job=test_win10_latest_x64&key_text=10%2022H2&key_width=70) |
 
-libiris is a (work in progress) cross-platform sandboxing library. This project is not a production-ready sandbox, instead it aims at being a good development harness for codebases which need modifications for sandboxing.
+libiris is a cross-platform sandboxing harness. This project is not a production-ready sandboxing library, instead it aims at being a good development harness for codebases which need modifications or testing in preparation for sandboxing.
 
-Sandboxing means reducing your program's *ambient authority* (what it can legitimately do) and the *attack surface* exposed to it (the amount of code it can trigger bugs in, to escape the sandbox). This requires understanding internals about each OS your program supports, and requires splitting your program into multiple processes (for reasons detailed in the [docs](./docs/)). This takes a lot of time and effort, and has no any user-visible added value. The goal of this project is to reduce entry costs, so that more developers try to sandbox their projects, and to document common solutions, so that developers without a security background are incentivized to reuse them instead of starting from scratch.
+Sandboxing means reducing your program's *ambient authority* (what it can legitimately do) and the *attack surface* exposed to it (the amount of code it can trigger bugs in, to increase its ambient authority). This requires understanding internals about each OS and platform your project targets, and requires splitting your program into multiple processes (for reasons detailed in the [docs](./docs/)). This takes a lot of time and effort, and has no user-visible added value on the short term. The goal of this project is to reduce entry costs, so that more developers try to sandbox their projects, and to document common solutions, so that developers without a security background are incentivized to reuse them instead of starting from scratch.
 
 This repository contains:
 
@@ -13,25 +16,21 @@ This repository contains:
 * `worker`: the library loaded by sandboxed processes (*workers*) when they start
 * `policy`: a crate to specify exactly what a worker can do
 * `broker`: the library which allows creating workers, based on a policy
-* `linux-entrypoint`: the very first function executed by Linux workers when they start, separated because it needs to be compiled without the Rust standard library (which may be in an inconsistent state, e.g. locks held by threads which do not exist after `clone()`)
-* `ipc`: a crate which allows workers to send requests to their broker, and get resources in response
+* `ipc`: a crate which allows workers to send requests to their broker, and receive resources (when allowed)
+* `linux-entrypoint`: the very first function executed by Linux workers when they start, split off because it needs to be compiled without the Rust standard library (which may be in an inconsistent state after a `fork()`, e.g. due locks held by threads which do not exist anymore)
 * `tests`: an integration test suite for all the crates above
 
 # Compilation
 
 You will need:
 - a stable Rust toolchain;
-- libseccomp and its development package (e.g. `apt install libseccomp libseccomp-dev` if you are running Debian);
+- on Linux, libseccomp and its development package (e.g. `apt install libseccomp libseccomp-dev` if you are running Debian);
 - this repository.
 
-Then a simple `cargo build` should be all it takes.
-
-# Known limitations
-
-There is no built-in way to track which path is associated with a file descriptor (on Unix) or a handle (on Windows), and tracking in the broker process would open a large attack surface for race conditions and state desynchronisation. Even if such an association was maintained with proper locking in brokers, workers from different brokers could still collaborate to e.g. move files, making their broker table desynchronized with reality. For this reason, operations on file descriptors are allowed unconditionnally, and the only access control possible is at file descriptor opening time. For instance, all system calls like `openat()` can only be partially supported in Linux workers, if callers do not use a file-descriptor-relative-path.
+Then a simple `cargo build` should be all it takes (otherwise, open an issue).
 
 # Contributing
 
-If you try to use this project, feedback would be appreciated (to sandbox what, in what kinds of environments, did you face any issue, etc).
+If you use this project, feedback would be appreciated (to sandbox what, on what kinds of platforms, was something hard to grasp, did you face any integration issue, etc).
 
 Even if you do not use the project, code reviews, documentation reviews (especially about design choices and OS isolation internals) is always welcome.
