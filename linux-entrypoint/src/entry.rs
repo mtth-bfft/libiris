@@ -21,7 +21,7 @@ pub extern "C" fn clone_entrypoint(args: *mut c_void) -> c_int {
     unsafe {
         let args = &*(args as *const EntrypointParameters);
 
-        libc::umask(0600);
+        libc::umask(0o600);
 
         // Cleanup leftover file descriptors from our parent or from code injected into our process
         let fds_path = CStr::from_ptr(b"/proc/self/fd/\0".as_ptr() as *const _);
