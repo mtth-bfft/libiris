@@ -1,5 +1,23 @@
 variables:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  # For builds in shell executors, try to not leave traces outside our work folder
+  RUSTUP_HOME: .rustup
+  CARGO_HOME: .cargo
+
+check:
+  image: rust:latest
+  tags:
+    - linux
+    - shared
+  script:
+    - rustup default stable
+    - rustup show
+    - rustup component add clippy rustfmt
+    - cargo clippy --all-features --all-targets -- -D warnings
+    - cargo fmt -- --check
+    - cargo install cargo-license
+    - cargo license --all-features --tsv
 
 build_linux:
   image: rust:latest
@@ -9,6 +27,7 @@ build_linux:
   before_script:
     - apt update && apt install -y libseccomp-dev libseccomp2 python3 python-is-python3
   script:
+    - rustup default stable
     - cargo build --workspace --all-targets --all-features --verbose
     - mkdir -p artifacts-tests/workers/
     - cargo build --tests --message-format=json | python tests/copy_artifacts.py artifacts-tests/
@@ -24,8 +43,6 @@ build_windows:
     - selfhosted
     - builder
   variables:
-    RUSTUP_HOME: .rustup
-    CARGO_HOME: .cargo
     RUSTFLAGS: -D warnings -Ctarget-feature=+crt-static
   before_script:
     - Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe

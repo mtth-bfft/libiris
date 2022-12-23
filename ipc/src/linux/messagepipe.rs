@@ -163,7 +163,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 msg_iov: &msg_iovec as *const libc::iovec as *mut libc::iovec, // mut is not really used here either
                 msg_iovlen: 1,
                 msg_control: cbuf.as_mut_ptr() as *mut c_void,
-                msg_controllen: cmsg_space * (if handle.is_some() { 1 } else { 0 }),
+                msg_controllen: cmsg_space * usize::from(handle.is_some()),
                 msg_flags: 0, // unused
             };
             if let Some(handle) = handle {

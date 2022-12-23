@@ -55,7 +55,7 @@ fn inherited_resources_no_leak() {
         worker.wait_for_exit(),
         Ok(0),
         "worker reported an error, see its output log:\n{}",
-        std::fs::read_to_string(tmpoutpath).unwrap_or("<unable to read log>".to_owned())
+        std::fs::read_to_string(tmpoutpath).unwrap_or_else(|_| "<unable to read log>".to_owned())
     );
     cleanup_tmp_file(&tmpoutpath);
 }

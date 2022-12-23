@@ -113,7 +113,7 @@ pub fn set_unmanaged_handle_inheritable<T: AsRawFd>(
 impl Clone for Handle {
     fn clone(&self) -> Self {
         let fd: i32 = self.as_raw().try_into().unwrap();
-        let cloned = unsafe {
+        unsafe {
             let res = libc::dup(fd);
             if res < 0 {
                 panic!(
@@ -123,7 +123,6 @@ impl Clone for Handle {
                 );
             }
             Self::new(res.try_into().unwrap()).unwrap()
-        };
-        cloned
+        }
     }
 }

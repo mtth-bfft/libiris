@@ -187,7 +187,7 @@ pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePi
     }
 
     for syscall_name in &SYSCALLS_ALLOWED_BY_DEFAULT {
-        let syscall_nr = match get_syscall_number(&syscall_name) {
+        let syscall_nr = match get_syscall_number(syscall_name) {
             Ok(n) => n,
             Err(e) => {
                 debug!("Syscall probably not supported {} : {}", syscall_name, e);
@@ -430,13 +430,13 @@ fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Opt
 fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc::c_int) -> i64 {
     let path = match path.chars().next() {
         Some('/') => path.to_owned(),
-        Some(_)  => {
+        Some(_) => {
             if dirfd != libc::AT_FDCWD {
                 warn!("openat(dirfd, relative path) is only supported with AT_FDCWD in Linux sandboxes");
                 return (-(libc::EPERM)).into();
             }
-            get_cwd().clone() + "/" + &path
-        },
+            get_cwd().clone() + "/" + path
+        }
         None => return (-libc::EPERM).into(),
     };
     debug!(

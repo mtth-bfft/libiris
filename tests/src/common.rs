@@ -53,15 +53,18 @@ pub fn open_tmp_file() -> (File, PathBuf) {
 // Don't implement this as a standard Drop trait on a struct, we want precise
 // control over when the tmp file is cleaned up between different assert/panic()s (which would trigger drop())
 pub fn cleanup_tmp_file(path: &Path) {
-    std::fs::remove_file(path).expect(&format!(
-        "Unable to remove temporary file {}",
-        path.display()
-    ));
+    if let Err(e) = std::fs::remove_file(path) {
+        panic!("Unable to remove temporary file {} : {}", path.display(), e);
+    }
 }
 
 pub fn get_worker_abs_path(name: &str) -> CString {
     let exe = std::env::current_exe().unwrap();
-    let file_name = format!("{}{}", name, exe.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or("".to_owned()));
+    let file_name = if let Some(ext) = exe.extension() {
+        format!("{}.{}", name, ext.to_string_lossy())
+    } else {
+        name.to_owned()
+    };
     let workers_subdir_path = {
         let mut p = exe.clone();
         p.pop();
@@ -69,11 +72,16 @@ pub fn get_worker_abs_path(name: &str) -> CString {
         p.push(&file_name);
         p
     };
-    let abspath = if workers_subdir_path.exists() { // try in ./workers/ for CI
+    let abspath = if workers_subdir_path.exists() {
+        // try in ./workers/ for CI
         Some(workers_subdir_path)
-    } else { // try in ../ for cargo test
+    } else {
+        // try in ../ for cargo test
         if let Some(parent_dir) = exe.parent() {
-            debug!("Trying worker binary {}", parent_dir.with_file_name(&file_name).display());
+            debug!(
+                "Trying worker binary {}",
+                parent_dir.with_file_name(&file_name).display()
+            );
             if parent_dir.with_file_name(&file_name).exists() {
                 Some(parent_dir.with_file_name(&file_name))
             } else {
@@ -83,10 +91,7 @@ pub fn get_worker_abs_path(name: &str) -> CString {
             None
         }
     };
-    let abspath = abspath.expect(&format!(
-        "worker binary {} not found in same directory, workers/ subdirectory, or parent directory of {}",
-        &file_name, exe.to_string_lossy()
-    ));
+    let abspath = abspath.unwrap_or_else(|| panic!("worker binary {} not found in same directory, workers/ subdirectory, or parent directory of {}", &file_name, exe.to_string_lossy()));
     info!("Worker executable: {}", abspath.display());
     CString::new(abspath.as_os_str().to_string_lossy().as_bytes()).unwrap()
 }

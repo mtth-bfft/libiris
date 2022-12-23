@@ -28,10 +28,8 @@ impl Worker {
         let mut worker_pipe_handle = worker_pipe.into_handle();
         worker_pipe_handle.set_inheritable(true)?;
         policy.allow_inherit_handle(&worker_pipe_handle)?;
-        for handle in vec![stdin, stdout, stderr] {
-            if let Some(handle) = handle {
-                policy.allow_inherit_handle(handle)?;
-            }
+        for handle in [stdin, stdout, stderr].iter().flatten() {
+            policy.allow_inherit_handle(handle)?;
         }
         for handle in policy.get_inherited_handles() {
             // On Linux, exec() will close all CLOEXEC handles.
@@ -58,7 +56,7 @@ impl Worker {
         let ipc_handle_var = CString::new(format!(
             "{}={}",
             IPC_HANDLE_ENV_NAME,
-            worker_pipe_handle.as_raw().to_string()
+            worker_pipe_handle.as_raw()
         ))
         .unwrap();
         envp.push(&ipc_handle_var);
@@ -102,7 +100,7 @@ impl Worker {
                 }
             }
         });
-        Ok(Self { process: process })
+        Ok(Self { process })
     }
 
     pub fn get_pid(&self) -> u64 {
