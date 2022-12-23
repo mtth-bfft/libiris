@@ -16,9 +16,9 @@ On Linux, if user notifications are not available, some modifications must be ap
 
 ---> *The sandboxed process must be aware of its sandboxing and cooperate to e.g. load a library.*
 
-On Linux, using `ptrace` or seccomp with `SECCOMP_RET_TRACE` to filter system calls would prevent anyone from attaching to the sandboxed process to debug it (only one debugger can be attached at a time), which would greatly impedes usability of the sandbox by developers.
+On Unixes, validating and filtering system call arguments can be done by using `ptrace`. On Linux, it can also be done using seccomp with `SECCOMP_RET_TRACE`. Both approaches would prevent anyone from attaching to the sandboxed process to debug it (only one debugger can be attached at a time), preventing developpers from debugging their own processes.
 
----> *Linux sandboxing must not rely on `ptrace` or `SECCOMP_RET_TRACE`*
+---> *Unix sandboxing must not rely on `ptrace` or `SECCOMP_RET_TRACE`*
 
 There are system calls on Unixes (e.g. `openat`) and Windows (e.g. `NtCreateFile`) which take as argument a file descriptor or handle, and a path relative to it. However, there is no built-in way to query the resulting absolute path, and manually tracking the path underlying each file descriptor in the broker process would open a large attack surface for race conditions, state desynchronisation, or collaboration between workers (e.g to move files and desynchronise their broker handle tables with reality).
 
