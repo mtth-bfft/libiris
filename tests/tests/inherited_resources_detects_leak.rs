@@ -1,5 +1,5 @@
-use common::{check_worker_handles, common_test_setup, get_worker_abs_path};
-use iris_broker::{Policy, Worker};
+use common::{check_worker_handles, common_test_setup, get_worker_abs_path, open_tmp_file};
+use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
 
 // Voluntarily set up resources (opened handles and file descriptors)
 // ready to be leaked into our children. This could be the result of
@@ -29,13 +29,13 @@ fn os_specific_setup(worker: &Worker) {
     );
     // Voluntarily inject a full-privilege handle to ourselves into the worker
     // /!\ NEVER DO THIS, THIS COMPLETELY BREAKS SANDBOXING BOUNDARIES
-    let mut _voluntarily_leaked: HANDLE = null_mut();
+    let mut voluntarily_leaked: HANDLE = null_mut();
     let res = unsafe {
         DuplicateHandle(
             GetCurrentProcess(),
             GetCurrentProcess(),
             h_worker,
-            &mut _voluntarily_leaked as *mut _,
+            &mut voluntarily_leaked as *mut _,
             PROCESS_ALL_ACCESS,
             0,
             0,
@@ -47,22 +47,21 @@ fn os_specific_setup(worker: &Worker) {
     unsafe { CloseHandle(h_worker) };
 }
 
-#[ignore] // not ready for now
+//#[ignore] // not ready for now
 #[test]
 #[should_panic(expected = "process")]
 fn inherited_resources_detects_leak() {
     common_test_setup();
     let worker_binary = get_worker_abs_path("inherited_resources_detects_leak_worker");
-    let worker = Worker::new(
-        &Policy::nothing_allowed(), // don't allow any resource to be inherited, check that it receives nothing
-        &worker_binary,
-        &[&worker_binary],
-        &[],
-        None,
-        None,
-        None,
-    )
-    .expect("worker creation failed");
+    let (tmpout, _) = open_tmp_file();
+    let tmpout = downcast_to_handle(tmpout);
+    let proc_config = ProcessConfig::new(worker_binary.clone(), &[worker_binary])
+        .with_stdout_redirected(&tmpout)
+        .unwrap()
+        .with_stderr_redirected(&tmpout)
+        .unwrap();
+    let policy = Policy::nothing_allowed(); // don't allow any resource to be inherited, check that it receives nothing
+    let worker = Worker::new(&proc_config, &policy).expect("worker creation failed");
     os_specific_setup(&worker);
     check_worker_handles(&worker);
 }

@@ -1,7 +1,7 @@
 use common::{
     check_worker_handles, cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file,
 };
-use iris_broker::{downcast_to_handle, CrossPlatformHandle, Policy, Worker};
+use iris_broker::{downcast_to_handle, CrossPlatformHandle, Policy, ProcessConfig, Worker};
 use std::fs::File;
 
 // Voluntarily set up resources (opened handles and file descriptors)
@@ -40,16 +40,13 @@ fn inherited_resources_no_leak() {
     // TODO: remove stdout redirection to avoid it showing up in the test results? Or find a better solution
     let (tmpout, tmpoutpath) = open_tmp_file();
     let tmpout = downcast_to_handle(tmpout);
-    let mut worker = Worker::new(
-        &Policy::nothing_allowed(), // don't allow anything to be inherited, check that it receives nothing
-        &worker_binary,
-        &[&worker_binary],
-        &[],
-        None,
-        Some(&tmpout),
-        Some(&tmpout),
-    )
-    .expect("worker creation failed");
+    let policy = Policy::nothing_allowed(); // don't allow anything to be inherited, check that it receives nothing
+    let proc_config = ProcessConfig::new(worker_binary.clone(), &[worker_binary])
+        .with_stdout_redirected(&tmpout)
+        .unwrap()
+        .with_stderr_redirected(&tmpout)
+        .unwrap();
+    let mut worker = Worker::new(&proc_config, &policy).expect("worker creation failed");
     check_worker_handles(&worker);
     assert_eq!(
         worker.wait_for_exit(),

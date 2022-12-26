@@ -1,5 +1,5 @@
 use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
-use iris_broker::{downcast_to_handle, Policy, Worker};
+use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
 use std::io::{Seek, SeekFrom, Write};
 
 #[test]
@@ -11,16 +11,18 @@ fn stdout_stderr() {
     tmpin.write_all(b"OK_STDIN").unwrap();
     tmpin.seek(SeekFrom::Start(0)).unwrap();
     let worker_binary = get_worker_abs_path("stdout_stderr_worker");
-    let mut worker = Worker::new(
-        &Policy::nothing_allowed(),
-        &worker_binary,
-        &[&worker_binary],
-        &[],
-        Some(&downcast_to_handle(tmpin)),
-        Some(&downcast_to_handle(tmpout)),
-        Some(&downcast_to_handle(tmperr)),
-    )
-    .expect("worker creation failed");
+    let tmpin = downcast_to_handle(tmpin);
+    let tmpout = downcast_to_handle(tmpout);
+    let tmperr = downcast_to_handle(tmperr);
+    let proc_config = ProcessConfig::new(worker_binary.clone(), &[worker_binary])
+        .with_stdin_redirected(&tmpin)
+        .unwrap()
+        .with_stdout_redirected(&tmpout)
+        .unwrap()
+        .with_stderr_redirected(&tmperr)
+        .unwrap();
+    let mut worker =
+        Worker::new(&proc_config, &Policy::nothing_allowed()).expect("worker creation failed");
     assert_eq!(worker.wait_for_exit(), Ok(0), "worker wait_for_exit failed");
     assert_eq!(
         std::fs::read_to_string(&tmpoutpath).expect("failed to read stdout"),

@@ -1,5 +1,5 @@
 use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
-use iris_broker::{downcast_to_handle, Policy, Worker};
+use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
 use log::info;
 use std::ffi::CString;
 use std::net::SocketAddr;
@@ -21,23 +21,23 @@ fn network_connect_loopback() {
         Err(e) => panic!("Could not accept() incoming connections: {}", e),
     });
 
+    let policy = Policy::nothing_allowed();
     let worker_binary = get_worker_abs_path("network_connect_worker");
     let (tmpout, tmpoutpath) = open_tmp_file();
     let tmpout = downcast_to_handle(tmpout);
-    let mut worker = Worker::new(
-        &Policy::nothing_allowed(),
-        &worker_binary,
+    let proc_config = ProcessConfig::new(
+        worker_binary.clone(),
         &[
-            &worker_binary,
-            &CString::new("127.0.0.1").unwrap(),
-            &CString::new(format!("{}", port)).unwrap(),
+            worker_binary,
+            CString::new("127.0.0.1").unwrap(),
+            CString::new(format!("{}", port)).unwrap(),
         ],
-        &[],
-        None,
-        Some(&tmpout),
-        Some(&tmpout),
     )
-    .expect("worker creation failed");
+    .with_stdout_redirected(&tmpout)
+    .unwrap()
+    .with_stderr_redirected(&tmpout)
+    .unwrap();
+    let mut worker = Worker::new(&proc_config, &policy).expect("worker creation failed");
     assert_eq!(
         worker.wait_for_exit(),
         Ok(0),

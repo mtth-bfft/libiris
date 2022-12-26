@@ -3,7 +3,7 @@
 mod process;
 mod worker;
 
-pub use worker::Worker;
+pub use worker::{ProcessConfig, Worker};
 
 // OS-specific modules
 

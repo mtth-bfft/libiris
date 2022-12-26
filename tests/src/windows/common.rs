@@ -397,7 +397,7 @@ pub fn check_worker_handles(worker: &Worker) {
         });
 
         debug!(
-            "> {} (name: {:?}) (shared with {:?})",
+            "Has handle to {} (name: {:?}) (shared with {:?})",
             obj_type, name, other_holder_processes
         );
         // Only tolerate an allow-list of types, each with type-specific conditions
@@ -479,7 +479,7 @@ pub fn check_worker_handles(worker: &Worker) {
             let err = unsafe { GetLastError() };
             assert_ne!(
                 hsameobject, INVALID_HANDLE_VALUE,
-                "could not open file {} with rights {} (error {})",
+                "worker has handle to file {} with rights {} but could not have opened it (error {})",
                 name, handle.GrantedAccess, err
             );
             unsafe {

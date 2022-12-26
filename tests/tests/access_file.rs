@@ -1,5 +1,5 @@
 use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
-use iris_broker::{downcast_to_handle, Policy, Worker};
+use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
 use std::ffi::CString;
 use std::io::Write;
 
@@ -83,37 +83,36 @@ fn access_file() {
                                         restrict_to_append_only,
                                     )
                                     .unwrap();
-                                let mut worker = Worker::new(
-                                    &policy,
-                                    &worker_binary,
+                                let proc_config = ProcessConfig::new(
+                                    worker_binary.clone(),
                                     &[
-                                        &worker_binary,
-                                        &CString::new(format!("{}", test_function)).unwrap(),
-                                        &CString::new(transform_path(
+                                        worker_binary.clone(),
+                                        CString::new(format!("{}", test_function)).unwrap(),
+                                        CString::new(transform_path(
                                             tmpokpath.to_str().expect("invalid tmp path"),
                                         ))
                                         .unwrap(),
-                                        &CString::new(if readable { "1" } else { "0" }).unwrap(),
-                                        &CString::new(if writable { "1" } else { "0" }).unwrap(),
-                                        &CString::new(if restrict_to_append_only {
+                                        CString::new(if readable { "1" } else { "0" }).unwrap(),
+                                        CString::new(if writable { "1" } else { "0" }).unwrap(),
+                                        CString::new(if restrict_to_append_only {
                                             "1"
                                         } else {
                                             "0"
                                         })
                                         .unwrap(),
-                                        &CString::new(if request_read { "1" } else { "0" })
+                                        CString::new(if request_read { "1" } else { "0" }).unwrap(),
+                                        CString::new(if request_write { "1" } else { "0" })
                                             .unwrap(),
-                                        &CString::new(if request_write { "1" } else { "0" })
-                                            .unwrap(),
-                                        &CString::new(if request_only_append { "1" } else { "0" })
+                                        CString::new(if request_only_append { "1" } else { "0" })
                                             .unwrap(),
                                     ],
-                                    &[],
-                                    None,
-                                    Some(&tmpout),
-                                    Some(&tmpout),
                                 )
-                                .expect("worker creation failed");
+                                .with_stdout_redirected(&tmpout)
+                                .unwrap()
+                                .with_stderr_redirected(&tmpout)
+                                .unwrap();
+                                let mut worker = Worker::new(&proc_config, &policy)
+                                    .expect("worker creation failed");
                                 assert_eq!(
                                     worker.wait_for_exit(),
                                     Ok(0),

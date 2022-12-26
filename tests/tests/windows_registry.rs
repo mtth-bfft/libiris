@@ -1,7 +1,7 @@
 #![cfg(windows)]
 use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
 use core::ptr::null_mut;
-use iris_broker::{downcast_to_handle, Policy, Worker};
+use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
 use iris_policy::derive_all_reg_key_paths_from_path;
 use std::ffi::CString;
 use winapi::shared::winerror::ERROR_SUCCESS;
@@ -53,24 +53,22 @@ fn reg_read_write_works() {
                             .allow_regkey_access("HKEY_CURRENT_USER\\test1", readable, writable)
                             .unwrap();
                     }
-                    let mut worker = Worker::new(
-                        &policy,
-                        &worker_binary,
+                    let proc_conf = ProcessConfig::new(
+                        worker_binary.clone(),
                         &[
-                            &worker_binary,
-                            &CString::new(format!("{}", test_function)).unwrap(),
-                            &CString::new(nt_key_path.clone()).unwrap(),
-                            &CString::new(if readable { "1" } else { "0" }).unwrap(),
-                            &CString::new(if writable { "1" } else { "0" }).unwrap(),
-                            &CString::new(if request_read { "1" } else { "0" }).unwrap(),
-                            &CString::new(if request_write { "1" } else { "0" }).unwrap(),
+                            worker_binary.clone(),
+                            CString::new(format!("{}", test_function)).unwrap(),
+                            CString::new(nt_key_path.clone()).unwrap(),
+                            CString::new(if readable { "1" } else { "0" }).unwrap(),
+                            CString::new(if writable { "1" } else { "0" }).unwrap(),
+                            CString::new(if request_read { "1" } else { "0" }).unwrap(),
+                            CString::new(if request_write { "1" } else { "0" }).unwrap(),
                         ],
-                        &[],
-                        None,
-                        Some(&tmpout),
-                        Some(&tmpout),
                     )
-                    .expect("worker creation failed");
+                    .with_stdout_redirected(&tmpout)
+                    .unwrap();
+                    let mut worker =
+                        Worker::new(&proc_conf, &policy).expect("worker creation failed");
                     assert_eq!(
                         worker.wait_for_exit(),
                         Ok(0),

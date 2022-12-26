@@ -10,7 +10,7 @@ fn fcntl_fsetfd_blocked() {
 #[test]
 fn fcntl_fsetfd_blocked() {
     use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
-    use iris_broker::{downcast_to_handle, Policy, Worker};
+    use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
     use std::ffi::CString;
 
     common_test_setup();
@@ -23,19 +23,18 @@ fn fcntl_fsetfd_blocked() {
     policy
         .allow_file_access(&tmpwritablepath.to_string_lossy(), true, true, true)
         .unwrap();
-    let mut worker = Worker::new(
-        &policy,
-        &worker_binary,
+    let proc_config = ProcessConfig::new(
+        worker_binary.clone(),
         &[
-            &worker_binary,
-            &CString::new(tmpwritablepath.to_str().unwrap()).unwrap(),
+            worker_binary,
+            CString::new(tmpwritablepath.to_str().unwrap()).unwrap(),
         ],
-        &[],
-        None,
-        Some(&tmpout),
-        Some(&tmpout),
     )
-    .expect("worker creation failed");
+    .with_stdout_redirected(&tmpout)
+    .unwrap()
+    .with_stderr_redirected(&tmpout)
+    .unwrap();
+    let mut worker = Worker::new(&proc_config, &policy).expect("worker creation failed");
     assert_eq!(
         worker.wait_for_exit(),
         Ok(0),
