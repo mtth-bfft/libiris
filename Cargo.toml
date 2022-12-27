@@ -9,3 +9,5 @@ members = [
     "linux-entrypoint",
 ]
 
+[profile.release]
+lto = true
