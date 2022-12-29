@@ -110,25 +110,41 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     Error::last_os_error()
                 ));
             }
-            if msg.msg_controllen > 0 {
-                let cmsghdr = libc::CMSG_FIRSTHDR(&msg as *const libc::msghdr);
-                if cmsghdr.is_null() {
-                    // We possibly leak a file descriptor by returning here, but this is the best we can do given the libc messed up.
-                    return Err("Failed to parse ancillary data from worker request".to_owned());
-                }
+            // Iterate on ancillary payloads, if any (we allocated just enough space for one file descriptor, so we
+            // should never be able to receive more at a time, but iterate and check to match the "safe" way of using
+            // this API)
+            let mut res = Ok((res, None));
+            let mut cmsghdr = libc::CMSG_FIRSTHDR(&msg as *const libc::msghdr);
+            while !cmsghdr.is_null() {
                 let (clevel, ctype) = ((*cmsghdr).cmsg_level, (*cmsghdr).cmsg_type);
                 if (clevel, ctype) != (libc::SOL_SOCKET, libc::SCM_RIGHTS) {
                     // We possibly leak a resource here, but the libc handed us something other than a file descriptor
-                    return Err(format!(
+                    res = Err(format!(
                         "Unexpected ancillary data level={} type={} received with worker request",
                         clevel, ctype
                     ));
+                    continue;
                 }
-                let fd = *(libc::CMSG_DATA(cmsghdr) as *const c_int);
-                (res, Some(Handle::new(fd as u64).unwrap()))
-            } else {
-                (res, None)
+                // CMSG_DATA() pointers are not aligned and require the use of an intermediary memcpy (see man cmsg)
+                let mut aligned: c_int = -1;
+                std::ptr::copy_nonoverlapping(
+                    libc::CMSG_DATA(cmsghdr),
+                    &mut aligned as *mut _ as *mut _,
+                    std::mem::size_of_val(&aligned),
+                );
+                let fd = Handle::new(aligned as u64).unwrap();
+                res = match res {
+                    Ok((res, None)) => Ok((res, Some(fd))),
+                    Ok((res, Some(_))) => Err(format!(
+                        "More than one file descriptor received with message {:?}",
+                        res
+                    )),
+                    Err(e) => Err(e),
+                };
+
+                cmsghdr = libc::CMSG_NXTHDR(&msg as *const libc::msghdr, cmsghdr);
             }
+            res?
         };
         if (msg.msg_flags & libc::MSG_CTRUNC) != 0 {
             return Err("recvmsg() failed due to truncated ancillary data".to_owned());
