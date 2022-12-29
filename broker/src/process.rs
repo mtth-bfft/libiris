@@ -17,21 +17,4 @@ pub trait CrossPlatformSandboxedProcess {
 
     // Returns the ID of the worker process
     fn get_pid(&self) -> u64;
-
-    // Blocks until the process exits, and returns its exit code
-    fn wait_for_exit(&mut self) -> Result<u64, String>;
-
-    /*
-        // Returns true if the worker process has exited
-        fn has_exited(&self) -> bool;
-
-        // Returns the OS-specific exit code of the worker process if it has exited
-        fn get_exit_code(&self) -> Option<u64>;
-
-        // Blocks until the worker process exits
-        fn wait_for_exit(&self) -> ();
-
-        // Terminate
-        fn terminate(&self) -> ();
-    */
 }

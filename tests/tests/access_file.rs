@@ -1,4 +1,5 @@
 use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
+use common::os::wait_for_worker_exit;
 use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
 use std::ffi::CString;
 use std::io::Write;
@@ -111,10 +112,10 @@ fn access_file() {
                                 .unwrap()
                                 .with_stderr_redirected(&tmpout)
                                 .unwrap();
-                                let mut worker = Worker::new(&proc_config, &policy)
+                                let worker = Worker::new(&proc_config, &policy)
                                     .expect("worker creation failed");
                                 assert_eq!(
-                                    worker.wait_for_exit(),
+                                    wait_for_worker_exit(&worker),
                                     Ok(0),
                                     "worker reported an error, see its output log:\n{}",
                                     std::fs::read_to_string(tmpoutpath)

@@ -1,4 +1,5 @@
 use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
+use common::os::wait_for_worker_exit;
 use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
 use std::io::{Seek, SeekFrom, Write};
 
@@ -21,9 +22,9 @@ fn stdout_stderr() {
         .unwrap()
         .with_stderr_redirected(&tmperr)
         .unwrap();
-    let mut worker =
+    let worker =
         Worker::new(&proc_config, &Policy::nothing_allowed()).expect("worker creation failed");
-    assert_eq!(worker.wait_for_exit(), Ok(0), "worker wait_for_exit failed");
+    assert_eq!(wait_for_worker_exit(&worker), Ok(0), "worker wait_for_exit failed");
     assert_eq!(
         std::fs::read_to_string(&tmpoutpath).expect("failed to read stdout"),
         "OK_STDOUT\n".to_owned(),

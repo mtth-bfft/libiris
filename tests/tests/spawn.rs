@@ -1,4 +1,5 @@
 use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
+use common::os::wait_for_worker_exit;
 use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
 
 #[test]
@@ -13,10 +14,10 @@ fn spawn() {
         .with_stderr_redirected(&tmpout)
         .unwrap();
 
-    let mut worker =
+    let worker =
         Worker::new(&proc_config, &Policy::nothing_allowed()).expect("worker creation failed");
     assert_eq!(
-        worker.wait_for_exit(),
+        wait_for_worker_exit(&worker),
         Ok(42),
         "worker wait_for_exit failed"
     );

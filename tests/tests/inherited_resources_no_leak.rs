@@ -1,6 +1,7 @@
 use common::{
     check_worker_handles, cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file,
 };
+use common::os::wait_for_worker_exit;
 use iris_broker::{downcast_to_handle, CrossPlatformHandle, Policy, ProcessConfig, Worker};
 use std::fs::File;
 
@@ -46,10 +47,10 @@ fn inherited_resources_no_leak() {
         .unwrap()
         .with_stderr_redirected(&tmpout)
         .unwrap();
-    let mut worker = Worker::new(&proc_config, &policy).expect("worker creation failed");
+    let worker = Worker::new(&proc_config, &policy).expect("worker creation failed");
     check_worker_handles(&worker);
     assert_eq!(
-        worker.wait_for_exit(),
+        wait_for_worker_exit(&worker),
         Ok(0),
         "worker reported an error, see its output log:\n{}",
         std::fs::read_to_string(tmpoutpath).unwrap_or_else(|_| "<unable to read log>".to_owned())

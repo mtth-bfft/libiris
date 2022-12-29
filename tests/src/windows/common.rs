@@ -5,11 +5,13 @@
 
 use core::ptr::null_mut;
 use iris_broker::Worker;
+use iris_policy::{Handle, CrossPlatformHandle};
 use log::{debug, info, warn};
 use std::convert::TryInto;
 use std::ffi::CString;
 use std::fs::File;
 use std::os::windows::io::AsRawHandle;
+use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{BYTE, DWORD};
 use winapi::shared::ntdef::{HANDLE, NTSTATUS, PULONG, PVOID, PWSTR, ULONG, USHORT, WCHAR};
 use winapi::shared::ntstatus::{STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS};
@@ -22,16 +24,17 @@ use winapi::um::fileapi::OPEN_EXISTING;
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::handleapi::{CloseHandle, DuplicateHandle};
 use winapi::um::memoryapi::ReadProcessMemory;
-use winapi::um::minwinbase::{DEBUG_EVENT, OUTPUT_DEBUG_STRING_EVENT};
+use winapi::um::minwinbase::{DEBUG_EVENT, OUTPUT_DEBUG_STRING_EVENT, STILL_ACTIVE};
 use winapi::um::processthreadsapi::OpenProcessToken;
 use winapi::um::processthreadsapi::SetThreadToken;
-use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess};
+use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess, GetExitCodeProcess};
 use winapi::um::securitybaseapi::{DuplicateToken, RevertToSelf};
-use winapi::um::winbase::INFINITE;
+use winapi::um::synchapi::WaitForSingleObject;
+use winapi::um::winbase::{INFINITE, WAIT_OBJECT_0};
 use winapi::um::winnt::{
     SecurityImpersonation, DBG_CONTINUE, DUPLICATE_SAME_ACCESS, FILE_SHARE_DELETE, FILE_SHARE_READ,
     FILE_SHARE_WRITE, PROCESS_DUP_HANDLE, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
-    TOKEN_DUPLICATE,
+    TOKEN_DUPLICATE, SYNCHRONIZE
 };
 
 // NT paths are stored as UNICODE_STRINGs, which store their binary length in USHORTs
@@ -534,4 +537,39 @@ pub fn check_worker_handles(worker: &Worker) {
         worker.get_pid(),
         unsafe { GetLastError() }
     );
+}
+
+pub fn wait_for_worker_exit(worker: &Worker) -> Result<u64, String> {
+    let pid = worker.get_pid() as u32;
+    let h_process = unsafe {
+        let res = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_INFORMATION, 0, pid);
+        if res.is_null() {
+            return Err(format!(
+                "OpenProcess({}) failed with error {}",
+                pid,
+                GetLastError()
+            ));
+        }
+        Handle::new(res as u64).unwrap()
+    };
+    let mut exit_code: DWORD = STILL_ACTIVE;
+    loop {
+        let res = unsafe { GetExitCodeProcess(h_process.as_raw() as *mut c_void, &mut exit_code as *mut _) };
+        if res == 0 {
+            return Err(format!(
+                "GetExitCodeProcess() failed with error {}",
+                unsafe { GetLastError() }
+            ));
+        }
+        if exit_code != STILL_ACTIVE {
+            return Ok(exit_code.into());
+        }
+        let res = unsafe { WaitForSingleObject(h_process.as_raw() as *mut c_void, INFINITE) };
+        if res != WAIT_OBJECT_0 {
+            return Err(format!(
+                "WaitForSingleObject() failed with error {}",
+                unsafe { GetLastError() }
+            ));
+        }
+    }
 }

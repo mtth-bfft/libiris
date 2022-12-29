@@ -14,15 +14,13 @@ use winapi::shared::winerror::HRESULT_FROM_WIN32;
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::libloaderapi::{GetProcAddress, LoadLibraryA};
-use winapi::um::minwinbase::STILL_ACTIVE;
 use winapi::um::processthreadsapi::{
-    CreateProcessA, GetExitCodeProcess, GetProcessId, PROCESS_INFORMATION,
+    CreateProcessA, GetProcessId, PROCESS_INFORMATION,
 };
-use winapi::um::synchapi::WaitForSingleObject;
 use winapi::um::sysinfoapi::GetSystemWindowsDirectoryA;
 use winapi::um::winbase::{
-    DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, INFINITE, STARTF_FORCEOFFFEEDBACK,
-    STARTF_USESTDHANDLES, STARTUPINFOEXA, WAIT_OBJECT_0,
+    DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, STARTF_FORCEOFFFEEDBACK,
+    STARTF_USESTDHANDLES, STARTUPINFOEXA,
 };
 use winapi::um::winnt::{
     HANDLE, HRESULT, PCWSTR, PSID, PSID_AND_ATTRIBUTES, SECURITY_CAPABILITIES,
@@ -491,28 +489,5 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
 
     fn get_pid(&self) -> u64 {
         self.pid
-    }
-
-    fn wait_for_exit(&mut self) -> Result<u64, String> {
-        let mut exit_code: DWORD = STILL_ACTIVE;
-        loop {
-            let res = unsafe { GetExitCodeProcess(self.h_process, &mut exit_code as *mut _) };
-            if res == 0 {
-                return Err(format!(
-                    "GetExitCodeProcess() failed with error {}",
-                    unsafe { GetLastError() }
-                ));
-            }
-            if exit_code != STILL_ACTIVE {
-                return Ok(exit_code.into());
-            }
-            let res = unsafe { WaitForSingleObject(self.h_process, INFINITE) };
-            if res != WAIT_OBJECT_0 {
-                return Err(format!(
-                    "WaitForSingleObject() failed with error {}",
-                    unsafe { GetLastError() }
-                ));
-            }
-        }
     }
 }

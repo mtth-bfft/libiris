@@ -177,8 +177,4 @@ impl Worker {
     pub fn get_pid(&self) -> u64 {
         self.process.get_pid()
     }
-
-    pub fn wait_for_exit(&mut self) -> Result<u64, String> {
-        self.process.wait_for_exit()
-    }
 }

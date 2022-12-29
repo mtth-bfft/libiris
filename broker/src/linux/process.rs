@@ -142,25 +142,4 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
     fn get_pid(&self) -> u64 {
         self.pid.into()
     }
-
-    fn wait_for_exit(&mut self) -> Result<u64, String> {
-        let mut wstatus: c_int = 0;
-        loop {
-            let res =
-                unsafe { libc::waitpid(self.pid as i32, &mut wstatus as *mut _, libc::__WALL) };
-            if res == -1 {
-                return Err(format!(
-                    "waitpid({}) failed with code {}",
-                    self.pid,
-                    Error::last_os_error().raw_os_error().unwrap_or(0)
-                ));
-            }
-            if libc::WIFEXITED(wstatus) {
-                return Ok(libc::WEXITSTATUS(wstatus).try_into().unwrap());
-            }
-            if libc::WIFSIGNALED(wstatus) {
-                return Ok((128 + libc::WTERMSIG(wstatus)).try_into().unwrap());
-            }
-        }
-    }
 }
