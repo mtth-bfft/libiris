@@ -5,7 +5,7 @@
 
 use core::ptr::null_mut;
 use iris_broker::Worker;
-use iris_policy::{Handle, CrossPlatformHandle};
+use iris_policy::{CrossPlatformHandle, Handle};
 use log::{debug, info, warn};
 use std::convert::TryInto;
 use std::ffi::CString;
@@ -27,14 +27,14 @@ use winapi::um::memoryapi::ReadProcessMemory;
 use winapi::um::minwinbase::{DEBUG_EVENT, OUTPUT_DEBUG_STRING_EVENT, STILL_ACTIVE};
 use winapi::um::processthreadsapi::OpenProcessToken;
 use winapi::um::processthreadsapi::SetThreadToken;
-use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess, GetExitCodeProcess};
+use winapi::um::processthreadsapi::{GetCurrentProcess, GetExitCodeProcess, OpenProcess};
 use winapi::um::securitybaseapi::{DuplicateToken, RevertToSelf};
 use winapi::um::synchapi::WaitForSingleObject;
 use winapi::um::winbase::{INFINITE, WAIT_OBJECT_0};
 use winapi::um::winnt::{
     SecurityImpersonation, DBG_CONTINUE, DUPLICATE_SAME_ACCESS, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, PROCESS_DUP_HANDLE, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
-    TOKEN_DUPLICATE, SYNCHRONIZE
+    FILE_SHARE_WRITE, PROCESS_DUP_HANDLE, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ, SYNCHRONIZE,
+    TOKEN_DUPLICATE,
 };
 
 // NT paths are stored as UNICODE_STRINGs, which store their binary length in USHORTs
@@ -554,7 +554,9 @@ pub fn wait_for_worker_exit(worker: &Worker) -> Result<u64, String> {
     };
     let mut exit_code: DWORD = STILL_ACTIVE;
     loop {
-        let res = unsafe { GetExitCodeProcess(h_process.as_raw() as *mut c_void, &mut exit_code as *mut _) };
+        let res = unsafe {
+            GetExitCodeProcess(h_process.as_raw() as *mut c_void, &mut exit_code as *mut _)
+        };
         if res == 0 {
             return Err(format!(
                 "GetExitCodeProcess() failed with error {}",

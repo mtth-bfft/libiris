@@ -1,3 +1,4 @@
+use crate::error::BrokerError;
 use iris_policy::{Handle, Policy};
 use std::ffi::CStr;
 
@@ -11,7 +12,7 @@ pub trait CrossPlatformSandboxedProcess {
         stdin: Option<&Handle>,
         stdout: Option<&Handle>,
         stderr: Option<&Handle>,
-    ) -> Result<Self, String>
+    ) -> Result<Self, BrokerError>
     where
         Self: std::marker::Sized;
 

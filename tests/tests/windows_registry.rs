@@ -1,6 +1,6 @@
 #![cfg(windows)]
-use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
 use common::os::wait_for_worker_exit;
+use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
 use core::ptr::null_mut;
 use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
 use iris_policy::derive_all_reg_key_paths_from_path;
@@ -68,8 +68,7 @@ fn reg_read_write_works() {
                     )
                     .with_stdout_redirected(&tmpout)
                     .unwrap();
-                    let worker =
-                        Worker::new(&proc_conf, &policy).expect("worker creation failed");
+                    let worker = Worker::new(&proc_conf, &policy).expect("worker creation failed");
                     assert_eq!(
                         wait_for_worker_exit(&worker),
                         Ok(0),

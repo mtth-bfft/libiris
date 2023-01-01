@@ -1,3 +1,5 @@
+use crate::error::PolicyError;
+use crate::handle::CrossPlatformHandle;
 use crate::os::path::derive_all_file_paths_from_path;
 #[cfg(windows)]
 use crate::os::path::derive_all_reg_key_paths_from_path;
@@ -41,7 +43,17 @@ impl<'a> Policy<'a> {
         }
     }
 
-    pub fn allow_inherit_handle(&mut self, handle: &'a Handle) -> Result<(), String> {
+    pub fn allow_inherit_handle(&mut self, handle: &'a Handle) -> Result<(), PolicyError> {
+        // On Linux, exec() will close all CLOEXEC handles.
+        // On Windows, CreateProcess() with bInheritHandles = TRUE doesn't automatically set the given
+        // handles as inheritable, and instead returns a ERROR_INVALID_PARAMETER if one of them is not.
+        // We cannot just set the handles as inheritable behind the caller's back, since they might
+        // reset it or depend on it in another thread. They have to get this right by themselves.
+        if !handle.is_inheritable()? {
+            return Err(PolicyError::HandleNotInheritable {
+                handle_raw_value: handle.as_raw(),
+            });
+        }
         self.inherit_handles.push(handle);
         Ok(())
     }
@@ -50,21 +62,25 @@ impl<'a> Policy<'a> {
         &self.inherit_handles[..]
     }
 
+    // TODO: split into file_readonly, file_write, file_append
     pub fn allow_file_access(
         &mut self,
         path: &str,
         readable: bool,
         writable: bool,
         restrict_to_append_only: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), PolicyError> {
         if restrict_to_append_only && !writable {
-            return Err(
-                "Invalid parameters: to allow appending to a path, it must be writable".to_owned(),
-            );
+            return Err(PolicyError::AppendOnlyRequiresWriteAccess {
+                path: path.to_owned(),
+            });
         }
-        for path in derive_all_file_paths_from_path(path) {
+        for path in derive_all_file_paths_from_path(path)? {
             if let Err(e) = Pattern::new(&path) {
-                return Err(format!("Invalid file path pattern: {}", e));
+                return Err(PolicyError::InvalidPathPattern {
+                    pattern: path.clone(),
+                    description: e.msg.to_owned(),
+                });
             }
             let (prev_readable, prev_writable, prev_restrict_to_append_only) = self
                 .file_access
@@ -94,7 +110,7 @@ impl<'a> Policy<'a> {
         path: &str,
         readable: bool,
         writable: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), PolicyError> {
         let (prev_readable, prev_writable) = self
             .regkey_access
             .get(path)
@@ -160,10 +176,13 @@ impl<'a> Policy<'a> {
         readers: bool,
         writers: bool,
         deleters: bool,
-    ) -> Result<(), String> {
-        for path in derive_all_file_paths_from_path(path) {
+    ) -> Result<(), PolicyError> {
+        for path in derive_all_file_paths_from_path(path)? {
             if let Err(e) = Pattern::new(&path) {
-                return Err(format!("Invalid file path pattern: {}", e));
+                return Err(PolicyError::InvalidPathPattern {
+                    pattern: path.clone(),
+                    description: e.msg.to_owned(),
+                });
             }
             if let Some((prev_readers, prev_writers, prev_deleters)) = self
                 .file_lock

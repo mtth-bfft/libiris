@@ -1,3 +1,4 @@
+use crate::error::BrokerError;
 use crate::os::brokered_syscalls::handle_os_specific_request;
 use crate::os::process::OSSandboxedProcess;
 use crate::process::CrossPlatformSandboxedProcess;
@@ -31,46 +32,27 @@ impl<'a> ProcessConfig<'a> {
         }
     }
 
-    pub fn with_environment_variable(mut self, env_var: CString) -> Result<Self, String> {
+    pub fn with_environment_variable(mut self, env_var: CString) -> Result<Self, BrokerError> {
         if env_var.to_string_lossy().starts_with(IPC_HANDLE_ENV_NAME) {
-            return Err(format!(
-                "Workers cannot use the reserved {} environment variable",
-                IPC_HANDLE_ENV_NAME
-            ));
+            return Err(BrokerError::CannotUseReservedEnvironmentVariable {
+                name: IPC_HANDLE_ENV_NAME.to_owned(),
+            });
         }
         self.envp.push(env_var);
         Ok(self)
     }
 
-    pub fn with_stdin_redirected(mut self, new_stdin: &'a Handle) -> Result<Self, String> {
-        if !new_stdin.is_inheritable()? {
-            return Err(format!(
-                "Cannot make worker use handle {:?} as stdin because it is not set as inheritable",
-                new_stdin
-            ));
-        }
+    pub fn with_stdin_redirected(mut self, new_stdin: &'a Handle) -> Result<Self, BrokerError> {
         self.stdin = Some(new_stdin);
         Ok(self)
     }
 
-    pub fn with_stdout_redirected(mut self, new_stdout: &'a Handle) -> Result<Self, String> {
-        if !new_stdout.is_inheritable()? {
-            return Err(format!(
-                "Cannot make worker use handle {:?} as stdout because it is not set as inheritable",
-                new_stdout
-            ));
-        }
+    pub fn with_stdout_redirected(mut self, new_stdout: &'a Handle) -> Result<Self, BrokerError> {
         self.stdout = Some(new_stdout);
         Ok(self)
     }
 
-    pub fn with_stderr_redirected(mut self, new_stderr: &'a Handle) -> Result<Self, String> {
-        if !new_stderr.is_inheritable()? {
-            return Err(format!(
-                "Cannot make worker use handle {:?} as stderr because it is not set as inheritable",
-                new_stderr
-            ));
-        }
+    pub fn with_stderr_redirected(mut self, new_stderr: &'a Handle) -> Result<Self, BrokerError> {
         self.stderr = Some(new_stderr);
         Ok(self)
     }
@@ -81,7 +63,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn new(process_config: &ProcessConfig, policy: &Policy) -> Result<Self, String> {
+    pub fn new(process_config: &ProcessConfig, policy: &Policy) -> Result<Self, BrokerError> {
         let (mut broker_pipe, worker_pipe) = MessagePipe::new()?;
         let mut worker_pipe_handle = worker_pipe.into_handle();
         worker_pipe_handle.set_inheritable(true)?;
@@ -96,19 +78,6 @@ impl Worker {
         .flatten()
         {
             policy.allow_inherit_handle(handle)?;
-        }
-        for handle in policy.get_inherited_handles() {
-            // On Linux, exec() will close all CLOEXEC handles.
-            // On Windows, CreateProcess() with bInheritHandles = TRUE doesn't automatically set the given
-            // handles as inheritable, and instead returns a ERROR_INVALID_PARAMETER if one of them is not.
-            // We cannot just set the handles as inheritable behind the caller's back, since they might
-            // reset it or depend on it in another thread. They have to get this right by themselves.
-            if !handle.is_inheritable()? {
-                return Err(format!(
-                    "Cannot make worker inherit handle {:?} which is not set as inheritable",
-                    handle
-                ));
-            }
         }
         let ipc_handle_var = CString::new(format!(
             "{}={}",
@@ -151,7 +120,7 @@ impl Worker {
                         break;
                     }
                     Err(e) => {
-                        warn!("Manager thread exiting: error when receiving IPC: {}", e);
+                        warn!("Manager thread exiting: error when receiving IPC: {:?}", e);
                         break;
                     }
                 };
@@ -166,7 +135,7 @@ impl Worker {
                 };
                 debug!("Sending response: {:?}", &resp);
                 if let Err(e) = broker_pipe.send(&resp, handle.as_ref()) {
-                    warn!("Broker thread exiting: error when sending IPC: {}", e);
+                    warn!("Broker thread exiting: error when sending IPC: {:?}", e);
                     break;
                 }
             }

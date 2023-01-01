@@ -1,3 +1,4 @@
+use crate::error::IpcError;
 use crate::ipc::IPC_MESSAGE_MAX_SIZE;
 use crate::messagepipe::CrossPlatformMessagePipe;
 use core::ptr::null_mut;
@@ -43,7 +44,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
         }
     }
 
-    fn new() -> Result<(Self, Self), String> {
+    fn new() -> Result<(Self, Self), IpcError> {
         let mut pipe_id = 0;
         loop {
             pipe_id += 1;
@@ -62,8 +63,11 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 );
                 if res == null_mut() || res == INVALID_HANDLE_VALUE {
                     // No handle was returned, it is safe to just exit the unsafe block
-                    return Err(format!("CreateNamedPipe() failed with code {} <---- FIXME handle gracefully to just increment the ID and retry", GetLastError()));
-                    //continue;
+                    // TODO: handle the "name already in use" case gracefully, continue;
+                    return Err(IpcError::InternalOsOperationFailed {
+                        description: "CreateNamedPipe() failed".to_owned(),
+                        os_code: GetLastError().into(),
+                    });
                 }
                 Handle::new(res as u64).unwrap()
             };
@@ -81,12 +85,10 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 if res == INVALID_HANDLE_VALUE {
                     // No handle was returned, it is safe to just exit the unsafe block
                     // Continuing will also destroy handle1 created just above
-                    return Err(format!(
-                        "CreateFile({:?}) failed with code {}",
-                        name_nul,
-                        GetLastError()
-                    ));
-                    //continue;
+                    return Err(IpcError::InternalOsOperationFailed {
+                        description: format!("CreateFile({:?}) failed", name_nul),
+                        os_code: GetLastError().into(),
+                    });
                 }
                 Handle::new(res as u64).unwrap()
             };
@@ -94,7 +96,10 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
             if res == 0 {
                 let err = unsafe { GetLastError() };
                 if err != ERROR_PIPE_CONNECTED {
-                    return Err(format!("ConnectNamedPipe() failed with code {}", err));
+                    return Err(IpcError::InternalOsOperationFailed {
+                        description: format!("ConnectNamedPipe({:?}) failed", name_nul),
+                        os_code: err.into(),
+                    });
                 }
             }
             debug!("Using ipc pipe {}", name_nul.to_string_lossy());
@@ -108,16 +113,16 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 )
             };
             if res == 0 {
-                return Err(format!(
-                    "SetNamedPipeHandleState() failed with code {}",
-                    unsafe { GetLastError() }
-                ));
+                return Err(IpcError::InternalOsOperationFailed {
+                    description: format!("SetNamedPipeHandleState({:?}) failed", name_nul),
+                    os_code: unsafe { GetLastError() }.into(),
+                });
             }
             return Ok((Self::from_handle(handle1), Self::from_handle(handle2)));
         }
     }
 
-    fn recv(&mut self) -> Result<Vec<u8>, String> {
+    fn recv(&mut self) -> Result<Vec<u8>, IpcError> {
         let mut buf = vec![0u8; PIPE_BUFFER_SIZE.try_into().unwrap()];
         let mut bytes_read: DWORD = 0;
         let res = unsafe {
@@ -136,17 +141,16 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 buf.truncate(0);
                 return Ok(buf); // read of length 0 <=> end of file
             }
-            return Err(format!(
-                "ReadFile() returned {} bytes and failed with code {}",
-                bytes_read,
-                unsafe { GetLastError() }
-            ));
+            return Err(IpcError::InternalOsOperationFailed {
+                description: "ReadFile() failed".to_owned(),
+                os_code: err.into(),
+            });
         }
         buf.truncate(bytes_read - PIPE_FOOTER_SIZE);
         Ok(buf)
     }
 
-    fn recv_with_handle(&mut self) -> Result<(Vec<u8>, Option<Handle>), String> {
+    fn recv_with_handle(&mut self) -> Result<(Vec<u8>, Option<Handle>), IpcError> {
         let mut buf = vec![0u8; PIPE_BUFFER_SIZE.try_into().unwrap()];
         let mut bytes_read: DWORD = 0;
         let handle = unsafe {
@@ -164,7 +168,10 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     buf.truncate(0);
                     return Ok((buf, None)); // read of length 0 <=> end of file
                 }
-                return Err(format!("ReadFile() failed with code {}", err));
+                return Err(IpcError::InternalOsOperationFailed {
+                    description: "ReadFile() failed".to_owned(),
+                    os_code: err.into(),
+                });
             }
             let handle = match u64::from_be_bytes(
                 buf[bytes_read - PIPE_FOOTER_SIZE..bytes_read]
@@ -180,23 +187,26 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
         Ok((buf, handle))
     }
 
-    fn set_remote_process(&mut self, remote_pid: u64) -> Result<(), String> {
+    fn set_remote_process(&mut self, remote_pid: u64) -> Result<(), IpcError> {
         let remote_pid: u32 = match remote_pid.try_into() {
             Ok(n) => n,
-            Err(_) => return Err(format!("Invalid PID: {}", remote_pid)),
+            Err(_) => return Err(IpcError::InvalidProcessID { pid: remote_pid }),
         };
         self.remote_process_handle = unsafe {
             let res = OpenProcess(PROCESS_DUP_HANDLE, 0, remote_pid);
             if res == null_mut() {
                 // It is safe to return here, OpenProcess() failed to open any handle
-                return Err(format!("Cannot get handle to pipe client process: OpenProcess({}) failed with error {}", remote_pid, GetLastError()));
+                return Err(IpcError::UnableToOpenProcessOnTheOtherEnd {
+                    pid: remote_pid.into(),
+                    os_code: GetLastError().into(),
+                });
             }
             Some(Handle::new(res as u64).unwrap())
         };
         Ok(())
     }
 
-    fn send(&mut self, message: &[u8], handle: Option<&Handle>) -> Result<(), String> {
+    fn send(&mut self, message: &[u8], handle: Option<&Handle>) -> Result<(), IpcError> {
         let remote_handle = match handle {
             None => 0,
             Some(handle_to_send) => {
@@ -218,9 +228,10 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     )
                 };
                 if res == 0 {
-                    return Err(format!("DuplicateHandle() failed with code {}", unsafe {
-                        GetLastError()
-                    }));
+                    return Err(IpcError::InternalOsOperationFailed {
+                        description: "DuplicateHandle() failed".to_owned(),
+                        os_code: unsafe { GetLastError() }.into(),
+                    });
                 }
                 remote_handle as u64
             }
@@ -239,9 +250,10 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
             )
         };
         if res == 0 {
-            return Err(format!("WriteFile() failed with code {}", unsafe {
-                GetLastError()
-            }));
+            return Err(IpcError::InternalOsOperationFailed {
+                description: "WriteFile() failed".to_owned(),
+                os_code: unsafe { GetLastError() }.into(),
+            });
         }
         Ok(())
     }

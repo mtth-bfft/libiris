@@ -1,5 +1,6 @@
 // Common modules
 
+mod error;
 mod process;
 mod worker;
 

@@ -1,3 +1,4 @@
+use crate::error::BrokerError;
 use core::ffi::c_void;
 use core::ptr::null_mut;
 use winapi::shared::basetsd::{DWORD_PTR, SIZE_T};
@@ -21,7 +22,7 @@ impl Drop for ProcThreadAttributeList {
 }
 
 impl ProcThreadAttributeList {
-    pub(crate) fn new(max_attr_count: DWORD) -> Result<Self, String> {
+    pub(crate) fn new(max_attr_count: DWORD) -> Result<Self, BrokerError> {
         let mut required_bytes: SIZE_T = 0;
         let res = unsafe {
             InitializeProcThreadAttributeList(
@@ -32,10 +33,10 @@ impl ProcThreadAttributeList {
             )
         };
         if res != 0 || unsafe { GetLastError() } != ERROR_INSUFFICIENT_BUFFER {
-            return Err(format!(
-                "InitializeProcThreadAttributeList() failed with error {}",
-                unsafe { GetLastError() }
-            ));
+            return Err(BrokerError::InternalOsOperationFailed {
+                description: "InitializeProcThreadAttributeList()".to_owned(),
+                os_code: unsafe { GetLastError() }.into(),
+            });
         }
         let mut buffer = vec![0u8; required_bytes];
         let res = unsafe {
@@ -47,10 +48,10 @@ impl ProcThreadAttributeList {
             )
         };
         if res == 0 {
-            return Err(format!(
-                "InitializeProcThreadAttributeList() failed with error {}",
-                unsafe { GetLastError() }
-            ));
+            return Err(BrokerError::InternalOsOperationFailed {
+                description: "InitializeProcThreadAttributeList()".to_owned(),
+                os_code: unsafe { GetLastError() }.into(),
+            });
         }
         Ok(Self { buffer })
     }
@@ -68,7 +69,7 @@ impl ProcThreadAttributeList {
         attr: DWORD_PTR,
         new_val: *const c_void,
         new_val_size: SIZE_T,
-    ) -> Result<(), String> {
+    ) -> Result<(), BrokerError> {
         let res = unsafe {
             UpdateProcThreadAttribute(
                 self.as_mut_ptr() as *mut _,
@@ -81,11 +82,10 @@ impl ProcThreadAttributeList {
             )
         };
         if res == 0 {
-            return Err(format!(
-                "UpdateProcThreadAttribute({}) failed with error {}",
-                attr,
-                unsafe { GetLastError() }
-            ));
+            return Err(BrokerError::InternalOsOperationFailed {
+                description: format!("UpdateProcThreadAttribute({}) failed", attr),
+                os_code: unsafe { GetLastError() }.into(),
+            });
         }
         Ok(())
     }

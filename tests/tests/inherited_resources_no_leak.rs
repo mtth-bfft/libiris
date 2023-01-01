@@ -1,7 +1,7 @@
+use common::os::wait_for_worker_exit;
 use common::{
     check_worker_handles, cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file,
 };
-use common::os::wait_for_worker_exit;
 use iris_broker::{downcast_to_handle, CrossPlatformHandle, Policy, ProcessConfig, Worker};
 use std::fs::File;
 

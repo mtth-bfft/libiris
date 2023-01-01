@@ -1,3 +1,4 @@
+use crate::error::BrokerError;
 use crate::process::CrossPlatformSandboxedProcess;
 use core::ffi::c_void;
 use core::ptr::null;
@@ -28,14 +29,9 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         stdin: Option<&Handle>,
         stdout: Option<&Handle>,
         stderr: Option<&Handle>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, BrokerError> {
         if argv.is_empty() {
-            return Err("Invalid argument: empty argv".to_owned());
-        }
-        for handle in [stdin, stdout, stderr].iter().flatten() {
-            if !handle.is_inheritable()? {
-                return Err("Stdin, stdout, and stderr handles must not be set to be closed on exec() for them to be usable by a worker".to_owned());
-            }
+            return Err(BrokerError::MissingCommandLine);
         }
 
         // Allocate a stack for the process' first thread to use
@@ -53,10 +49,10 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             let res = libc::pipe(clone_error_pipes.as_mut_ptr());
             if res < 0 {
                 // It's safe to return here, if pipe() returned an error it did not give us file descriptors so there is no leak
-                return Err(format!(
-                    "pipe() failed with code {}",
-                    Error::last_os_error()
-                ));
+                return Err(BrokerError::InternalOsOperationFailed {
+                    description: "pipe() failed".to_owned(),
+                    os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
+                });
             }
             (
                 Handle::new(clone_error_pipes[0].try_into().unwrap()).unwrap(),
@@ -109,12 +105,15 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         unsafe { Box::from_raw(entrypoint_params as *mut EntrypointParameters) };
         drop(child_pipe);
 
-        if pid <= 0 {
-            return Err(format!(
-                "clone() failed with code {}",
-                Error::last_os_error()
-            ));
-        }
+        let pid: u32 = match pid.try_into() {
+            Ok(n) => n,
+            Err(_) => {
+                return Err(BrokerError::InternalOsOperationFailed {
+                    description: "clone()".to_owned(),
+                    os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
+                })
+            }
+        };
 
         let mut execve_errno = vec![0u8; 4];
         let res = unsafe {
@@ -125,16 +124,16 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             )
         };
         if res > 0 {
-            return Err(format!(
-                "execve() failed with code {}",
-                u32::from_be_bytes(execve_errno[..].try_into().unwrap())
-            ));
+            return Err(BrokerError::InternalOsOperationFailed {
+                description: "execve()".to_owned(),
+                os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
+            });
         }
 
         debug!("Worker PID={} created", pid);
 
         Ok(Self {
-            pid: pid.try_into().unwrap(),
+            pid,
             initial_thread_stack: stack,
         })
     }

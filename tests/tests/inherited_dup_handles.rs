@@ -1,5 +1,5 @@
-use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
 use common::os::wait_for_worker_exit;
+use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
 use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
 
 #[test]
@@ -19,7 +19,11 @@ fn inherited_dup_handles() {
         .unwrap();
 
     let worker = Worker::new(&proc_conf, &policy).expect("worker creation failed");
-    assert_eq!(wait_for_worker_exit(&worker), Ok(0), "worker reported an error");
+    assert_eq!(
+        wait_for_worker_exit(&worker),
+        Ok(0),
+        "worker reported an error"
+    );
     cleanup_tmp_file(&tmpoutpath);
     cleanup_tmp_file(&tmpinpath);
 }
