@@ -23,6 +23,11 @@ pub extern "C" fn clone_entrypoint(args: *mut c_void) -> c_int {
 
         libc::umask(0o600);
 
+        let res = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+        if res != 0 {
+            log_fatal!("prctl(PR_SET_NO_NEW_PRIVS) failed with errno {}\n", errno());
+        }
+
         // Cleanup leftover file descriptors from our parent or from code injected into our process
         let fds_path = CStr::from_ptr(b"/proc/self/fd/\0".as_ptr() as *const _);
         let fds_fd = libc::open(
