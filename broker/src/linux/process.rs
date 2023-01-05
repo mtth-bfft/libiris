@@ -12,6 +12,7 @@ use std::io::Error;
 
 const DEFAULT_CLONE_STACK_SIZE: usize = 1024 * 1024;
 
+#[derive(Debug)]
 pub struct OSSandboxedProcess {
     pid: u32,
     // Thread stack for clone(2), flagged as "never read" because rust does not
@@ -115,7 +116,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             }
         };
 
-        let mut execve_errno = vec![0u8; 4];
+        let mut execve_errno = [0u8; 4];
         let res = unsafe {
             libc::read(
                 parent_pipe.as_raw().try_into().unwrap(),
@@ -126,7 +127,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         if res > 0 {
             return Err(BrokerError::InternalOsOperationFailed {
                 description: "execve()".to_owned(),
-                os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
+                os_code: u32::from_be_bytes(execve_errno).into(),
             });
         }
 

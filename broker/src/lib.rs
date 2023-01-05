@@ -5,6 +5,7 @@ mod process;
 mod worker;
 
 pub use worker::{ProcessConfig, Worker};
+pub use error::BrokerError;
 
 // OS-specific modules
 

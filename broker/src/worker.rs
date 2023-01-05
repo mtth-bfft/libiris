@@ -58,6 +58,7 @@ impl<'a> ProcessConfig<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct Worker {
     process: OSSandboxedProcess,
 }
