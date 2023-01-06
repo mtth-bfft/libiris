@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::ptr::null;
 use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
-use libc::c_int;
+use libc::{c_int, c_char};
 use log::{debug, warn};
 use seccomp_sys::{
     scmp_arg_cmp, scmp_compare, scmp_filter_attr, seccomp_attr_set, seccomp_init, seccomp_load,
@@ -11,11 +11,11 @@ use seccomp_sys::{
 };
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
-use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 const SYS_SECCOMP: i32 = 1;
 
-const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 54] = [
+const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 57] = [
     "read",
     "write",
     "readv",
@@ -30,13 +30,12 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 54] = [
     "_newselect",
     "accept",
     "accept4",
-    //"ftruncate", disallowed to prevent truncation of O_APPEND files
+    "ftruncate",
     "close",
     "memfd_create",
     "sigaltstack",
     "munmap",
     "nanosleep",
-    "fchdir",
     "exit_group",
     "restart_syscall",
     "rt_sigreturn",
@@ -68,23 +67,42 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 54] = [
     "sched_yield",
     "time",
     "uname",
+    "fsync",
+    "fdatasync",
     "shutdown",
     "nice",
     "pause",
+    "clock_nanosleep",
 ];
 
-// Current working directory is permanently set to an empty directory,
-// and workers cannot set it (to avoid side effects, such as coredump creation in cwd)
-static mut PROCESS_EMULATED_CWD: Option<Arc<RwLock<String>>> = None;
-fn set_cwd(path: &str) {
+// The real current working directory is permanently set to an empty directory,
+// and workers cannot set it, in order to avoid possible side effects such as
+// coredump creation in cwd. Cwd is emulated using a global variable.
+// TODO: communicate the configured cwd from ProcessConfig up to here during post-execve finalization
+static mut PROCESS_EMULATED_CWD: Option<Arc<RwLock<CString>>> = None;
+
+fn set_cwd(path: &CStr) {
+    // Ensure path is / terminated
+    let path = if path.to_bytes().last() == Some(&b'/') {
+        path.to_owned()
+    } else {
+        let mut bytes = path.to_bytes().to_owned();
+        bytes.push(b'/');
+        bytes.push(0);
+        CString::from_vec_with_nul(bytes).unwrap()
+    };
     *(unsafe { PROCESS_EMULATED_CWD.as_deref().unwrap() }
         .write()
         .unwrap()) = path.to_owned();
 }
-fn get_cwd() -> RwLockReadGuard<'static, String> {
-    unsafe { PROCESS_EMULATED_CWD.as_deref().unwrap() }
-        .read()
-        .unwrap()
+
+fn get_cwd() -> CString {
+    unsafe {
+        match PROCESS_EMULATED_CWD.as_deref() {
+            Some(x) => x.read().expect("failed to acquire cwd global value").clone(),
+            None => CString::new("/").unwrap(),
+        }
+    }
 }
 
 // TODO: use a thread_local!{} pipe, and a global mutex-protected pipe to request new thread-specific ones
@@ -96,16 +114,19 @@ fn get_ipc_pipe() -> MutexGuard<'static, IPCMessagePipe> {
 }
 
 fn get_fd_for_path_with_perms(
-    path: &str,
+    path: &CStr,
     read: bool,
     write: bool,
-    append_only: bool,
 ) -> Result<Handle, i64> {
+    let flags = match (read, write) {
+        (true, true) => libc::O_RDWR,
+        (true, false) => libc::O_RDONLY,
+        (false, true) => libc::O_WRONLY,
+        (false, false) => libc::O_PATH,
+    };
     let request = IPCRequest::OpenFile {
         path: path.to_owned(),
-        read,
-        write,
-        append_only,
+        flags,
     };
     match send_recv(&request, None) {
         (IPCResponse::GenericCode(_), Some(fd)) => Ok(fd),
@@ -114,22 +135,11 @@ fn get_fd_for_path_with_perms(
     }
 }
 
-fn get_fd_for_path(path: &str) -> Result<Handle, i64> {
-    let err = match get_fd_for_path_with_perms(path, true, false, false) {
-        Ok(fd) => return Ok(fd),
-        Err(e) => e,
-    };
-    if let Ok(fd) = get_fd_for_path_with_perms(path, false, false, true) {
-        return Ok(fd);
-    }
-    Err(err)
-}
-
 pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePipe) {
     // Initialization of globals. This is safe as long as we are only called once
     unsafe {
         // Store the emulated current working directory
-        PROCESS_EMULATED_CWD = Some(Arc::new(RwLock::new("/".to_owned())));
+        PROCESS_EMULATED_CWD = Some(Arc::new(RwLock::new(CString::new("/").unwrap())));
         // Store the IPC pipe to handle all future syscall requests
         IPC_PIPE_SINGLETON = Box::leak(Box::new(Mutex::new(ipc))) as *const _;
     }
@@ -298,16 +308,6 @@ pub(crate) fn get_syscall_number(name: &str) -> Result<i32, String> {
     Ok(nr)
 }
 
-// FIXME: replace this static lifetime with the lifetime of an additional "syscall context" parameter
-fn read_string_from_ptr(ptr: i64) -> Option<&'static str> {
-    let cstr = unsafe { CStr::from_ptr(ptr as *const _) };
-    let utf8 = match cstr.to_str() {
-        Ok(s) => s,
-        Err(_) => return None,
-    };
-    Some(utf8)
-}
-
 fn read_i64_from_ptr(ucontext: *mut libc::ucontext_t, registry: libc::c_int) -> i64 {
     unsafe { (*ucontext).uc_mcontext.gregs[registry as usize] }
 }
@@ -345,22 +345,14 @@ pub(crate) extern "C" fn sigsys_handler(
 
     let response_code = match syscall_nr {
         libc::SYS_access => {
-            let (path, mode) = (read_string_from_ptr(a0), a1 as i32);
-            if let Some(path) = path {
-                handle_access(path, mode)
-            } else {
-                -(libc::ENOENT as i64)
-            }
+            let (path, mode) = (unsafe { CStr::from_ptr(a0 as *const c_char) }, a1 as i32);
+            handle_access(path, mode)
         }
         //libc::SYS_bind => {
         //},
         libc::SYS_chdir => {
-            let path = read_string_from_ptr(a0);
-            if let Some(path) = path {
-                handle_chdir(path)
-            } else {
-                -(libc::ENOENT as i64)
-            }
+            let path = unsafe { CStr::from_ptr(a0 as *const c_char) };
+            handle_chdir(path)
         }
         /*
                 libc::SYS_connect => {
@@ -385,23 +377,15 @@ pub(crate) extern "C" fn sigsys_handler(
         // TODO: truncate(), truncate64()
         // TODO: socket(), bind(), listen(), accept()
         libc::SYS_open => {
-            let (path, flags, mode) = (read_string_from_ptr(a0), a1 as i32, a2 as i32);
-            if let Some(path) = path {
-                handle_openat(libc::AT_FDCWD, path, flags, mode)
-            } else {
-                -(libc::ENOENT as i64)
-            }
+            let (path, flags, mode) = (unsafe { CStr::from_ptr(a0 as *const c_char) }, a1 as i32, a2 as i32);
+            handle_openat(libc::AT_FDCWD, path, flags, mode)
         }
         libc::SYS_openat => {
             // Note: the dirfd passed cannot be accurately resolved to a valid path (you can
             // readlink(/proc/self/fd/%d) but it might not be up to date if the folder has been moved
             let (dirfd, path, flags, mode) =
-                (a0 as i32, read_string_from_ptr(a1), a2 as i32, a3 as i32);
-            if let Some(path) = path {
-                handle_openat(dirfd, path, flags, mode)
-            } else {
-                -(libc::ENOENT as i64)
-            }
+                (a0 as i32, unsafe { CStr::from_ptr(a1 as *const c_char) }, a2 as i32, a3 as i32);
+            handle_openat(dirfd, path, flags, mode)
         }
         _ => {
             warn!("Syscall not supported yet, denied by default");
@@ -427,31 +411,26 @@ fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Opt
     (resp, handle)
 }
 
-fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc::c_int) -> i64 {
-    let path = match path.chars().next() {
-        Some('/') => path.to_owned(),
+fn handle_openat(dirfd: libc::c_int, path: &CStr, flags: libc::c_int, _mode: libc::c_int) -> i64 {
+    // Resolve the path manually, brokers only accept nonambiguous requests
+    let path = match path.to_bytes().get(0) {
+        None => return (-libc::ENOENT).into(),
+        Some(b'/') => path.to_owned(),
         Some(_) => {
             if dirfd != libc::AT_FDCWD {
                 warn!("openat(dirfd, relative path) is only supported with AT_FDCWD in Linux sandboxes");
                 return (-(libc::EPERM)).into();
             }
-            get_cwd().clone() + "/" + path
+            let mut concat = get_cwd().into_bytes();
+            concat.extend_from_slice(path.to_bytes());
+            CString::from_vec_with_nul(concat).unwrap()
         }
-        None => return (-libc::EPERM).into(),
     };
     debug!(
-        "Requesting access to file path {:?} (flags={})",
+        "Requesting access to file path {:?} (flags={:#X})",
         &path, flags
     );
-    let request = IPCRequest::OpenFile {
-        path,
-        read: (flags & (libc::O_WRONLY)) == 0 && (flags & (libc::O_PATH)) == 0,
-        write: (flags & (libc::O_WRONLY | libc::O_RDWR)) != 0 && (flags & (libc::O_PATH)) == 0,
-        append_only: (flags & libc::O_APPEND) != 0 && (flags & (libc::O_PATH)) == 0,
-    };
-    // TODO: if O_CREAT, creat it (careful with O_EXCL). Enforce NX for everyone and NR+NW for
-    // others when using the `mode` provided by workers.
-    // TODO: if O_TRUNC, ftruncate() it. But ftruncate() allows bypassing O_APPEND, so add truncate: bool to OpenFile requests
+    let request = IPCRequest::OpenFile { path, flags };
     match send_recv(&request, None) {
         (IPCResponse::GenericCode(_), Some(handle)) => {
             unsafe { handle.into_raw() }.try_into().unwrap()
@@ -464,31 +443,23 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc
     }
 }
 
-fn handle_access(path: &str, mode: libc::c_int) -> i64 {
+fn handle_access(path: &CStr, mode: libc::c_int) -> i64 {
     debug!("Requesting access({:?}, {})", path, mode);
+    // No handler for F_OK because this flag is actually a no-op (0)
     // Workers cannot execute anything anyway
     if (mode & libc::X_OK) != 0 {
-        -(libc::EACCES as i64)
+        return -(libc::EACCES as i64)
     }
-    // To check for file existence, check for read-only first
-    else if mode == libc::F_OK {
-        match get_fd_for_path(path) {
-            Ok(_) => 0,
-            Err(e) => e,
-        }
+    let read = (mode & libc::R_OK) != 0;
+    let write = (mode & libc::W_OK) != 0;
+    match get_fd_for_path_with_perms(path, read, write) {
+        Ok(_) => 0,
+        Err(e) => e,
     }
-    // Checking for read or write access, specifically
-    else {
-        let read = (mode & (libc::R_OK)) != 0;
-        let write = (mode & libc::W_OK) != 0;
-        match get_fd_for_path_with_perms(path, read, write, false) {
-            Ok(_) => 0,
-            Err(e) => e,
-        }
-    }
+    // File descriptor acquired is closed automatically here
 }
 
-fn handle_chdir(path: &str) -> i64 {
+fn handle_chdir(path: &CStr) -> i64 {
     debug!("chdir({:?}) called, emulating it without syscall", path);
     set_cwd(path);
     0

@@ -6,148 +6,140 @@ use log::info;
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
 
-const FILE_READ: u8 = 1;
-const FILE_WRITE_APPEND_ONLY: u8 = 2;
-const FILE_WRITE_ANYWHERE: u8 = 4;
-
 #[cfg(unix)]
-fn check(test_function: u8, path: &CStr, granted_by_policy: u8, access_to_request: u8) {
-    use libc::c_int;
+fn run_checks(path: &CStr, policy_readable: bool, policy_writable: bool) {
+    use libc::{c_int, c_void, O_RDONLY, O_WRONLY, O_RDWR, O_PATH, O_APPEND, O_EXCL, O_CREAT, O_TRUNC, O_CLOEXEC};
 
-    fn check_fd(fd: c_int, should_be_granted: u8) {
-        let mut buf = vec![0u8; 1024];
-        // Try to read (set up by the broker to contain "OK")
-        unsafe {
-            *(libc::__errno_location()) = 0;
-        }
-        let res = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut _, buf.len()) };
-        let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        if (should_be_granted & FILE_READ) == 0 {
-            assert_eq!(res, -1, "read() should have failed");
-            assert_eq!(err, libc::EBADF, "read() failed with the wrong errno");
-        } else {
-            assert_eq!(res, 2);
-            assert_eq!(b"OK", &buf[..res.try_into().unwrap()]);
-        }
-        // Try to write at the beginning
-        unsafe {
-            *(libc::__errno_location()) = 0;
-        }
-        assert_eq!(
-            unsafe { libc::lseek(fd, 0, libc::SEEK_SET) },
-            0,
-            "unable to seek"
-        );
-        let res = unsafe { libc::write(fd, buf.as_mut_ptr() as *mut _, 2) };
-        let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        if (should_be_granted & (FILE_WRITE_APPEND_ONLY | FILE_WRITE_ANYWHERE)) == 0 {
-            assert_eq!(res, -1, "write() should have failed");
-            assert_eq!(err, libc::EBADF, "write() failed with the wrong errno");
-        } else {
-            assert_eq!(res, 2, "write() failed with error {}", err);
-            assert_eq!(err, 0, "write() unexpectedly set the errno to {}", err);
-            // Check the result: should be "KO" if writable anywhere, "OKKO" if writable only in APPEND mode
-            // Do this check using fstat() which requires no permission on the file (reading would fail
-            // when !readable)
-            let mut stat: libc::stat = unsafe { std::mem::zeroed() };
-            assert_eq!(
-                unsafe { libc::fstat(fd, &mut stat as *mut _) },
-                0,
-                "unable to fstat()"
+    fn check_path(path: &CStr, flags: c_int, should_work: bool) {
+        // Try to open a file descriptor using open()
+        unsafe { *(libc::__errno_location()) = 0 };
+        let res = unsafe { libc::syscall(libc::SYS_open, path.as_ptr(), flags, 0, 0, 0, 0) };
+        let err = unsafe { *(libc::__errno_location()) };
+        if should_work {
+            assert!(res >= 0, "open({}, flags={}) should have worked, failed with errno {}",
+                path.to_string_lossy(),
+                flags,
+                err
             );
-            assert_eq!(
-                stat.st_size,
-                if (should_be_granted & FILE_WRITE_APPEND_ONLY) == 0 {
-                    2
-                } else {
-                    4
-                },
-                "unexpected result file size"
+            let res = unsafe { libc::close(res.try_into().expect("invalid file descriptor")) };
+            assert_eq!(res, 0, "unable to close file descriptor");
+        } else {
+            assert!(res < 0, "open({}, flags={}) should have failed, succeeded",
+                path.to_string_lossy(),
+                flags
+            );
+            assert_eq!(err, libc::EACCES, "open({}, flags={}) should have failed with errno EACCES, failed with errno {}",
+                path.to_string_lossy(),
+                flags,
+                err
             );
         }
-    }
-
-    let should_work = ((access_to_request & FILE_READ) == 0
-        || (granted_by_policy & FILE_READ) != 0)
-        && ((access_to_request & FILE_WRITE_ANYWHERE) == 0
-            || (granted_by_policy & FILE_WRITE_ANYWHERE) != 0)
-        && ((access_to_request & FILE_WRITE_APPEND_ONLY) == 0
-            || (granted_by_policy & (FILE_WRITE_APPEND_ONLY | FILE_WRITE_ANYWHERE)) != 0)
-        && access_to_request != 0
-        && granted_by_policy != 0;
-
-    let mode = if (access_to_request & FILE_READ) != 0
-        && (access_to_request & (FILE_WRITE_ANYWHERE | FILE_WRITE_APPEND_ONLY)) == 0
-    {
-        libc::O_RDONLY
-    } else if (access_to_request & FILE_READ) == 0
-        && (access_to_request & (FILE_WRITE_ANYWHERE | FILE_WRITE_APPEND_ONLY)) != 0
-    {
-        libc::O_WRONLY
-    } else if (access_to_request & FILE_READ) != 0
-        && (access_to_request & (FILE_WRITE_ANYWHERE | FILE_WRITE_APPEND_ONLY)) != 0
-    {
-        libc::O_RDWR
-    } else {
-        libc::O_PATH
-    } | if (access_to_request & FILE_WRITE_APPEND_ONLY) == 0 {
-        0
-    } else {
-        libc::O_APPEND
-    };
-    unsafe {
-        *(libc::__errno_location()) = 0;
-    }
-    let fd = if test_function == 1 {
-        let res = unsafe { libc::syscall(libc::SYS_open, path.as_ptr(), mode, 0, 0, 0, 0) };
-        let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        assert!(
-            (should_work && res >= 0) || (!should_work && res == -1 && err == libc::EACCES),
-            "open({}, mode={}) = {} (err = {})",
-            path.to_string_lossy(),
-            mode,
-            res,
-            err
-        );
-        let fd: c_int = res.try_into().unwrap();
-        fd
-    } else if test_function == 2 {
+        // Perform the same test using openat()
+        unsafe { *(libc::__errno_location()) = 0 };
         let res = unsafe {
             libc::syscall(
                 libc::SYS_openat,
                 libc::STDERR_FILENO,
                 path.as_ptr(),
-                mode,
+                flags,
                 0,
                 0,
                 0,
             )
         };
-        let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        assert!(
-            (should_work && res >= 0) || (!should_work && res == -1 && err == libc::EACCES),
-            "openat({}, mode={}) = {} (err = {})",
-            path.to_string_lossy(),
-            mode,
-            res,
-            err
-        );
-        let fd: c_int = res.try_into().unwrap();
-        fd
-    } else {
-        panic!("Unknown function {}", test_function);
-    };
-
-    info!("Opened file descriptor");
-    if fd >= 0 {
-        check_fd(fd, access_to_request);
-        let res = unsafe { libc::close(fd) };
-        assert_eq!(res, 0, "failed to close file descriptor after test");
+        let err = unsafe { *(libc::__errno_location()) };
+        if should_work {
+            assert!(res >= 0, "openat({}, flags={}) should have worked, failed with errno {}",
+                path.to_string_lossy(),
+                flags,
+                err
+            );
+        } else {
+            assert!(res < 0, "openat({}, flags={}) should have failed, succeeded",
+                path.to_string_lossy(),
+                flags
+            );
+            assert_eq!(err, libc::EACCES, "openat({}, flags={}) should have failed with errno EACCES, failed with errno {}",
+                path.to_string_lossy(),
+                flags,
+                err
+            );
+        }
+        if res >= 0 {
+            let fd: c_int = res.try_into().expect("invalid file descriptor returned");
+            check_fd(fd, flags);
+            let res = unsafe { libc::close(fd) };
+            assert_eq!(res, 0, "unable to close file descriptor");
+        }
     }
+
+    fn check_fd(fd: c_int, flags: c_int) {
+        let mut buf = [0u8; 3];
+        // Try to read (set up by the broker to contain "OK")
+        unsafe { *(libc::__errno_location()) = 0 };
+        let res = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut _, 3) };
+        let err = unsafe { *(libc::__errno_location()) };
+        if (flags & (O_WRONLY | O_PATH)) == 0 {
+            if (flags & O_TRUNC) == 0 {
+                assert!(res >= 0, "read() failed on fd flags={:#X} with errno {}", flags, err);
+                assert_eq!(res, 2, "wrong number of bytes read from test file");
+                assert_eq!(b"OK", &buf[..2], "unexpected content read from test file");
+            } else {
+                assert_eq!(res, 0, "file was supposed to be empty after truncation");
+            }
+        } else {
+            assert_eq!(res, -1, "read() should have failed");
+            assert_eq!(err, libc::EBADF, "read() failed with the wrong errno");
+        }
+        // Try to write
+        // If the write is supposed to succeed, seek to a deterministic index so that this part
+        // does not depend on whether read() was allowed by policy
+        if (flags & (O_WRONLY | O_RDWR)) != 0 && (flags & O_PATH) == 0 {
+            unsafe { *(libc::__errno_location()) = 0 };
+            let res = unsafe { libc::lseek(fd, 0, libc::SEEK_SET) };
+            assert_eq!(res, 0, "lseek() failed with errno {}", unsafe { *(libc::__errno_location()) });
+        }
+        // Do the write
+        unsafe { *(libc::__errno_location()) = 0 };
+        let res = unsafe { libc::write(fd, b"KO?".as_ptr() as *const c_void, 3) };
+        let err = unsafe { *(libc::__errno_location()) };
+        if (flags & (O_WRONLY | O_RDWR)) != 0 && (flags & O_PATH) == 0 {
+            assert_eq!(res, 3, "write() failed with error {}", err);
+            // Check the result using fstat() which requires no permission
+            // on the file (reading would fail when write-only)
+            let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+            let res = unsafe { libc::fstat(fd, &mut stat as *mut _) };
+            assert_eq!(res, 0, "unable to fstat()");
+            let expected_size = if (flags & O_APPEND) == 0 { 3 } else { 5 };
+            assert_eq!(stat.st_size, expected_size, "unexpected file size after write with flags={:#X}", flags);
+            // Reset the file as we found it
+            let res = unsafe { libc::ftruncate(fd, 0) };
+            assert_eq!(res, 0, "unable to truncate test file");
+            let res = unsafe { libc::lseek(fd, 0, libc::SEEK_SET) };
+            assert_eq!(res, 0);
+            let res = unsafe { libc::write(fd, b"OK".as_ptr() as *const c_void, 2) };
+            assert_eq!(res, 2, "unable to reset test file contents");
+        } else {
+            assert_eq!(res, -1, "write() should have failed due to flags={:#X}", flags);
+            assert_eq!(err, libc::EBADF, "write() failed with the wrong errno");
+        }
+    }
+
+    check_path(path, O_RDONLY, policy_readable);
+    check_path(path, O_RDONLY | O_CLOEXEC, policy_readable);
+    check_path(path, O_WRONLY, policy_writable);
+    check_path(path, O_RDWR, policy_readable && policy_writable);
+    check_path(path, O_WRONLY | O_APPEND, policy_writable);
+    check_path(path, O_RDWR | O_APPEND, policy_readable && policy_writable);
+    check_path(path, O_PATH, policy_readable || policy_writable);
+    check_path(path, O_RDONLY | O_CREAT, policy_readable && policy_writable);
+    check_path(path, O_RDONLY | O_EXCL, policy_readable && policy_writable);
+    // Last test, messes up the test file with no way to reset it
+    check_path(path, O_RDONLY | O_TRUNC, policy_readable && policy_writable);
 }
 
 #[cfg(windows)]
-fn check(test_function: u8, path: &CStr, granted_by_policy: u8, access_to_request: u8) {
+fn run_checks(test_function: u8, path: &CStr, granted_by_policy: u8, access_to_request: u8) {
     use core::ptr::null_mut;
     use winapi::shared::basetsd::ULONG_PTR;
     use winapi::shared::minwindef::{DWORD, FARPROC};
@@ -406,58 +398,16 @@ fn main() {
     common_test_setup();
 
     let args: Vec<String> = std::env::args().collect();
-    assert_eq!(args.len(), 9);
-    let test_function = args[1].parse::<u8>().unwrap();
-    let path = CString::new(args[2].as_str()).unwrap();
-    let policy_readable = args[3] == "1";
-    let policy_writable = args[4] == "1";
-    let policy_append_only = args[5] == "1";
-    let request_read = args[6] == "1";
-    let request_write = args[7] == "1";
-    let request_only_append = args[8] == "1";
+    assert_eq!(args.len(), 4);
+    let path = CString::new(args[1].as_str()).unwrap();
+    let policy_readable = args[2] == "1";
+    let policy_writable = args[3] == "1";
 
     info!(
-        "{} should be {}readable {}writable{}",
-        args[2],
+        "{} should be {}readable {}writable",
+        args[1],
         if policy_readable { "" } else { "non-" },
         if policy_writable { "" } else { "non-" },
-        if policy_writable && policy_append_only {
-            " (append only)"
-        } else {
-            ""
-        }
     );
-    info!(
-        "Checking if it is{}{}{}",
-        if request_read { " readable" } else { "" },
-        if request_write { " writable" } else { "" },
-        if request_only_append {
-            " (append only)"
-        } else {
-            ""
-        }
-    );
-    let granted_by_policy = if policy_readable { FILE_READ } else { 0 }
-        | if policy_writable && !policy_append_only {
-            FILE_WRITE_ANYWHERE
-        } else {
-            0
-        }
-        | if policy_writable && policy_append_only {
-            FILE_WRITE_APPEND_ONLY
-        } else {
-            0
-        };
-    let access_to_request = if request_read { FILE_READ } else { 0 }
-        | if request_write && !request_only_append {
-            FILE_WRITE_ANYWHERE
-        } else {
-            0
-        }
-        | if request_write && request_only_append {
-            FILE_WRITE_APPEND_ONLY
-        } else {
-            0
-        };
-    check(test_function, &path, granted_by_policy, access_to_request)
+    run_checks(&path, policy_readable, policy_writable)
 }

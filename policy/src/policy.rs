@@ -3,10 +3,15 @@ use crate::handle::CrossPlatformHandle;
 use crate::os::path::derive_all_file_paths_from_path;
 #[cfg(windows)]
 use crate::os::path::derive_all_reg_key_paths_from_path;
+use std::ffi::{CString, CStr};
 use crate::Handle;
-use glob::Pattern;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+#[cfg(unix)]
+const OS_PATH_SEPARATOR: u8 = b'/';
+#[cfg(windows)]
+const OS_PATH_SEPARATOR: u8 = b'\\';
 
 // TODO: Eq required for serializability here. Replace Vec<> with unordered sets
 // to avoid making the semantics of == and != non-intuitive.
@@ -14,22 +19,31 @@ use std::collections::HashMap;
 pub struct Policy<'a> {
     #[serde(skip)]
     inherit_handles: Vec<&'a Handle>,
-    file_access: HashMap<String, (bool, bool, bool)>,
-    file_lock: HashMap<String, (bool, bool, bool)>,
-    regkey_access: HashMap<String, (bool, bool)>,
+    file_access: HashMap<CString, (bool, bool, bool, bool, bool)>,
+    dir_access: HashMap<CString, (bool, bool, bool, bool, bool)>,
+    regkey_access: HashMap<CString, (bool, bool)>,
+}
+
+fn strip_one_component_and_separator(path: CString) -> Option<CString> {
+    let mut bytes = path.into_bytes();
+    while !bytes.is_empty() && bytes.last() != Some(&OS_PATH_SEPARATOR) {
+        bytes.pop();
+    }
+    bytes.pop(); // remove the trailing / (or no-op if the buffer is empty)
+    if bytes.is_empty() {
+        None
+    } else {
+        bytes.push(0);
+        Some(CString::from_vec_with_nul(bytes).unwrap())
+    }
 }
 
 impl<'a> Policy<'a> {
-    #[deprecated(note = "Use nothing_allowed() instead to explicitly create an empty policy")]
-    pub fn new() -> Self {
-        Self::nothing_allowed()
-    }
-
     pub fn nothing_allowed() -> Self {
         Self {
             inherit_handles: Vec::new(),
             file_access: HashMap::new(),
-            file_lock: HashMap::new(),
+            dir_access: HashMap::new(),
             regkey_access: HashMap::new(),
         }
     }
@@ -38,7 +52,7 @@ impl<'a> Policy<'a> {
         Policy {
             inherit_handles: Vec::new(),
             file_access: self.file_access.clone(),
-            file_lock: self.file_lock.clone(),
+            dir_access: self.dir_access.clone(),
             regkey_access: self.regkey_access.clone(),
         }
     }
@@ -62,166 +76,163 @@ impl<'a> Policy<'a> {
         &self.inherit_handles[..]
     }
 
-    // TODO: split into file_readonly, file_write, file_append
-    pub fn allow_file_access(
-        &mut self,
-        path: &str,
-        readable: bool,
-        writable: bool,
-        restrict_to_append_only: bool,
-    ) -> Result<(), PolicyError> {
-        if restrict_to_append_only && !writable {
-            return Err(PolicyError::AppendOnlyRequiresWriteAccess {
-                path: path.to_owned(),
-            });
-        }
+    fn add_file_access(&mut self, path: &CStr, dir: bool, access: (bool, bool, bool, bool, bool)) -> Result<(), PolicyError> {
+        let (new_read, new_write, new_block_readers, new_block_writers, new_block_deleters) = access;
         for path in derive_all_file_paths_from_path(path)? {
-            if let Err(e) = Pattern::new(&path) {
-                return Err(PolicyError::InvalidPathPattern {
-                    pattern: path.clone(),
-                    description: e.msg.to_owned(),
-                });
+            let mut path = path.clone();
+            if dir && path.as_bytes().last() != Some(&OS_PATH_SEPARATOR) {
+                let mut v = path.into_bytes();
+                v.push(OS_PATH_SEPARATOR);
+                v.push(0);
+                path = CString::from_vec_with_nul(v).unwrap();
             }
-            let (prev_readable, prev_writable, prev_restrict_to_append_only) = self
-                .file_access
+            let map = if dir { &mut self.dir_access } else { &mut self.file_access };
+            let (prev_read, prev_write, prev_block_readers, prev_block_writers, prev_block_deleters) = map
                 .get(&path)
                 .copied()
-                .unwrap_or((false, false, false));
-            let mut restrict_to_append_only = restrict_to_append_only;
-            if writable && prev_writable {
-                // grant the union of both rights: only restrict if both restrict
-                restrict_to_append_only = prev_restrict_to_append_only && restrict_to_append_only;
-            }
-            self.file_access.insert(
-                path.to_owned(),
+                .unwrap_or((false, false, false, false, false));
+            map.insert(
+                path,
                 (
-                    prev_readable || readable,
-                    prev_writable || writable,
-                    restrict_to_append_only,
-                ),
+                    prev_read | new_read,
+                    prev_write | new_write,
+                    prev_block_readers | new_block_readers,
+                    prev_block_writers | new_block_writers,
+                    prev_block_deleters | new_block_deleters,
+                )
             );
         }
         Ok(())
     }
 
-    #[cfg(windows)]
-    pub fn allow_regkey_access(
-        &mut self,
-        path: &str,
-        readable: bool,
-        writable: bool,
-    ) -> Result<(), PolicyError> {
-        let (prev_readable, prev_writable) = self
-            .regkey_access
-            .get(path)
-            .copied()
-            .unwrap_or((false, false));
-        for path in derive_all_reg_key_paths_from_path(path)? {
-            self.regkey_access
-                .insert(path, (prev_readable || readable, prev_writable || writable));
-        }
-        Ok(())
+    pub fn allow_file_read(&mut self, path: &CStr) -> Result<(), PolicyError> {
+        self.add_file_access(path, false, (true, false, false, false, false))
     }
 
-    pub fn get_file_allowed_access(&self, path: &str) -> (bool, bool, bool) {
-        let mut result_readable = false;
-        let mut result_writable = false;
-        let mut result_restrict_to_append_only = false;
-        for (pattern, (readable, writable, restrict_to_append_only)) in self.file_access.iter() {
-            let pattern = Pattern::new(pattern).unwrap();
-            if pattern.matches(path) {
-                result_readable |= readable;
-                if *writable {
-                    if result_writable {
-                        // grant the union of matching rules: only restrict if both do
-                        result_restrict_to_append_only =
-                            *restrict_to_append_only && result_restrict_to_append_only;
-                    } else {
-                        result_restrict_to_append_only = *restrict_to_append_only;
-                    }
-                    result_writable |= writable;
-                }
-            }
-            if result_readable && result_writable && !result_restrict_to_append_only {
-                break;
-            }
-        }
-        (
-            result_readable,
-            result_writable,
-            result_restrict_to_append_only,
-        )
-    }
-
-    #[cfg(windows)]
-    pub fn get_regkey_allowed_access(&self, path: &str) -> (bool, bool) {
-        let mut result_readable = false;
-        let mut result_writable = false;
-        for (pattern, (readable, writable)) in self.regkey_access.iter() {
-            let pattern = Pattern::new(pattern).unwrap();
-            if pattern.matches(path) {
-                result_readable |= readable;
-                result_writable |= writable;
-            }
-            if result_readable && result_writable {
-                break;
-            }
-        }
-        (result_readable, result_writable)
+    pub fn allow_file_write(&mut self, path: &CStr) -> Result<(), PolicyError> {
+        self.add_file_access(path, false, (false, true, false, false, false))
     }
 
     pub fn allow_file_lock(
         &mut self,
-        path: &str,
-        readers: bool,
-        writers: bool,
-        deleters: bool,
+        path: &CStr,
+        block_other_readers: bool,
+        block_other_writers: bool,
+        block_other_deleters: bool,
     ) -> Result<(), PolicyError> {
-        for path in derive_all_file_paths_from_path(path)? {
-            if let Err(e) = Pattern::new(&path) {
-                return Err(PolicyError::InvalidPathPattern {
-                    pattern: path.clone(),
-                    description: e.msg.to_owned(),
-                });
+        self.add_file_access(path, false, (false, false, block_other_readers, block_other_writers, block_other_deleters))
+    }
+
+    pub fn allow_dir_read(&mut self, path: &CStr) -> Result<(), PolicyError> {
+        self.add_file_access(path, true, (true, false, false, false, false))
+    }
+
+    pub fn allow_dir_write(&mut self, path: &CStr) -> Result<(), PolicyError> {
+        self.add_file_access(path, true, (false, true, false, false, false))
+    }
+
+    pub fn allow_dir_lock(
+        &mut self,
+        path: &CStr,
+        block_other_readers: bool,
+        block_other_writers: bool,
+        block_other_deleters: bool,
+    ) -> Result<(), PolicyError> {
+        self.add_file_access(path, true, (false, false, block_other_readers, block_other_writers, block_other_deleters))
+    }
+
+    pub fn get_path_allowed_access(&self, path: &CStr, dir: bool) -> (bool, bool, bool, bool, bool) {
+        let path = if dir && path.to_bytes().last() != Some(&OS_PATH_SEPARATOR) {
+            let mut v = path.to_bytes().to_owned();
+            v.push(OS_PATH_SEPARATOR);
+            v.push(0);
+            CString::from_vec_with_nul(v).unwrap()
+        } else {
+            path.to_owned()
+        };
+        let mut verdict_read = false;
+        let mut verdict_write = false;
+        let mut verdict_block_readers = false;
+        let mut verdict_block_writers = false;
+        let mut verdict_block_deleters = false;
+        if let Some((read, write, block_readers, block_writers, block_deleters)) = self.file_access.get(&path) {
+            verdict_read |= read;
+            verdict_write |= write;
+            verdict_block_readers |= block_readers;
+            verdict_block_writers |= block_writers;
+            verdict_block_deleters |= block_deleters;
+        }
+        let mut current_path = path.to_owned();
+        while !verdict_read || !verdict_write || !verdict_block_readers || !verdict_block_writers || !verdict_block_deleters {
+            if let Some((read, write, block_readers, block_writers, block_deleters)) = self.dir_access.get(&current_path) {
+                verdict_read |= read;
+                verdict_write |= write;
+                verdict_block_readers |= block_readers;
+                verdict_block_writers |= block_writers;
+                verdict_block_deleters |= block_deleters;
             }
-            if let Some((prev_readers, prev_writers, prev_deleters)) = self
-                .file_lock
-                .insert(path.to_owned(), (readers, writers, deleters))
-            {
-                self.file_lock.insert(
-                    path.to_owned(),
-                    (
-                        (readers || prev_readers),
-                        (writers || prev_writers),
-                        (deleters || prev_deleters),
-                    ),
-                );
+            match strip_one_component_and_separator(current_path) {
+                Some(parent_path) => current_path = parent_path,
+                None => break,
             }
+        }
+        (
+            verdict_read,
+            verdict_write,
+            verdict_block_readers,
+            verdict_block_writers,
+            verdict_block_deleters,
+        )
+    }
+
+    #[cfg(windows)]
+    fn add_regkey_access(&mut self, path: &CStr, access: (bool, bool)) -> Result<(), PolicyError> {
+        let (new_read, new_write) = access;
+        for path in derive_all_reg_key_paths_from_path(path)? {
+            let path = strip_last_separator(&path);
+            let (prev_read, prev_write) = self.regkey_access.get(&path)
+                .copied()
+                .unwrap_or((false, false));
+            self.regkey_access.insert(
+                path,
+                (
+                    prev_read | new_read,
+                    prev_write | new_write,
+                )
+            );
         }
         Ok(())
+
     }
 
-    pub fn get_file_allowed_lock(&self, path: &str) -> (bool, bool, bool) {
-        let mut result_readers = false;
-        let mut result_writers = false;
-        let mut result_deleters = false;
-        for (pattern, (readers, writers, deleters)) in self.file_lock.iter() {
-            let pattern = Pattern::new(pattern).unwrap();
-            if pattern.matches(path) {
-                result_readers |= readers;
-                result_writers |= writers;
-                result_deleters |= deleters;
+    #[cfg(windows)]
+    pub fn allow_regkey_read(&mut self, path: &CStr) -> Result<(), PolicyError> {
+        self.add_regkey_access(path, (true, false))
+    }
+
+    #[cfg(windows)]
+    pub fn allow_regkey_write(&mut self, path: &CStr) -> Result<(), PolicyError> {
+        self.add_regkey_access(path, (false, true))
+    }
+
+    #[cfg(windows)]
+    pub fn get_regkey_allowed_access(&self, path: &CStr, dir: bool) -> (bool, bool) {
+        let mut verdict_read = false;
+        let mut verdict_write = false;
+        let mut current_path = strip_last_separator(path);
+        while !verdict_read || !verdict_write {
+            if let Some((read, write)) = self.regkey_access.get(&current_path) {
+                verdict_read |= read;
+                verdict_write |= write;
             }
-            if result_readers && result_writers && result_deleters {
-                break;
+            match strip_one_component_and_separator(current_path) {
+                Some(parent_path) => current_path = parent_path,
+                None => break,
             }
         }
-        (result_readers, result_writers, result_deleters)
-    }
-}
-
-impl<'a> Default for Policy<'a> {
-    fn default() -> Self {
-        Self::nothing_allowed()
+        (
+            verdict_read,
+            verdict_write,
+        )
     }
 }

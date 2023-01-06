@@ -1,4 +1,5 @@
 use iris_policy::Policy;
+use std::ffi::CString;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -8,10 +9,8 @@ pub enum IPCRequest {
     LowerFinalSandboxPrivilegesAsap,
     // Worker request to open or create a file (possibly with a directory handle attached, in which case `path` is relative to that directory)
     OpenFile {
-        path: String,
-        read: bool,
-        write: bool,
-        append_only: bool,
+        path: CString,
+        flags: libc::c_int,
     },
 }
 

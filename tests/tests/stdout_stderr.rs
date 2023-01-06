@@ -1,5 +1,5 @@
 use common::os::wait_for_worker_exit;
-use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
+use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file, read_tmp_file};
 use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
 use std::io::{Seek, SeekFrom, Write};
 
@@ -30,12 +30,12 @@ fn stdout_stderr() {
         "worker wait_for_exit failed"
     );
     assert_eq!(
-        std::fs::read_to_string(&tmpoutpath).expect("failed to read stdout"),
+        read_tmp_file(&tmpoutpath),
         "OK_STDOUT\n".to_owned(),
         "unexpected value from stdout"
     );
     assert_eq!(
-        std::fs::read_to_string(&tmperrpath).expect("failed to read stderr"),
+        read_tmp_file(&tmperrpath),
         "OK_STDERR\n".to_owned(),
         "unexpected value from stderr"
     );

@@ -1,6 +1,6 @@
 use common::os::wait_for_worker_exit;
 use common::{
-    check_worker_handles, cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file,
+    check_worker_handles, cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file, read_tmp_file
 };
 use iris_broker::{downcast_to_handle, CrossPlatformHandle, Policy, ProcessConfig, Worker};
 use std::fs::File;
@@ -53,7 +53,7 @@ fn inherited_resources_no_leak() {
         wait_for_worker_exit(&worker),
         Ok(0),
         "worker reported an error, see its output log:\n{}",
-        std::fs::read_to_string(tmpoutpath).unwrap_or_else(|_| "<unable to read log>".to_owned())
+        read_tmp_file(&tmpoutpath)
     );
     cleanup_tmp_file(&tmpoutpath);
 }
