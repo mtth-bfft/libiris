@@ -15,6 +15,7 @@ pub struct ProcessConfig<'a> {
     executable_path: CString,
     argv: Vec<CString>,
     envp: Vec<CString>,
+    cwd: Option<CString>,
     stdin: Option<&'a Handle>,
     stdout: Option<&'a Handle>,
     stderr: Option<&'a Handle>,
@@ -26,10 +27,16 @@ impl<'a> ProcessConfig<'a> {
             executable_path,
             argv: argv.to_owned(),
             envp: vec![],
+            cwd: None,
             stdin: None,
             stdout: None,
             stderr: None,
         }
+    }
+
+    pub fn with_current_working_directory(mut self, cwd: CString) -> Result<Self, BrokerError> {
+        self.cwd = Some(cwd);
+        Ok(self)
     }
 
     pub fn with_environment_variable(mut self, env_var: CString) -> Result<Self, BrokerError> {
@@ -98,6 +105,7 @@ impl Worker {
             &process_config.executable_path,
             &argv[..],
             &envp[..],
+            process_config.cwd.as_deref(),
             process_config.stdin,
             process_config.stdout,
             process_config.stderr,

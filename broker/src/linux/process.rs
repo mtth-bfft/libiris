@@ -27,6 +27,8 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         exe: &CStr,
         argv: &[&CStr],
         envp: &[&CStr],
+        // TODO: set up cwd post-execution
+        _cwd: Option<&CStr>,
         stdin: Option<&Handle>,
         stdout: Option<&Handle>,
         stderr: Option<&Handle>,

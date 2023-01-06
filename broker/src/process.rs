@@ -9,6 +9,7 @@ pub trait CrossPlatformSandboxedProcess {
         exe: &CStr,
         argv: &[&CStr],
         envp: &[&CStr],
+        cwd: Option<&CStr>,
         stdin: Option<&Handle>,
         stdout: Option<&Handle>,
         stderr: Option<&Handle>,
