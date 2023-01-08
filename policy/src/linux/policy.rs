@@ -1,0 +1,66 @@
+use libc::{c_int, O_RDONLY, O_WRONLY, O_RDWR, O_TRUNC, O_CREAT, O_EXCL, O_DIRECTORY, O_APPEND, O_PATH, O_CLOEXEC, O_NOFOLLOW};
+use crate::os::path::path_is_sane;
+use crate::policy::{Policy, PolicyVerdict};
+
+const SUPPORTED_FILE_OPEN_FLAGS: c_int = O_RDONLY | O_WRONLY | O_RDWR | O_TRUNC | O_CREAT | O_EXCL | O_DIRECTORY | O_APPEND | O_PATH | O_CLOEXEC;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PolicyRequest<'a> {
+    LinuxFileOpen {
+        path: &'a str,
+        flags: c_int,
+    },
+}
+
+impl Policy<'_> {
+    pub fn check_linux_file_open(&self, path: &str, flags: c_int) -> PolicyVerdict {
+        if (flags & !SUPPORTED_FILE_OPEN_FLAGS) != 0 {
+            return PolicyVerdict::DelegationToSandboxNotSupported {
+                why: format!("open flag {:#X} not supported", flags & !SUPPORTED_FILE_OPEN_FLAGS),
+            };
+        }
+        if !path_is_sane(path) {
+            return PolicyVerdict::InvalidRequestParameters {
+                argument_name: "path".to_owned(),
+                reason: format!("path to open \"{}\" is not in canonical form", path),
+            };
+        }
+        // When O_PATH is set, other flags than O_CLOEXEC, O_DIRECTORY, and O_NOFOLLOW are supposed to be ignored by the kernel
+        // Enforce this by clearing other bits. Also enforce O_CLOEXEC for good measure.
+        let flags = if (flags & O_PATH) != 0 {
+            flags & (O_PATH | O_DIRECTORY | O_NOFOLLOW)
+        } else {
+            flags
+        } | O_CLOEXEC;
+        // Ensure the access requested matches the worker's policy
+        let requests_read = (flags & (O_WRONLY | O_PATH)) == 0;
+        let requests_write = (flags & (O_WRONLY | O_RDWR | O_TRUNC | O_CREAT | O_EXCL | O_APPEND)) != 0 && (flags & O_PATH) == 0;
+        let (can_read, can_write, _, _, _) = self.get_filepath_allowed_access(&path);
+        if !(can_read || can_write)
+            || (requests_read && !can_read)
+            || (requests_write && !can_write)
+        {
+            let why = format!("requests {} access, but {}",
+                if requests_read && requests_write {
+                    "read-write"
+                } else if requests_read {
+                    "read-only"
+                } else if requests_write {
+                    "write-only"
+                } else {
+                    "read or write"
+                },
+                if can_read {
+                    "can only read"
+                } else if can_write {
+                    "can only write"
+                } else {
+                    "has no access to that path"
+                }
+            );
+            PolicyVerdict::DeniedByPolicy { why }
+        } else {
+            PolicyVerdict::Granted
+        }
+    }
+}

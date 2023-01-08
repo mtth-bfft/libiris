@@ -1,15 +1,13 @@
-use std::ffi::CString;
-
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum PolicyError {
     HandleNotInheritable {
         handle_raw_value: u64,
     },
     UnsupportedFilesystemPath {
-        path: CString,
+        path: String,
     },
     UnsupportedRegistryPath {
-        path: CString,
+        path: String,
     },
     InvalidHandle {
         raw_value: u64,

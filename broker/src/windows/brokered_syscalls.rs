@@ -39,14 +39,12 @@ pub(crate) struct IO_STATUS_BLOCK {
 
 // Mapping from policy-allowed rights to Windows access bits
 const FILE_ALWAYS_GRANTED_RIGHTS: u32 = READ_CONTROL | SYNCHRONIZE;
-const FILE_READ_RIGHTS: u32 = FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA;
-const FILE_WRITE_ANYWHERE_RIGHTS: u32 =
-    FILE_WRITE_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES | DELETE | WRITE_DAC | WRITE_OWNER;
-const FILE_WRITE_APPEND_ONLY_RIGHTS: u32 = FILE_APPEND_DATA;
+const FILE_READ_RIGHTS: u32 = FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | FILE_ALWAYS_GRANTED_RIGHTS;
+const FILE_WRITE_RIGHTS: u32 = FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES | DELETE | WRITE_DAC | WRITE_OWNER | FILE_ALWAYS_GRANTED_RIGHTS;
 const KEY_ALWAYS_GRANTED_RIGHTS: u32 =
     READ_CONTROL | SYNCHRONIZE | KEY_NOTIFY | KEY_WOW64_32KEY | KEY_WOW64_64KEY;
-const KEY_READ_RIGHTS: u32 = KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE;
-const KEY_WRITE_RIGHTS: u32 = KEY_CREATE_SUB_KEY | KEY_SET_VALUE | DELETE | WRITE_DAC | WRITE_OWNER;
+const KEY_READ_RIGHTS: u32 = KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE | KEY_ALWAYS_GRANTED_RIGHTS;
+const KEY_WRITE_RIGHTS: u32 = KEY_CREATE_SUB_KEY | KEY_SET_VALUE | DELETE | WRITE_DAC | WRITE_OWNER | KEY_ALWAYS_GRANTED_RIGHTS;
 
 pub(crate) type PNtCreateFile = unsafe extern "system" fn(
     file_handle: *mut HANDLE,
@@ -137,9 +135,6 @@ fn handle_ntcreatefile(
     create_options: ULONG,
     ea: &[u8],
 ) -> (IPCResponse, Option<Handle>) {
-    if path.is_empty() {
-        return (IPCResponse::GenericError(STATUS_INVALID_PARAMETER), None);
-    }
     // Validate desired_access
     let never_granted = desired_access
         & !(FILE_READ_RIGHTS
@@ -169,8 +164,8 @@ fn handle_ntcreatefile(
         && (create_disposition == FILE_CREATE
             || create_disposition == FILE_OPEN
             || create_disposition == FILE_OPEN_IF);
-    let (can_read, can_write, can_only_append) = policy.get_file_allowed_access(path);
-    if !(requests_read || requests_write_anywhere || requests_write_append_only)
+    let (can_read, can_write, can_block_readers, can_block_writers, can_block_deleters) = policy.get_filepath_allowed_access(path);
+    if !(requests_read || requests_write_anywhere)
         || (requests_read && !can_read)
         || (requests_write_anywhere && (!can_write || can_only_append))
         || (requests_write_append_only && !can_write)

@@ -77,6 +77,7 @@ const PROCESS_SANITIZED_ENVIRONMENT: &[(&str, Option<&str>)] = &[
 
 static mut PER_PROCESS_APPCONTAINER_ID: std::sync::atomic::AtomicUsize = AtomicUsize::new(0);
 
+#[derive(Debug)]
 pub(crate) struct OSSandboxedProcess {
     pid: u64,
     h_process: HANDLE,
@@ -145,6 +146,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         exe: &CStr,
         argv: &[&CStr],
         envp: &[&CStr],
+        _cwd: Option<&CStr>,
         stdin: Option<&Handle>,
         stdout: Option<&Handle>,
         stderr: Option<&Handle>,

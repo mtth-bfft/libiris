@@ -55,7 +55,7 @@ fn transform_path(path: &str) -> String {
 }
 
 #[test]
-fn open_file() {
+fn file_path_open() {
     common_test_setup();
     let worker_binary = get_worker_abs_path("access_file_worker");
     for readable in [true, false] {
@@ -66,10 +66,10 @@ fn open_file() {
             tmpok.write_all(b"OK").unwrap();
             let mut policy = Policy::nothing_allowed();
             if readable {
-                policy.allow_file_read(&tmpokpath).unwrap();
+                policy.allow_file_read(&tmpokpath.to_string_lossy()).unwrap();
             }
             if writable {
-                policy.allow_file_write(&tmpokpath).unwrap();
+                policy.allow_file_write(&tmpokpath.to_string_lossy()).unwrap();
             }
             let proc_config = ProcessConfig::new(
                 worker_binary.clone(),

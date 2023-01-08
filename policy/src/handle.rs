@@ -1,6 +1,6 @@
 use crate::error::PolicyError;
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Hash)]
 pub struct Handle {
     pub(crate) val: Option<u64>,
 }
