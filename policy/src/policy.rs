@@ -1,47 +1,45 @@
 use crate::error::PolicyError;
 use crate::handle::CrossPlatformHandle;
-use crate::os::path::derive_all_file_paths_from_path;
-#[cfg(windows)]
-use crate::os::path::derive_all_reg_key_paths_from_path;
-use std::ffi::{CString, CStr};
-use crate::Handle;
+use crate::os::path::{OS_PATH_SEPARATOR, derive_all_file_paths_from_path};
+use crate::{PolicyRequest, Handle, strip_one_component};
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
-#[cfg(unix)]
-const OS_PATH_SEPARATOR: u8 = b'/';
-#[cfg(windows)]
-const OS_PATH_SEPARATOR: u8 = b'\\';
-
-// TODO: Eq required for serializability here. Replace Vec<> with unordered sets
-// to avoid making the semantics of == and != non-intuitive.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct Policy<'a> {
-    #[serde(skip)]
-    inherit_handles: Vec<&'a Handle>,
-    file_access: HashMap<CString, (bool, bool, bool, bool, bool)>,
-    dir_access: HashMap<CString, (bool, bool, bool, bool, bool)>,
-    regkey_access: HashMap<CString, (bool, bool)>,
+#[derive(Debug, PartialEq, Eq)]
+pub enum PolicyVerdict {
+    Granted,
+    DeniedByPolicy {
+        why: String,
+    },
+    DelegationToSandboxNotSupported {
+        why: String,
+    },
+    InvalidRequestParameters {
+        argument_name: String,
+        reason: String,
+    },
 }
 
-fn strip_one_component_and_separator(path: CString) -> Option<CString> {
-    let mut bytes = path.into_bytes();
-    while !bytes.is_empty() && bytes.last() != Some(&OS_PATH_SEPARATOR) {
-        bytes.pop();
-    }
-    bytes.pop(); // remove the trailing / (or no-op if the buffer is empty)
-    if bytes.is_empty() {
-        None
-    } else {
-        bytes.push(0);
-        Some(CString::from_vec_with_nul(bytes).unwrap())
-    }
+pub type PolicyLogCallback = dyn Fn(&PolicyRequest, &PolicyVerdict) + Send + Sync;
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Policy<'a> {
+    #[serde(skip)]
+    pub(crate) log_callbacks: Vec<Arc<PolicyLogCallback>>,
+    #[serde(skip)]
+    pub(crate) inherit_handles: HashSet<&'a Handle>,
+    pub(crate) file_access: HashMap<String, (bool, bool, bool, bool, bool)>,
+    pub(crate) dir_access: HashMap<String, (bool, bool, bool, bool, bool)>,
+    pub(crate) regkey_access: HashMap<String, (bool, bool)>,
 }
 
 impl<'a> Policy<'a> {
     pub fn nothing_allowed() -> Self {
         Self {
-            inherit_handles: Vec::new(),
+            log_callbacks: vec![],
+            inherit_handles: HashSet::new(),
             file_access: HashMap::new(),
             dir_access: HashMap::new(),
             regkey_access: HashMap::new(),
@@ -50,11 +48,20 @@ impl<'a> Policy<'a> {
 
     pub fn get_runtime_policy(&self) -> Policy<'static> {
         Policy {
-            inherit_handles: Vec::new(),
+            log_callbacks: self.log_callbacks.clone(),
+            inherit_handles: HashSet::new(),
             file_access: self.file_access.clone(),
             dir_access: self.dir_access.clone(),
             regkey_access: self.regkey_access.clone(),
         }
+    }
+
+    // Takes a pointer to a callback that will receive notifications whenever access to a
+    // resource is denied. Multiple callbacks can be registered, they all need to be
+    // multithread-safe. A void* context can be passed to the callback, set it to NULL if
+    // you do not intend to use it.
+    pub fn add_log_callback(&mut self, callback: Box<PolicyLogCallback>) {
+        self.log_callbacks.push(Arc::new(callback));
     }
 
     pub fn allow_inherit_handle(&mut self, handle: &'a Handle) -> Result<(), PolicyError> {
@@ -68,31 +75,28 @@ impl<'a> Policy<'a> {
                 handle_raw_value: handle.as_raw(),
             });
         }
-        self.inherit_handles.push(handle);
+        self.inherit_handles.insert(handle);
         Ok(())
     }
 
-    pub fn get_inherited_handles(&self) -> &[&Handle] {
-        &self.inherit_handles[..]
+    pub fn get_inherited_handles(&self) -> HashSet<&Handle> {
+        self.inherit_handles.clone()
     }
 
-    fn add_file_access(&mut self, path: &CStr, dir: bool, access: (bool, bool, bool, bool, bool)) -> Result<(), PolicyError> {
+    fn allow_file_access(&mut self, path: &str, dir: bool, access: (bool, bool, bool, bool, bool)) -> Result<(), PolicyError> {
         let (new_read, new_write, new_block_readers, new_block_writers, new_block_deleters) = access;
         for path in derive_all_file_paths_from_path(path)? {
-            let mut path = path.clone();
-            if dir && path.as_bytes().last() != Some(&OS_PATH_SEPARATOR) {
-                let mut v = path.into_bytes();
-                v.push(OS_PATH_SEPARATOR);
-                v.push(0);
-                path = CString::from_vec_with_nul(v).unwrap();
-            }
+            let path = match path.strip_suffix(OS_PATH_SEPARATOR) {
+                Some(rest) => rest,
+                None => &path,
+            };
             let map = if dir { &mut self.dir_access } else { &mut self.file_access };
             let (prev_read, prev_write, prev_block_readers, prev_block_writers, prev_block_deleters) = map
-                .get(&path)
+                .get(path)
                 .copied()
                 .unwrap_or((false, false, false, false, false));
             map.insert(
-                path,
+                path.to_owned(),
                 (
                     prev_read | new_read,
                     prev_write | new_write,
@@ -105,73 +109,66 @@ impl<'a> Policy<'a> {
         Ok(())
     }
 
-    pub fn allow_file_read(&mut self, path: &CStr) -> Result<(), PolicyError> {
-        self.add_file_access(path, false, (true, false, false, false, false))
+    pub fn allow_file_read(&mut self, path: &str) -> Result<(), PolicyError> {
+        self.allow_file_access(path, false, (true, false, false, false, false))
     }
 
-    pub fn allow_file_write(&mut self, path: &CStr) -> Result<(), PolicyError> {
-        self.add_file_access(path, false, (false, true, false, false, false))
+    pub fn allow_file_write(&mut self, path: &str) -> Result<(), PolicyError> {
+        self.allow_file_access(path, false, (false, true, false, false, false))
     }
 
     pub fn allow_file_lock(
         &mut self,
-        path: &CStr,
+        path: &str,
         block_other_readers: bool,
         block_other_writers: bool,
         block_other_deleters: bool,
     ) -> Result<(), PolicyError> {
-        self.add_file_access(path, false, (false, false, block_other_readers, block_other_writers, block_other_deleters))
+        self.allow_file_access(path, false, (false, false, block_other_readers, block_other_writers, block_other_deleters))
     }
 
-    pub fn allow_dir_read(&mut self, path: &CStr) -> Result<(), PolicyError> {
-        self.add_file_access(path, true, (true, false, false, false, false))
+    pub fn allow_dir_read(&mut self, path: &str) -> Result<(), PolicyError> {
+        self.allow_file_access(path, true, (true, false, false, false, false))
     }
 
-    pub fn allow_dir_write(&mut self, path: &CStr) -> Result<(), PolicyError> {
-        self.add_file_access(path, true, (false, true, false, false, false))
+    pub fn allow_dir_write(&mut self, path: &str) -> Result<(), PolicyError> {
+        self.allow_file_access(path, true, (false, true, false, false, false))
     }
 
     pub fn allow_dir_lock(
         &mut self,
-        path: &CStr,
+        path: &str,
         block_other_readers: bool,
         block_other_writers: bool,
         block_other_deleters: bool,
     ) -> Result<(), PolicyError> {
-        self.add_file_access(path, true, (false, false, block_other_readers, block_other_writers, block_other_deleters))
+        self.allow_file_access(path, true, (false, false, block_other_readers, block_other_writers, block_other_deleters))
     }
 
-    pub fn get_path_allowed_access(&self, path: &CStr, dir: bool) -> (bool, bool, bool, bool, bool) {
-        let path = if dir && path.to_bytes().last() != Some(&OS_PATH_SEPARATOR) {
-            let mut v = path.to_bytes().to_owned();
-            v.push(OS_PATH_SEPARATOR);
-            v.push(0);
-            CString::from_vec_with_nul(v).unwrap()
-        } else {
-            path.to_owned()
-        };
+    pub(crate) fn get_filepath_allowed_access(&self, path: &str) -> (bool, bool, bool, bool, bool) {
+        let path = path.strip_suffix(OS_PATH_SEPARATOR).unwrap_or(path);
         let mut verdict_read = false;
         let mut verdict_write = false;
         let mut verdict_block_readers = false;
         let mut verdict_block_writers = false;
         let mut verdict_block_deleters = false;
-        if let Some((read, write, block_readers, block_writers, block_deleters)) = self.file_access.get(&path) {
+        if let Some((read, write, block_readers, block_writers, block_deleters)) = self.file_access.get(path) {
             verdict_read |= read;
             verdict_write |= write;
             verdict_block_readers |= block_readers;
             verdict_block_writers |= block_writers;
             verdict_block_deleters |= block_deleters;
         }
-        let mut current_path = path.to_owned();
+        let mut current_path = path;
         while !verdict_read || !verdict_write || !verdict_block_readers || !verdict_block_writers || !verdict_block_deleters {
-            if let Some((read, write, block_readers, block_writers, block_deleters)) = self.dir_access.get(&current_path) {
+            if let Some((read, write, block_readers, block_writers, block_deleters)) = self.dir_access.get(current_path) {
                 verdict_read |= read;
                 verdict_write |= write;
                 verdict_block_readers |= block_readers;
                 verdict_block_writers |= block_writers;
                 verdict_block_deleters |= block_deleters;
             }
-            match strip_one_component_and_separator(current_path) {
+            match strip_one_component(current_path, OS_PATH_SEPARATOR) {
                 Some(parent_path) => current_path = parent_path,
                 None => break,
             }
@@ -185,54 +182,83 @@ impl<'a> Policy<'a> {
         )
     }
 
-    #[cfg(windows)]
-    fn add_regkey_access(&mut self, path: &CStr, access: (bool, bool)) -> Result<(), PolicyError> {
-        let (new_read, new_write) = access;
-        for path in derive_all_reg_key_paths_from_path(path)? {
-            let path = strip_last_separator(&path);
-            let (prev_read, prev_write) = self.regkey_access.get(&path)
-                .copied()
-                .unwrap_or((false, false));
-            self.regkey_access.insert(
-                path,
-                (
-                    prev_read | new_read,
-                    prev_write | new_write,
-                )
-            );
+    pub(crate) fn log_verdict(&self, request: &PolicyRequest, verdict: &PolicyVerdict) {
+        match &verdict {
+            PolicyVerdict::Granted => {
+                info!("Worker granted access to {}", request);
+            },
+            PolicyVerdict::DelegationToSandboxNotSupported { why } => {
+                warn!("Worker tried to access {} but delegation is not supported: {}", request, why);
+            },
+            PolicyVerdict::DeniedByPolicy { why } => {
+                warn!("Worker tried to access {} but it is not allowed by its policy: {}", request, why);
+            },
+            PolicyVerdict::InvalidRequestParameters { argument_name, reason } => {
+                warn!("Worker tried to access {} but \"{}\" was unexpected: {}", request, argument_name, reason);
+            },
         }
+        for callback in &self.log_callbacks {
+            (callback)(request, verdict);
+        }
+    }
+}
+
+impl core::fmt::Debug for Policy<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let &Policy { log_callbacks: _, inherit_handles, file_access, dir_access, regkey_access } = &self;
+        write!(f, "Policy {{\n")?;
+        for h in inherit_handles {
+            write!(f, "    Inherit handle {:?}", h)?;
+        }
+        for (path, (read, write, lockread, lockwrite, lockdelete)) in file_access {
+            write!(f, "    {} file{}{}{}{}{}\n", path,
+                if *read { " read" } else { "" },
+                if *write { " write" } else { "" },
+                if *lockread { " block_readers" } else { "" },
+                if *lockwrite { " block_readers" } else { "" },
+                if *lockdelete { " block_readers" } else { "" },
+            )?;
+        }
+        for (path, (read, write, lockread, lockwrite, lockdelete)) in dir_access {
+            write!(f, "    {} directory{}{}{}{}{}\n", path,
+                if *read { " read" } else { "" },
+                if *write { " write" } else { "" },
+                if *lockread { " block_readers" } else { "" },
+                if *lockwrite { " block_readers" } else { "" },
+                if *lockdelete { " block_readers" } else { "" },
+            )?;
+        }
+        for (path, (read, write)) in regkey_access {
+            write!(f, "    {} registry key{}{}\n", path,
+                if *read { " read" } else { "" },
+                if *write { " write" } else { "" },
+            )?;
+        }
+        write!(f, "}}\n")?;
         Ok(())
-
     }
+}
 
-    #[cfg(windows)]
-    pub fn allow_regkey_read(&mut self, path: &CStr) -> Result<(), PolicyError> {
-        self.add_regkey_access(path, (true, false))
-    }
+impl PartialEq for Policy<'_> {
+    fn eq(&self, other: &Policy<'_>) -> bool {
+        let &Policy {
+            log_callbacks: _,
+            inherit_handles: inherit_handles_a,
+            file_access: file_access_a,
+            dir_access: dir_access_a,
+            regkey_access: regkey_access_a,
+        } = &self;
+        let &Policy {
+            log_callbacks: _,
+            inherit_handles: inherit_handles_b,
+            file_access: file_access_b,
+            dir_access: dir_access_b,
+            regkey_access: regkey_access_b,
+        } = &other;
 
-    #[cfg(windows)]
-    pub fn allow_regkey_write(&mut self, path: &CStr) -> Result<(), PolicyError> {
-        self.add_regkey_access(path, (false, true))
-    }
-
-    #[cfg(windows)]
-    pub fn get_regkey_allowed_access(&self, path: &CStr, dir: bool) -> (bool, bool) {
-        let mut verdict_read = false;
-        let mut verdict_write = false;
-        let mut current_path = strip_last_separator(path);
-        while !verdict_read || !verdict_write {
-            if let Some((read, write)) = self.regkey_access.get(&current_path) {
-                verdict_read |= read;
-                verdict_write |= write;
-            }
-            match strip_one_component_and_separator(current_path) {
-                Some(parent_path) => current_path = parent_path,
-                None => break,
-            }
-        }
-        (
-            verdict_read,
-            verdict_write,
-        )
+        inherit_handles_a == inherit_handles_b &&
+        file_access_a == file_access_b &&
+        dir_access_a == dir_access_b &&
+        regkey_access_a == regkey_access_b
     }
 }

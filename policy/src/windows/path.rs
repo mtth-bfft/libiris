@@ -12,7 +12,17 @@ use winapi::um::securitybaseapi::GetTokenInformation;
 use winapi::um::winbase::LocalFree;
 use winapi::um::winnt::{TokenUser, TOKEN_QUERY, TOKEN_USER};
 
-pub fn derive_all_file_paths_from_path(path: &str, must_be_dir: bool) -> Result<Vec<String>, PolicyError> {
+pub(crate) const OS_PATH_SEPARATOR: char = '\\';
+
+pub(crate) fn path_is_sane(path: &str) -> bool {
+    if !path.starts_with('\\') {
+        return false;
+    }
+    // TODO: check for access to named streams
+    true
+}
+
+pub(crate) fn derive_all_file_paths_from_path(path: &str) -> Result<Vec<String>, PolicyError> {
     let relative: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
     let str_len = unsafe { GetFullPathNameW(relative.as_ptr(), 0, null_mut(), null_mut()) };
     let absolute = if str_len == 0 {

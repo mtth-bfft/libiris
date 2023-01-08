@@ -1,5 +1,4 @@
 use iris_policy::Policy;
-use std::ffi::CString;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -9,14 +8,14 @@ pub enum IPCRequest {
     LowerFinalSandboxPrivilegesAsap,
     // Worker request to open or create a file (possibly with a directory handle attached, in which case `path` is relative to that directory)
     OpenFile {
-        path: CString,
+        path: String,
         flags: libc::c_int,
     },
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub enum IPCResponse {
     // Acknowledgement of LowerFinalSandboxPrivilegesAsap
     PolicyApplied(Policy<'static>),
-    GenericCode(i64),
+    SyscallResult(i64),
 }
