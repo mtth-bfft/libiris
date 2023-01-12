@@ -6,14 +6,22 @@ const SUPPORTED_FILE_OPEN_FLAGS: c_int = O_RDONLY | O_WRONLY | O_RDWR | O_TRUNC 
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PolicyRequest<'a> {
-    LinuxFileOpen {
+    FileOpen {
         path: &'a str,
         flags: c_int,
     },
 }
 
 impl Policy<'_> {
-    pub fn check_linux_file_open(&self, path: &str, flags: c_int) -> PolicyVerdict {
+    pub fn evaluate_request(&self, req: &PolicyRequest) -> PolicyVerdict {
+        let res = match req {
+            PolicyRequest::FileOpen { path, flags } => self.check_file_open(path, *flags),
+        };
+        self.log_verdict(req, &res);
+        res
+    }
+
+    fn check_file_open(&self, path: &str, flags: c_int) -> PolicyVerdict {
         if (flags & !SUPPORTED_FILE_OPEN_FLAGS) != 0 {
             return PolicyVerdict::DelegationToSandboxNotSupported {
                 why: format!("open flag {:#X} not supported", flags & !SUPPORTED_FILE_OPEN_FLAGS),
@@ -61,6 +69,14 @@ impl Policy<'_> {
             PolicyVerdict::DeniedByPolicy { why }
         } else {
             PolicyVerdict::Granted
+        }
+    }
+}
+
+impl<'a> core::fmt::Display for PolicyRequest<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
+        match self {
+            PolicyRequest::FileOpen { path, flags } => write!(f, "file {} with flags {:#X}", path, flags),
         }
     }
 }

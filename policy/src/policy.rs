@@ -1,20 +1,18 @@
 use crate::error::PolicyError;
 use crate::handle::CrossPlatformHandle;
-use crate::os::policy::PolicyRequest;
 use crate::os::path::{OS_PATH_SEPARATOR, derive_all_file_paths_from_path};
-#[cfg(windows)]
-use crate::os::path::derive_all_reg_key_paths_from_path;
-use crate::{Handle, strip_one_component};
+use crate::{PolicyRequest, Handle, strip_one_component};
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Policy<'a> {
     #[serde(skip)]
-    inherit_handles: HashSet<&'a Handle>,
-    file_access: HashMap<String, (bool, bool, bool, bool, bool)>,
-    dir_access: HashMap<String, (bool, bool, bool, bool, bool)>,
-    regkey_access: HashMap<String, (bool, bool)>,
+    pub(crate) inherit_handles: HashSet<&'a Handle>,
+    pub(crate) file_access: HashMap<String, (bool, bool, bool, bool, bool)>,
+    pub(crate) dir_access: HashMap<String, (bool, bool, bool, bool, bool)>,
+    pub(crate) regkey_access: HashMap<String, (bool, bool)>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -132,14 +130,6 @@ impl<'a> Policy<'a> {
         self.allow_file_access(path, true, (false, false, block_other_readers, block_other_writers, block_other_deleters))
     }
 
-    pub fn evaluate_request(&self, req: &PolicyRequest) -> PolicyVerdict {
-        let res = match req {
-            PolicyRequest::LinuxFileOpen { path, flags } => self.check_linux_file_open(path, *flags),
-        };
-        // TODO: log result if necessary
-        res
-    }
-
     pub(crate) fn get_filepath_allowed_access(&self, path: &str) -> (bool, bool, bool, bool, bool) {
         let path = path.strip_suffix(OS_PATH_SEPARATOR).unwrap_or(path);
         let mut verdict_read = false;
@@ -177,60 +167,20 @@ impl<'a> Policy<'a> {
         )
     }
 
-    #[cfg(windows)]
-    fn allow_regkey_access(&mut self, path: &str, access: (bool, bool)) -> Result<(), PolicyError> {
-        let (new_read, new_write) = access;
-        for path in derive_all_reg_key_paths_from_path(path)? {
-            let path = match path.strip_suffix(OS_PATH_SEPARATOR) {
-                Some(rest) => rest,
-                None => &path,
-            };
-            let (prev_read, prev_write) = self.regkey_access.get(path)
-                .copied()
-                .unwrap_or((false, false));
-            self.regkey_access.insert(
-                path.to_owned(),
-                (
-                    prev_read | new_read,
-                    prev_write | new_write,
-                )
-            );
+    pub(crate) fn log_verdict(&self, request: &PolicyRequest, verdict: &PolicyVerdict) {
+        match &verdict {
+            PolicyVerdict::Granted => {
+                info!("Worker granted access to {}", request);
+            },
+            PolicyVerdict::DelegationToSandboxNotSupported { why } => {
+                warn!("Worker tried to access {} but delegation is not supported: {}", request, why);
+            },
+            PolicyVerdict::DeniedByPolicy { why } => {
+                warn!("Worker tried to access {} but it is not allowed by its policy: {}", request, why);
+            },
+            PolicyVerdict::InvalidRequestParameters { argument_name, reason } => {
+                warn!("Worker tried to access {} but \"{}\" was unexpected: {}", request, argument_name, reason);
+            },
         }
-        Ok(())
-
-    }
-
-    #[cfg(windows)]
-    pub fn allow_regkey_read(&mut self, path: &str) -> Result<(), PolicyError> {
-        self.allow_regkey_access(path, (true, false))
-    }
-
-    #[cfg(windows)]
-    pub fn allow_regkey_write(&mut self, path: &str) -> Result<(), PolicyError> {
-        self.allow_regkey_access(path, (false, true))
-    }
-
-    #[cfg(windows)]
-    pub fn get_regkey_allowed_access(&self, path: &str) -> (bool, bool) {
-        let mut verdict_read = false;
-        let mut verdict_write = false;
-        let mut current_path = match path.strip_suffix(OS_PATH_SEPARATOR) {
-            Some(s) => s,
-            None => path,
-        };
-        while !verdict_read || !verdict_write {
-            if let Some((read, write)) = self.regkey_access.get(current_path) {
-                verdict_read |= read;
-                verdict_write |= write;
-            }
-            match strip_one_component(current_path) {
-                Some(parent_path) => current_path = parent_path,
-                None => break,
-            }
-        }
-        (
-            verdict_read,
-            verdict_write,
-        )
     }
 }

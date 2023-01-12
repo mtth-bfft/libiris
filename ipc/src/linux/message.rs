@@ -17,5 +17,5 @@ pub enum IPCRequest {
 pub enum IPCResponse {
     // Acknowledgement of LowerFinalSandboxPrivilegesAsap
     PolicyApplied(Policy<'static>),
-    GenericCode(i64),
+    SyscallResult(i64),
 }

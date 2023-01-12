@@ -43,5 +43,5 @@ pub enum IPCResponse {
         disposition: ULONG,
         code: NTSTATUS,
     },
-    GenericError(NTSTATUS),
+    SyscallResult(NTSTATUS),
 }

@@ -16,7 +16,7 @@ pub(crate) fn handle_os_specific_request(
         } => handle_open_file(policy, path, flags),
         unknown => {
             warn!("Unexpected request from worker: {:?}", unknown);
-            (IPCResponse::GenericCode(-(libc::EINVAL as i64)), None)
+            (IPCResponse::SyscallResult(-(libc::EINVAL as i64)), None)
         }
     }
 }
@@ -26,12 +26,12 @@ pub(crate) fn handle_open_file(
     path: String,
     flags: c_int,
 ) -> (IPCResponse, Option<Handle>) {
-    let req = PolicyRequest::LinuxFileOpen {
+    let req = PolicyRequest::FileOpen {
         path: &path,
         flags,
     };
     if policy.evaluate_request(&req) != PolicyVerdict::Granted {
-        return (IPCResponse::GenericCode((-libc::EACCES).into()), None);
+        return (IPCResponse::SyscallResult((-libc::EACCES).into()), None);
     }
     let mode = libc::S_IRUSR | libc::S_IWUSR;
     let path = CString::new(path).unwrap();
@@ -45,10 +45,10 @@ pub(crate) fn handle_open_file(
                 let err = std::io::Error::last_os_error()
                     .raw_os_error()
                     .unwrap_or(libc::EACCES) as i64;
-                return (IPCResponse::GenericCode(-err), None);
+                return (IPCResponse::SyscallResult(-err), None);
             },
         };
         Handle::new(fd).unwrap()
     };
-    (IPCResponse::GenericCode(0), Some(handle))
+    (IPCResponse::SyscallResult(0), Some(handle))
 }

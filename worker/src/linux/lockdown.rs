@@ -92,8 +92,8 @@ fn get_fd_for_path_with_perms(
         flags,
     };
     match send_recv(&request, None) {
-        (IPCResponse::GenericCode(_), Some(fd)) => Ok(fd),
-        (IPCResponse::GenericCode(code), None) if code < 0 => Err(code),
+        (IPCResponse::SyscallResult(_), Some(fd)) => Ok(fd),
+        (IPCResponse::SyscallResult(code), None) if code < 0 => Err(code),
         err => panic!("Unexpected response from broker to file request: {:?}", err),
     }
 }
@@ -378,10 +378,10 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc
     );
     let request = IPCRequest::OpenFile { path, flags };
     match send_recv(&request, None) {
-        (IPCResponse::GenericCode(_), Some(handle)) => {
+        (IPCResponse::SyscallResult(_), Some(handle)) => {
             unsafe { handle.into_raw() }.try_into().unwrap()
         }
-        (IPCResponse::GenericCode(code), None) => code,
+        (IPCResponse::SyscallResult(code), None) => code,
         other => panic!(
             "Unexpected response from broker to file request: {:?}",
             other

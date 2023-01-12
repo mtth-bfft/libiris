@@ -1,27 +1,28 @@
 use iris_policy::{Policy, PolicyRequest, PolicyVerdict};
 use libc::{O_RDONLY, O_WRONLY, O_RDWR};
 
+#[cfg(unix)]
 #[test]
 fn file_path_policy_decision() {
     let mut policy = Policy::nothing_allowed();
     policy.allow_file_read("/etc/hosts").unwrap();
     assert_eq!(
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "/etc/hosts", flags: O_RDONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "/etc/hosts", flags: O_RDONLY }),
         PolicyVerdict::Granted,
         "exact file path did not match"
     );
     assert!(matches!(
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "/etc/nothosts", flags: O_RDONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "/etc/nothosts", flags: O_RDONLY }),
         PolicyVerdict::DeniedByPolicy { .. }),
         "different file path should not have matched"
     );
     assert!(matches!(
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "/etc/hosts", flags: O_WRONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "/etc/hosts", flags: O_WRONLY }),
         PolicyVerdict::DeniedByPolicy { .. }),
         "different file rights should not have matched"
     );
     assert!(matches!(
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "/etc/hosts ", flags: O_RDONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "/etc/hosts ", flags: O_RDONLY }),
         PolicyVerdict::DeniedByPolicy { .. }),
         "trailing spaces should not be canonicalized"
     );
@@ -29,22 +30,22 @@ fn file_path_policy_decision() {
     let mut policy = Policy::nothing_allowed();
     policy.allow_dir_write("/without_trailing_slash").unwrap();
     assert_eq!( 
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "/without_trailing_slash", flags: O_WRONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "/without_trailing_slash", flags: O_WRONLY }),
         PolicyVerdict::Granted,
         "exact dir path did not match"
     );
     assert_eq!( 
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "/without_trailing_slash/", flags: O_WRONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "/without_trailing_slash/", flags: O_WRONLY }),
         PolicyVerdict::Granted,
         "exact dir path did not match with a trailing slash"
     );
     assert!(matches!(
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "/not_without_trailing_slash", flags: O_WRONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "/not_without_trailing_slash", flags: O_WRONLY }),
         PolicyVerdict::DeniedByPolicy { .. }),
         "different dir path should not have matched"
     );
     assert!(matches!(
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "/without_trailing_slash", flags: O_RDONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "/without_trailing_slash", flags: O_RDONLY }),
         PolicyVerdict::DeniedByPolicy { .. }),
         "different dir rights should not have matched"
     );
@@ -52,12 +53,12 @@ fn file_path_policy_decision() {
     let mut policy = Policy::nothing_allowed();
     policy.allow_dir_read("/etc/").unwrap();
     assert_eq!(
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "/etc/hosts", flags: O_RDONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "/etc/hosts", flags: O_RDONLY }),
         PolicyVerdict::Granted,
         "direct directory child did not match"
     );
     assert_eq!(
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "/etc/ssh/ssh_config", flags: O_RDONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "/etc/ssh/ssh_config", flags: O_RDONLY }),
         PolicyVerdict::Granted,
         "directory sub-child did not match"
     );
@@ -66,7 +67,7 @@ fn file_path_policy_decision() {
     policy.allow_dir_read("/home/me/").unwrap();
     policy.allow_dir_write("/home/me/.cache/").unwrap();
     assert_eq!(
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "/home/me/.cache/a.txt", flags: O_RDWR }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "/home/me/.cache/a.txt", flags: O_RDWR }),
         PolicyVerdict::Granted,
         "access rights from different rules should have been combined together"
     );
@@ -74,22 +75,22 @@ fn file_path_policy_decision() {
     let mut policy = Policy::nothing_allowed();
     policy.allow_dir_read("/home/me/").unwrap();
     assert!(matches!(
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "a.txt", flags: O_RDONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "a.txt", flags: O_RDONLY }),
         PolicyVerdict::InvalidRequestParameters { .. }),
         "relative paths should be denied"
     );
     assert!(matches!(
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "../../../../../../../../home/me/a.txt", flags: O_RDONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "../../../../../../../../home/me/a.txt", flags: O_RDONLY }),
         PolicyVerdict::InvalidRequestParameters { .. }),
         "relative paths should be denied"
     );
     assert!(matches!(
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "/home/me/../a.txt", flags: O_RDONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "/home/me/../a.txt", flags: O_RDONLY }),
         PolicyVerdict::InvalidRequestParameters { .. }),
         "unresolved ../ in paths should be denied"
     );
     assert!(matches!(
-        policy.evaluate_request(&PolicyRequest::LinuxFileOpen { path: "/home/me/./a.txt", flags: O_RDONLY }),
+        policy.evaluate_request(&PolicyRequest::FileOpen { path: "/home/me/./a.txt", flags: O_RDONLY }),
         PolicyVerdict::InvalidRequestParameters { .. }),
         "unresolved ../ in paths should be denied"
     );

@@ -1,6 +1,7 @@
 use common::os::wait_for_worker_exit;
 use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file, read_tmp_file};
 use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
+use log::info;
 use std::ffi::CString;
 use std::io::Write;
 
@@ -57,13 +58,18 @@ fn transform_path(path: &str) -> String {
 #[test]
 fn file_path_open() {
     common_test_setup();
-    let worker_binary = get_worker_abs_path("access_file_worker");
+    let worker_binary = get_worker_abs_path("file_path_open_worker");
     for readable in [true, false] {
         for writable in [true, false] {
             let (tmpout, tmpoutpath) = open_tmp_file();
             let tmpout = downcast_to_handle(tmpout);
             let (mut tmpok, tmpokpath) = open_tmp_file();
             tmpok.write_all(b"OK").unwrap();
+            drop(tmpok);
+            info!("Testing access to {} with policy {}readable {}writable",
+                tmpokpath.to_string_lossy(),
+                if readable { "" } else { "non-" },
+                if writable { "" } else { "non-" });
             let mut policy = Policy::nothing_allowed();
             if readable {
                 policy.allow_file_read(&tmpokpath.to_string_lossy()).unwrap();

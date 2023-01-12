@@ -142,7 +142,7 @@ impl Worker {
                     }
                     other => handle_os_specific_request(other, &runtime_policy),
                 };
-                debug!("Sending response: {:?}", &resp);
+                debug!("Sending response: {:?} (handle={:?})", &resp, &handle);
                 if let Err(e) = broker_pipe.send(&resp, handle.as_ref()) {
                     warn!("Broker thread exiting: error when sending IPC: {:?}", e);
                     break;

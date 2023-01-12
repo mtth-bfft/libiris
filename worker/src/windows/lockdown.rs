@@ -580,7 +580,7 @@ extern "system" fn hook_ntcreatefile(
             };
             code as NTSTATUS
         }
-        (IPCResponse::GenericError(code), None) => return code as NTSTATUS,
+        (IPCResponse::SyscallResult(code), None) => return code as NTSTATUS,
         other => panic!(
             "Unexpected response from broker to NtCreateFile request: {:?}",
             other
@@ -644,7 +644,7 @@ extern "system" fn hook_ntopenfile(
             };
             code as NTSTATUS
         }
-        (IPCResponse::GenericError(code), None) => code as NTSTATUS,
+        (IPCResponse::SyscallResult(code), None) => code as NTSTATUS,
         other => panic!(
             "Unexpected response from broker to NtCreateFile request: {:?}",
             other
@@ -721,7 +721,7 @@ extern "system" fn hook_ntcreatekey(
             }
             code as NTSTATUS
         }
-        (IPCResponse::GenericError(code), None) => return code as NTSTATUS,
+        (IPCResponse::SyscallResult(code), None) => return code as NTSTATUS,
         other => panic!(
             "Unexpected response from broker to NtCreateKey request: {:?}",
             other
