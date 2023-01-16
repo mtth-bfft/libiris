@@ -71,7 +71,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn new(process_config: &ProcessConfig, policy: &Policy) -> Result<Self, BrokerError> {
+    pub fn new(process_config: &ProcessConfig, policy: &Policy<F>) -> Result<Self, BrokerError> {
         let (mut broker_pipe, worker_pipe) = MessagePipe::new()?;
         let mut worker_pipe_handle = worker_pipe.into_handle();
         worker_pipe_handle.set_inheritable(true)?;
@@ -136,9 +136,9 @@ impl Worker {
                 debug!("Received request: {:?}", &request);
                 let (resp, handle) = match request {
                     // Handle OS-agnostic requests
-                    IPCRequest::LowerFinalSandboxPrivilegesAsap if !has_lowered_privileges => {
+                    IPCRequest::ReadyToLowerPrivileges if !has_lowered_privileges => {
                         has_lowered_privileges = true;
-                        (IPCResponse::PolicyApplied(runtime_policy.clone()), None)
+                        (IPCResponse::SyscallResult(0), None)
                     }
                     other => handle_os_specific_request(other, &runtime_policy),
                 };

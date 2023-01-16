@@ -1,4 +1,3 @@
-use core::ffi::c_void;
 use crate::error::PolicyError;
 use crate::handle::CrossPlatformHandle;
 use crate::os::path::{OS_PATH_SEPARATOR, derive_all_file_paths_from_path};
@@ -22,23 +21,12 @@ pub enum PolicyVerdict {
     },
 }
 
-pub type PolicyLogCallback = extern "C" fn(&PolicyRequest, &PolicyVerdict, *const c_void);
+//pub trait PolicyLogCallback: Fn(&PolicyRequest, &PolicyVerdict) { }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub(crate) struct PolicyLogCallbackSetting {
-    f: *const c_void,
-    ctx: *const c_void,
-}
-
-// The callback pointer is not automatically Send, we need to tell rustc
-// that it can be used (called) in multiple threads, as we rely on our
-// user to have read the docs.
-unsafe impl Send for PolicyLogCallbackSetting { }
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct Policy<'a> {
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Policy<'a, F> {
     #[serde(skip)]
-    pub(crate) log_callbacks: HashSet<PolicyLogCallbackSetting>,
+    pub(crate) log_callbacks: Vec<F>,
     #[serde(skip)]
     pub(crate) inherit_handles: HashSet<&'a Handle>,
     pub(crate) file_access: HashMap<String, (bool, bool, bool, bool, bool)>,
@@ -46,10 +34,10 @@ pub struct Policy<'a> {
     pub(crate) regkey_access: HashMap<String, (bool, bool)>,
 }
 
-impl<'a> Policy<'a> {
+impl<'a, F> Policy<'a, F> where F: Fn(&PolicyRequest, &PolicyVerdict) {
     pub fn nothing_allowed() -> Self {
         Self {
-            log_callbacks: HashSet::new(),
+            log_callbacks: vec![],
             inherit_handles: HashSet::new(),
             file_access: HashMap::new(),
             dir_access: HashMap::new(),
@@ -57,9 +45,9 @@ impl<'a> Policy<'a> {
         }
     }
 
-    pub fn get_runtime_policy(&self) -> Policy<'static> {
+    pub fn get_runtime_policy(self) -> Policy<'static, F> {
         Policy {
-            log_callbacks: self.log_callbacks.clone(),
+            log_callbacks: self.log_callbacks,
             inherit_handles: HashSet::new(),
             file_access: self.file_access.clone(),
             dir_access: self.dir_access.clone(),
@@ -69,13 +57,9 @@ impl<'a> Policy<'a> {
 
     // Takes a pointer to a callback that will receive notifications whenever access to a
     // resource is denied. Multiple callbacks can be registered, they all need to be
-    // multithread-safe. A void* context can be passed to the callback, set it to NULL if
-    // you do not intend to use it.
-    pub fn add_log_callback(&mut self, callback: PolicyLogCallback, ctx: *const c_void) {
-        self.log_callbacks.insert(PolicyLogCallbackSetting {
-            f: callback as *const c_void,
-            ctx,
-        });
+    // multithread-safe.
+    pub fn add_log_callback(&mut self, f: F) {
+        self.log_callbacks.push(f);
     }
 
     pub fn allow_inherit_handle(&mut self, handle: &'a Handle) -> Result<(), PolicyError> {
@@ -212,9 +196,13 @@ impl<'a> Policy<'a> {
             },
         }
         for callback in &self.log_callbacks {
-            unsafe {
-                std::mem::transmute::<*const c_void, PolicyLogCallback>(callback.f)(request, verdict, callback.ctx);
-            }
+            callback(request, verdict);
         }
+    }
+}
+
+impl<F> core::fmt::Debug for Policy<'_, F> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "Policy {{ }}")
     }
 }

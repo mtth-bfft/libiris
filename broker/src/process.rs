@@ -5,7 +5,7 @@ use std::ffi::CStr;
 pub trait CrossPlatformSandboxedProcess {
     // Creates a worker process with the given configuration
     fn new(
-        policy: &Policy,
+        policy: &Policy<F>,
         exe: &CStr,
         argv: &[&CStr],
         envp: &[&CStr],

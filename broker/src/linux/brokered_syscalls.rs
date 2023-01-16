@@ -7,7 +7,7 @@ use std::ffi::CString;
 
 pub(crate) fn handle_os_specific_request(
     request: IPCRequest,
-    policy: &Policy,
+    policy: &Policy<F>,
 ) -> (IPCResponse, Option<Handle>) {
     match request {
         IPCRequest::OpenFile {
@@ -22,7 +22,7 @@ pub(crate) fn handle_os_specific_request(
 }
 
 pub(crate) fn handle_open_file(
-    policy: &Policy,
+    policy: &Policy<F>,
     path: String,
     flags: c_int,
 ) -> (IPCResponse, Option<Handle>) {

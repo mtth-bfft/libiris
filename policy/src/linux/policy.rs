@@ -12,7 +12,7 @@ pub enum PolicyRequest<'a> {
     },
 }
 
-impl Policy<'_> {
+impl<F> Policy<'_, F> where F: Fn(&PolicyRequest, &PolicyVerdict) {
     pub fn evaluate_request(&self, req: &PolicyRequest) -> PolicyVerdict {
         let res = match req {
             PolicyRequest::FileOpen { path, flags } => self.check_file_open(path, *flags),

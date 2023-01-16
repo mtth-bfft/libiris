@@ -2,7 +2,7 @@ use crate::error::BrokerError;
 use crate::process::CrossPlatformSandboxedProcess;
 use core::ffi::c_void;
 use core::ptr::null;
-use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use iris_policy::{CrossPlatformHandle, Handle, Policy, PolicyRequest, PolicyVerdict};
 use libc::c_int;
 use linux_entrypoint::{clone_entrypoint, EntrypointParameters};
 use log::debug;
@@ -21,9 +21,9 @@ pub struct OSSandboxedProcess {
     initial_thread_stack: Vec<u8>,
 }
 
-impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
+impl<F> CrossPlatformSandboxedProcess for OSSandboxedProcess {
     fn new(
-        policy: &Policy,
+        policy: &Policy<F>,
         exe: &CStr,
         argv: &[&CStr],
         envp: &[&CStr],
@@ -32,7 +32,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         stdin: Option<&Handle>,
         stdout: Option<&Handle>,
         stderr: Option<&Handle>,
-    ) -> Result<Self, BrokerError> {
+    ) -> Result<Self, BrokerError> where F: Fn(&PolicyRequest, &PolicyVerdict) {
         if argv.is_empty() {
             return Err(BrokerError::MissingCommandLine);
         }

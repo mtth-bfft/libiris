@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::null;
 use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse};
-use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use iris_policy::{CrossPlatformHandle, Handle};
 use libc::{c_int, c_char, O_PATH};
 use log::{debug, warn};
 use seccomp_sys::{
@@ -98,7 +98,7 @@ fn get_fd_for_path_with_perms(
     }
 }
 
-pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePipe) {
+pub(crate) fn lower_final_sandbox_privileges(ipc: IPCMessagePipe) {
     // Initialization of globals. This is safe as long as we are only called once
     unsafe {
         // Store the IPC pipe to handle all future syscall requests
@@ -382,10 +382,6 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc
             unsafe { handle.into_raw() }.try_into().unwrap()
         }
         (IPCResponse::SyscallResult(code), None) => code,
-        other => panic!(
-            "Unexpected response from broker to file request: {:?}",
-            other
-        ),
     }
 }
 

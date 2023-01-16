@@ -4,7 +4,7 @@ use iris_ipc::{
     IPC_HANDLE_ENV_NAME,
 };
 use iris_policy::{CrossPlatformHandle, Handle};
-use log::{debug, info};
+use log::info;
 
 pub fn lower_final_sandbox_privileges_asap() {
     info!("Lowering final sandbox privileges");
@@ -21,21 +21,12 @@ pub fn lower_final_sandbox_privileges_asap() {
     let pipe = MessagePipe::from_handle(handle);
     let mut ipc = IPCMessagePipe::new(pipe);
 
-    ipc.send(&IPCRequest::LowerFinalSandboxPrivilegesAsap, None)
+    ipc.send(&IPCRequest::ReadyToLowerPrivileges, None)
         .expect("unable to send IPC message to broker");
-    let resp = ipc
-        .recv()
+    ipc.recv::<IPCResponse>()
         .expect("unable to read worker policy from broker");
-    let pol = match resp {
-        Some(IPCResponse::PolicyApplied(pol)) => pol,
-        other => panic!(
-            "unexpected initial response received from broker: {:?}",
-            other
-        ),
-    };
-    debug!("Policy applied: {:?}", pol);
 
-    lockdown::lower_final_sandbox_privileges(&pol, ipc);
+    lockdown::lower_final_sandbox_privileges(ipc);
 
     info!("Now running with final privileges");
 }
