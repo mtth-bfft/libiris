@@ -1,9 +1,9 @@
-use iris_policy::{Policy, PolicyRequest, PolicyVerdict};
-use libc::{O_RDONLY, O_WRONLY, O_RDWR};
-
 #[cfg(unix)]
 #[test]
 fn file_path_policy_decision() {
+    use iris_policy::{Policy, PolicyRequest, PolicyVerdict};
+    use libc::{O_RDONLY, O_WRONLY, O_RDWR};
+
     let mut policy = Policy::nothing_allowed();
     policy.allow_file_read("/etc/hosts").unwrap();
     println!("{:?}", &policy);
