@@ -1,5 +1,6 @@
 use crate::error::BrokerError;
 use crate::process::CrossPlatformSandboxedProcess;
+use crate::ProcessConfig;
 use core::ffi::c_void;
 use core::ptr::null;
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
@@ -7,7 +8,6 @@ use libc::c_int;
 use linux_entrypoint::{clone_entrypoint, EntrypointParameters};
 use log::debug;
 use std::convert::{TryFrom, TryInto};
-use std::ffi::CStr;
 use std::io::Error;
 
 const DEFAULT_CLONE_STACK_SIZE: usize = 1024 * 1024;
@@ -24,16 +24,9 @@ pub struct OSSandboxedProcess {
 impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
     fn new(
         policy: &Policy,
-        exe: &CStr,
-        argv: &[&CStr],
-        envp: &[&CStr],
-        // TODO: set up cwd post-execution
-        _cwd: Option<&CStr>,
-        stdin: Option<&Handle>,
-        stdout: Option<&Handle>,
-        stderr: Option<&Handle>,
+        process_config: &ProcessConfig,
     ) -> Result<Self, BrokerError> {
-        if argv.is_empty() {
+        if process_config.argv.is_empty() {
             return Err(BrokerError::MissingCommandLine);
         }
 
@@ -66,12 +59,12 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
 
         // Pack together everything that needs to be passed to the new process,
         // and ensure their lifetime is long enough to pass clone()
-        let argv: Vec<*const i8> = argv
+        let argv: Vec<*const i8> = process_config.argv
             .iter()
             .map(|x| x.as_ptr())
             .chain(std::iter::once(null()))
             .collect();
-        let envp: Vec<*const i8> = envp
+        let envp: Vec<*const i8> = process_config.envp
             .iter()
             .map(|x| x.as_ptr())
             .chain(std::iter::once(null()))
@@ -82,15 +75,15 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             .map(|n| n.as_raw().try_into().unwrap())
             .collect();
         let entrypoint_params = EntrypointParameters {
-            exe: exe.as_ptr(),
+            exe: process_config.executable_path.as_ptr(),
             argv: argv.as_ptr(),
             envp: envp.as_ptr(),
             allowed_file_descriptors: allowed_file_descriptors.as_ptr(),
             allowed_file_descriptors_count: allowed_file_descriptors.len(),
             execve_errno_pipe: child_pipe.as_raw().try_into().unwrap(),
-            stdin: stdin.map(|h| c_int::try_from(h.as_raw()).unwrap()),
-            stdout: stdout.map(|h| c_int::try_from(h.as_raw()).unwrap()),
-            stderr: stderr.map(|h| c_int::try_from(h.as_raw()).unwrap()),
+            stdin: process_config.stdin.map(|h| c_int::try_from(h.as_raw()).unwrap()),
+            stdout: process_config.stdout.map(|h| c_int::try_from(h.as_raw()).unwrap()),
+            stderr: process_config.stderr.map(|h| c_int::try_from(h.as_raw()).unwrap()),
         };
         let entrypoint_params = Box::leak(Box::new(entrypoint_params));
 

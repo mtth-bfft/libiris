@@ -16,6 +16,6 @@ pub enum IPCRequest {
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub enum IPCResponse {
     // Acknowledgement of LowerFinalSandboxPrivilegesAsap
-    PolicyApplied(Policy<'static>),
+    PolicyApplied(Box<Policy<'static>>),
     SyscallResult(i64),
 }

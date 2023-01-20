@@ -27,14 +27,14 @@ fn policy_log_callback() {
         } else {
             panic!("Callback called too many times");
         }
-        *lock = *lock + 1;
+        *lock += 1;
     }));
 
     let worker_binary = get_worker_abs_path("policy_log_callback_worker");
     let proc_config = ProcessConfig::new(
         worker_binary.clone(),
         &[
-            worker_binary.clone(),
+            worker_binary,
             tmpokpath,
         ]
     )

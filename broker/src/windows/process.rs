@@ -1,11 +1,11 @@
-use crate::error::BrokerError;
+use crate::{BrokerError, ProcessConfig};
 use crate::os::proc_thread_attribute_list::ProcThreadAttributeList;
 use crate::process::CrossPlatformSandboxedProcess;
 use core::ptr::null_mut;
-use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use iris_policy::{CrossPlatformHandle, Policy};
 use log::{info, warn};
 use std::convert::TryInto;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use winapi::ctypes::c_void;
 use winapi::shared::basetsd::DWORD_PTR;
@@ -143,22 +143,16 @@ impl Drop for OSSandboxedProcess {
 impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
     fn new(
         policy: &Policy,
-        exe: &CStr,
-        argv: &[&CStr],
-        envp: &[&CStr],
-        _cwd: Option<&CStr>,
-        stdin: Option<&Handle>,
-        stdout: Option<&Handle>,
-        stderr: Option<&Handle>,
+        process_config: &ProcessConfig,
     ) -> Result<Self, BrokerError> {
-        if argv.len() < 1 {
+        if process_config.argv.len() < 1 {
             return Err(BrokerError::MissingCommandLine);
         }
         // Build the full commandline with quotes to prevent C:\Program Files\a.exe from launching C:\Program.exe
         let mut cmdline = vec![b'"'];
-        cmdline.extend_from_slice(exe.to_bytes());
+        cmdline.extend_from_slice(process_config.executable_path.to_bytes());
         cmdline.push(b'"');
-        for arg in &argv[1..] {
+        for arg in &process_config.argv[1..] {
             let arg = arg.to_bytes();
             cmdline.push(b' ');
             if arg.contains(&b' ') {
@@ -173,7 +167,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
 
         // Build the concatenated environment block (NULL-terminated strings, the last one with a double-NULL terminator)
         // Merge the caller-provided values with sanitized system environment variables
-        let mut merged_envp: Vec<CString> = envp
+        let mut merged_envp: Vec<CString> = process_config.envp
             .iter()
             .map(|s| CString::new(s.to_bytes()).unwrap())
             .collect();
@@ -408,13 +402,13 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             let mut start_info: STARTUPINFOEXA = unsafe { std::mem::zeroed() };
             start_info.StartupInfo.cb = std::mem::size_of_val(&start_info).try_into().unwrap();
             start_info.StartupInfo.dwFlags = STARTF_FORCEOFFFEEDBACK | STARTF_USESTDHANDLES;
-            start_info.StartupInfo.hStdInput = stdin
+            start_info.StartupInfo.hStdInput = process_config.stdin
                 .and_then(|x| Some(x.as_raw() as HANDLE))
                 .unwrap_or(INVALID_HANDLE_VALUE);
-            start_info.StartupInfo.hStdOutput = stdout
+            start_info.StartupInfo.hStdOutput = process_config.stdout
                 .and_then(|x| Some(x.as_raw() as HANDLE))
                 .unwrap_or(INVALID_HANDLE_VALUE);
-            start_info.StartupInfo.hStdError = stderr
+            start_info.StartupInfo.hStdError = process_config.stderr
                 .and_then(|x| Some(x.as_raw() as HANDLE))
                 .unwrap_or(INVALID_HANDLE_VALUE);
             start_info.lpAttributeList = ptal.as_ptr() as *const _ as *mut _;

@@ -206,12 +206,12 @@ impl<'a> Policy<'a> {
 impl core::fmt::Debug for Policy<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         let &Policy { log_callbacks: _, inherit_handles, file_access, dir_access, regkey_access } = &self;
-        write!(f, "Policy {{\n")?;
+        writeln!(f, "Policy {{")?;
         for h in inherit_handles {
-            write!(f, "    Inherit handle {:?}", h)?;
+            writeln!(f, "    Inherit handle {:?}", h)?;
         }
         for (path, (read, write, lockread, lockwrite, lockdelete)) in file_access {
-            write!(f, "    {} file{}{}{}{}{}\n", path,
+            writeln!(f, "    {} file{}{}{}{}{}", path,
                 if *read { " read" } else { "" },
                 if *write { " write" } else { "" },
                 if *lockread { " block_readers" } else { "" },
@@ -220,7 +220,7 @@ impl core::fmt::Debug for Policy<'_> {
             )?;
         }
         for (path, (read, write, lockread, lockwrite, lockdelete)) in dir_access {
-            write!(f, "    {} directory{}{}{}{}{}\n", path,
+            writeln!(f, "    {} directory{}{}{}{}{}", path,
                 if *read { " read" } else { "" },
                 if *write { " write" } else { "" },
                 if *lockread { " block_readers" } else { "" },
@@ -229,12 +229,12 @@ impl core::fmt::Debug for Policy<'_> {
             )?;
         }
         for (path, (read, write)) in regkey_access {
-            write!(f, "    {} registry key{}{}\n", path,
+            writeln!(f, "    {} registry key{}{}", path,
                 if *read { " read" } else { "" },
                 if *write { " write" } else { "" },
             )?;
         }
-        write!(f, "}}\n")?;
+        writeln!(f, "}}")?;
         Ok(())
     }
 }

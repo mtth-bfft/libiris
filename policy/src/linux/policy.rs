@@ -43,7 +43,7 @@ impl Policy<'_> {
         // Ensure the access requested matches the worker's policy
         let requests_read = (flags & (O_WRONLY | O_PATH)) == 0;
         let requests_write = (flags & (O_WRONLY | O_RDWR | O_TRUNC | O_CREAT | O_EXCL | O_APPEND)) != 0 && (flags & O_PATH) == 0;
-        let (can_read, can_write, _, _, _) = self.get_filepath_allowed_access(&path);
+        let (can_read, can_write, _, _, _) = self.get_filepath_allowed_access(path);
         if !(can_read || can_write)
             || (requests_read && !can_read)
             || (requests_write && !can_write)

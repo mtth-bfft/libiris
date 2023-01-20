@@ -3,7 +3,7 @@ use iris_policy::PolicyError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrokerError {
-    CannotUseReservedEnvironmentVariable { name: String },
+    ConflictingEnvironmentVariable { name: String },
     MissingCommandLine,
     CannotBuildPolicyForWorker(PolicyError),
     WorkerCommunicationError(IpcError),
