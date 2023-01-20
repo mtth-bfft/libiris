@@ -25,7 +25,9 @@ pub(crate) fn derive_all_file_paths_from_path(path: &str) -> Result<Vec<String>,
     // exposing one of the parent directories or the target itself), but
     // we do not need to introduce this complexity here.
     if !path.starts_with('/') {
-        return Err(PolicyError::UnsupportedFilesystemPath { path: path.to_owned() });
+        return Err(PolicyError::UnsupportedFilesystemPath {
+            path: path.to_owned(),
+        });
     }
     Ok(vec![path.to_owned()])
 }

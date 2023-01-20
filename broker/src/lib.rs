@@ -1,13 +1,13 @@
 // Common modules
 
 mod error;
-mod process_config;
 mod process;
+mod process_config;
 mod worker;
 
+pub use error::BrokerError;
 pub use process_config::ProcessConfig;
 pub use worker::Worker;
-pub use error::BrokerError;
 
 // OS-specific modules
 

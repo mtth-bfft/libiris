@@ -1,13 +1,10 @@
-use crate::ProcessConfig;
 use crate::error::BrokerError;
+use crate::ProcessConfig;
 use iris_policy::Policy;
 
 pub trait CrossPlatformSandboxedProcess {
     // Creates a worker process with the given configuration
-    fn new(
-        policy: &Policy,
-        process_config: &ProcessConfig,
-    ) -> Result<Self, BrokerError>
+    fn new(policy: &Policy, process_config: &ProcessConfig) -> Result<Self, BrokerError>
     where
         Self: std::marker::Sized;
 

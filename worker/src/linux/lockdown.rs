@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::ptr::null;
 use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
-use libc::{c_int, c_char, O_PATH};
+use libc::{c_char, c_int, O_PATH};
 use log::{debug, warn};
 use seccomp_sys::{
     scmp_arg_cmp, scmp_compare, scmp_filter_attr, seccomp_attr_set, seccomp_init, seccomp_load,
@@ -83,10 +83,7 @@ fn get_ipc_pipe() -> MutexGuard<'static, IPCMessagePipe> {
     unsafe { (*IPC_PIPE_SINGLETON).lock().unwrap() }
 }
 
-fn get_fd_for_path_with_perms(
-    path: &str,
-    flags: c_int,
-) -> Result<Handle, i64> {
+fn get_fd_for_path_with_perms(path: &str, flags: c_int) -> Result<Handle, i64> {
     let request = IPCRequest::OpenFile {
         path: path.to_owned(),
         flags,
@@ -271,7 +268,9 @@ pub(crate) fn get_syscall_number(name: &str) -> Result<i32, String> {
 
 fn read_string_from_ptr(ptr: *const c_char) -> String {
     unsafe {
-        CStr::from_ptr(ptr as *const _).to_string_lossy().to_string()
+        CStr::from_ptr(ptr as *const _)
+            .to_string_lossy()
+            .to_string()
     }
 }
 
@@ -316,20 +315,28 @@ pub(crate) extern "C" fn sigsys_handler(
             handle_access(&path, mode)
         }
         libc::SYS_open => {
-            let (path, flags, mode) = (read_string_from_ptr(a0 as *const c_char), a1 as i32, a2 as i32);
+            let (path, flags, mode) = (
+                read_string_from_ptr(a0 as *const c_char),
+                a1 as i32,
+                a2 as i32,
+            );
             handle_openat(libc::AT_FDCWD, &path, flags, mode)
         }
         libc::SYS_openat => {
             // Note: the dirfd passed cannot be accurately resolved to a valid path (you can
             // readlink(/proc/self/fd/%d) but it might not be up to date if the folder has been moved)
-            let (dirfd, path, flags, mode) =
-                (a0 as i32, read_string_from_ptr(a1 as *const c_char), a2 as i32, a3 as i32);
+            let (dirfd, path, flags, mode) = (
+                a0 as i32,
+                read_string_from_ptr(a1 as *const c_char),
+                a2 as i32,
+                a3 as i32,
+            );
             handle_openat(dirfd, &path, flags, mode)
         }
         libc::SYS_chdir => {
             let path = read_string_from_ptr(a0 as *const c_char);
             handle_chdir(&path)
-        },
+        }
         _ => {
             warn!("Syscall not supported yet, denied by default");
             -(libc::EPERM as i64)
@@ -362,10 +369,14 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc
         path.to_owned()
     } else {
         if dirfd != libc::AT_FDCWD {
-            warn!("openat(dirfd, relative path) is only supported with AT_FDCWD in Linux sandboxes");
+            warn!(
+                "openat(dirfd, relative path) is only supported with AT_FDCWD in Linux sandboxes"
+            );
             return (-(libc::EACCES)).into();
         }
-        let mut abspath = std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| String::new());
+        let mut abspath = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| String::new());
         if !abspath.ends_with('/') {
             abspath.push('/');
         }
@@ -393,7 +404,7 @@ fn handle_access(path: &str, mode: libc::c_int) -> i64 {
     debug!("Requesting access({}, {})", path, mode);
     // Workers cannot execute anything anyway
     if (mode & libc::X_OK) != 0 {
-        return -(libc::EACCES as i64)
+        return -(libc::EACCES as i64);
     }
     match get_fd_for_path_with_perms(path, mode) {
         Ok(_) => 0,
@@ -407,7 +418,9 @@ fn handle_chdir(path: &str) -> i64 {
         Ok(fd) => fd,
         Err(code) => return code,
     };
-    unsafe { *(libc::__errno_location()) = 0; }
+    unsafe {
+        *(libc::__errno_location()) = 0;
+    }
     let res = unsafe { libc::fchdir(fd.as_raw() as i32) };
     if res != 0 {
         let err = unsafe { *(libc::__errno_location()) };

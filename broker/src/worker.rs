@@ -39,11 +39,10 @@ impl Worker {
             worker_pipe_handle.as_raw()
         ))
         .unwrap();
-        let process_config = process_config.clone().with_environment_variable(ipc_handle_var)?;
-        let process = OSSandboxedProcess::new(
-            &policy,
-            &process_config
-        )?;
+        let process_config = process_config
+            .clone()
+            .with_environment_variable(ipc_handle_var)?;
+        let process = OSSandboxedProcess::new(&policy, &process_config)?;
         broker_pipe.set_remote_process(process.get_pid())?;
         let mut broker_pipe = IPCMessagePipe::new(broker_pipe);
         let runtime_policy = policy.get_runtime_policy(); // free resources kept open before passing it to the 'static manager thread
@@ -72,7 +71,10 @@ impl Worker {
                     // Handle OS-agnostic requests
                     IPCRequest::LowerFinalSandboxPrivilegesAsap if !has_lowered_privileges => {
                         has_lowered_privileges = true;
-                        (IPCResponse::PolicyApplied(Box::new(runtime_policy.clone())), None)
+                        (
+                            IPCResponse::PolicyApplied(Box::new(runtime_policy.clone())),
+                            None,
+                        )
                     }
                     other => handle_os_specific_request(other, &runtime_policy),
                 };

@@ -8,7 +8,10 @@ use std::ffi::CString;
 
 #[cfg(unix)]
 fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
-    use libc::{c_int, c_void, O_RDONLY, O_WRONLY, O_RDWR, O_PATH, O_APPEND, O_EXCL, O_CREAT, O_TRUNC, O_CLOEXEC};
+    use libc::{
+        c_int, c_void, O_APPEND, O_CLOEXEC, O_CREAT, O_EXCL, O_PATH, O_RDONLY, O_RDWR, O_TRUNC,
+        O_WRONLY,
+    };
 
     fn check_path(path: &str, flags: c_int, should_work: bool) {
         let path_nul = CString::new(path).unwrap();
@@ -17,7 +20,9 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
         let res = unsafe { libc::syscall(libc::SYS_open, path_nul.as_ptr(), flags, 0, 0, 0, 0) };
         let err = unsafe { *(libc::__errno_location()) };
         if should_work {
-            assert!(res >= 0, "open({}, flags={}) should have worked, failed with errno {}",
+            assert!(
+                res >= 0,
+                "open({}, flags={}) should have worked, failed with errno {}",
                 path,
                 flags,
                 err
@@ -25,11 +30,16 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
             let res = unsafe { libc::close(res.try_into().expect("invalid file descriptor")) };
             assert_eq!(res, 0, "unable to close file descriptor");
         } else {
-            assert!(res < 0, "open({}, flags={}) should have failed, succeeded",
+            assert!(
+                res < 0,
+                "open({}, flags={}) should have failed, succeeded",
                 path,
                 flags
             );
-            assert_eq!(err, libc::EACCES, "open({}, flags={}) should have failed with errno EACCES, failed with errno {}",
+            assert_eq!(
+                err,
+                libc::EACCES,
+                "open({}, flags={}) should have failed with errno EACCES, failed with errno {}",
                 path,
                 flags,
                 err
@@ -50,17 +60,24 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
         };
         let err = unsafe { *(libc::__errno_location()) };
         if should_work {
-            assert!(res >= 0, "openat({}, flags={}) should have worked, failed with errno {}",
+            assert!(
+                res >= 0,
+                "openat({}, flags={}) should have worked, failed with errno {}",
                 path,
                 flags,
                 err
             );
         } else {
-            assert!(res < 0, "openat({}, flags={}) should have failed, succeeded",
+            assert!(
+                res < 0,
+                "openat({}, flags={}) should have failed, succeeded",
                 path,
                 flags
             );
-            assert_eq!(err, libc::EACCES, "openat({}, flags={}) should have failed with errno EACCES, failed with errno {}",
+            assert_eq!(
+                err,
+                libc::EACCES,
+                "openat({}, flags={}) should have failed with errno EACCES, failed with errno {}",
                 path,
                 flags,
                 err
@@ -82,7 +99,12 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
         let err = unsafe { *(libc::__errno_location()) };
         if (flags & (O_WRONLY | O_PATH)) == 0 {
             if (flags & O_TRUNC) == 0 {
-                assert!(res >= 0, "read() failed on fd flags={:#X} with errno {}", flags, err);
+                assert!(
+                    res >= 0,
+                    "read() failed on fd flags={:#X} with errno {}",
+                    flags,
+                    err
+                );
                 assert_eq!(res, 2, "wrong number of bytes read from test file");
                 assert_eq!(b"OK", &buf[..2], "unexpected content read from test file");
             } else {
@@ -98,7 +120,9 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
         if (flags & (O_WRONLY | O_RDWR)) != 0 && (flags & O_PATH) == 0 {
             unsafe { *(libc::__errno_location()) = 0 };
             let res = unsafe { libc::lseek(fd, 0, libc::SEEK_SET) };
-            assert_eq!(res, 0, "lseek() failed with errno {}", unsafe { *(libc::__errno_location()) });
+            assert_eq!(res, 0, "lseek() failed with errno {}", unsafe {
+                *(libc::__errno_location())
+            });
         }
         // Do the write
         unsafe { *(libc::__errno_location()) = 0 };
@@ -112,7 +136,11 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
             let res = unsafe { libc::fstat(fd, &mut stat as *mut _) };
             assert_eq!(res, 0, "unable to fstat()");
             let expected_size = if (flags & O_APPEND) == 0 { 3 } else { 5 };
-            assert_eq!(stat.st_size, expected_size, "unexpected file size after write with flags={:#X}", flags);
+            assert_eq!(
+                stat.st_size, expected_size,
+                "unexpected file size after write with flags={:#X}",
+                flags
+            );
             // Reset the file as we found it
             let res = unsafe { libc::ftruncate(fd, 0) };
             assert_eq!(res, 0, "unable to truncate test file");
@@ -121,7 +149,11 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
             let res = unsafe { libc::write(fd, b"OK".as_ptr() as *const c_void, 2) };
             assert_eq!(res, 2, "unable to reset test file contents");
         } else {
-            assert_eq!(res, -1, "write() should have failed due to flags={:#X}", flags);
+            assert_eq!(
+                res, -1,
+                "write() should have failed due to flags={:#X}",
+                flags
+            );
             assert_eq!(err, libc::EBADF, "write() failed with the wrong errno");
         }
     }
@@ -152,15 +184,15 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
     use winapi::shared::winerror::ERROR_ACCESS_DENIED;
     use winapi::um::errhandlingapi::{GetLastError, SetLastError};
     use winapi::um::fileapi::{
-        GetFileSize, ReadFile, SetFilePointer, SetEndOfFile, WriteFile, INVALID_SET_FILE_POINTER,
+        GetFileSize, ReadFile, SetEndOfFile, SetFilePointer, WriteFile, INVALID_SET_FILE_POINTER,
     };
     use winapi::um::handleapi::CloseHandle;
     use winapi::um::libloaderapi::{GetProcAddress, LoadLibraryA};
     use winapi::um::winbase::FILE_BEGIN;
     use winapi::um::winnt::{
-        ACCESS_MASK, FILE_APPEND_DATA, FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        FILE_WRITE_DATA, HANDLE, LARGE_INTEGER, PHANDLE,
-        PVOID, SYNCHRONIZE, WCHAR, GENERIC_READ, GENERIC_WRITE, GENERIC_ALL
+        ACCESS_MASK, FILE_APPEND_DATA, FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, FILE_WRITE_DATA, GENERIC_ALL, GENERIC_READ, GENERIC_WRITE, HANDLE,
+        LARGE_INTEGER, PHANDLE, PVOID, SYNCHRONIZE, WCHAR,
     };
     const FILE_SHARE_ALL: ULONG = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
     const FILE_OPEN: DWORD = 0x00000001;
@@ -263,7 +295,15 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
         }
     }
 
-    fn check_path(path: &str, desired_access: ACCESS_MASK, create_disposition: ULONG, create_options: ULONG, attributes: ULONG, share_access: ULONG, should_work: bool) {
+    fn check_path(
+        path: &str,
+        desired_access: ACCESS_MASK,
+        create_disposition: ULONG,
+        create_options: ULONG,
+        attributes: ULONG,
+        share_access: ULONG,
+        should_work: bool,
+    ) {
         let dllname = CString::new("ntdll.dll").unwrap();
         let hntdll = unsafe { LoadLibraryA(dllname.as_ptr()) };
         assert_ne!(hntdll, null_mut());
@@ -317,14 +357,29 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
         };
         if should_work {
             assert!(NT_SUCCESS(res), "NtCreateFile({}, access_mask={:#X}, share={:#X}, create_disposition={:#X}, create_options={:#X}) should have succeeded", path, desired_access, share_access, create_disposition, create_options);
-            assert_ne!(hfile, null_mut(), "NtCreateFile() succeeded but did not return a handle");
+            assert_ne!(
+                hfile,
+                null_mut(),
+                "NtCreateFile() succeeded but did not return a handle"
+            );
             assert_eq!(io_status_block.information, FILE_OPENED);
             info!("Opened handle with access rights 0x{:X}", desired_access);
             check_handle(hfile, desired_access);
-            assert_ne!(unsafe { CloseHandle(hfile) }, 0, "NtCreateFile() returned an invalid handle");
+            assert_ne!(
+                unsafe { CloseHandle(hfile) },
+                0,
+                "NtCreateFile() returned an invalid handle"
+            );
         } else {
-            assert_eq!(res, STATUS_ACCESS_DENIED, "NtCreateFile returned unexpected status");
-            assert_eq!(hfile, null_mut(), "NtCreateFile failed but still returned a handle");
+            assert_eq!(
+                res, STATUS_ACCESS_DENIED,
+                "NtCreateFile returned unexpected status"
+            );
+            assert_eq!(
+                hfile,
+                null_mut(),
+                "NtCreateFile failed but still returned a handle"
+            );
         }
     }
 
@@ -336,10 +391,42 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
         assert!(res.is_err(), "reading using stdlib APIs should have failed");
     }
 
-    check_path(path, FILE_READ_DATA | SYNCHRONIZE, FILE_OPEN, FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, 0, FILE_SHARE_ALL, policy_readable);
-    check_path(path, GENERIC_READ | SYNCHRONIZE, FILE_OPEN, FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, 0, FILE_SHARE_ALL, policy_readable);
-    check_path(path, FILE_WRITE_DATA | SYNCHRONIZE, FILE_OPEN, FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, 0, FILE_SHARE_ALL, policy_writable);
-    check_path(path, GENERIC_WRITE | SYNCHRONIZE, FILE_OPEN, FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, 0, FILE_SHARE_ALL, policy_writable);
+    check_path(
+        path,
+        FILE_READ_DATA | SYNCHRONIZE,
+        FILE_OPEN,
+        FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+        0,
+        FILE_SHARE_ALL,
+        policy_readable,
+    );
+    check_path(
+        path,
+        GENERIC_READ | SYNCHRONIZE,
+        FILE_OPEN,
+        FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+        0,
+        FILE_SHARE_ALL,
+        policy_readable,
+    );
+    check_path(
+        path,
+        FILE_WRITE_DATA | SYNCHRONIZE,
+        FILE_OPEN,
+        FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+        0,
+        FILE_SHARE_ALL,
+        policy_writable,
+    );
+    check_path(
+        path,
+        GENERIC_WRITE | SYNCHRONIZE,
+        FILE_OPEN,
+        FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+        0,
+        FILE_SHARE_ALL,
+        policy_writable,
+    );
     //check_path(path, GENERIC_ALL | SYNCHRONIZE, FILE_OPEN, FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, 0, FILE_SHARE_ALL, policy_readable && policy_writable);
 }
 

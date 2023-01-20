@@ -7,10 +7,7 @@ pub enum IPCRequest {
     // sandboxing policy permanently
     LowerFinalSandboxPrivilegesAsap,
     // Worker request to open or create a file (possibly with a directory handle attached, in which case `path` is relative to that directory)
-    OpenFile {
-        path: String,
-        flags: libc::c_int,
-    },
+    OpenFile { path: String, flags: libc::c_int },
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]

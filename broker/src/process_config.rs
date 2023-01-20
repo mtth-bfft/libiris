@@ -46,7 +46,9 @@ impl<'a> ProcessConfig<'a> {
             if name_from_env(prev) == name {
                 let env_var = env_var.to_string_lossy();
                 let (name, _) = env_var.split_once('=').unwrap_or((&env_var, ""));
-                return Err(BrokerError::ConflictingEnvironmentVariable { name: name.to_owned()});
+                return Err(BrokerError::ConflictingEnvironmentVariable {
+                    name: name.to_owned(),
+                });
             }
         }
         self.envp.push(env_var);

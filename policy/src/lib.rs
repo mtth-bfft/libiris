@@ -35,7 +35,7 @@ fn strip_one_component(path: &str, separator: char) -> Option<&str> {
             } else {
                 Some(rest)
             }
-        },
+        }
         None => None,
     }
 }

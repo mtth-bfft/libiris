@@ -22,10 +22,7 @@ pub struct OSSandboxedProcess {
 }
 
 impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
-    fn new(
-        policy: &Policy,
-        process_config: &ProcessConfig,
-    ) -> Result<Self, BrokerError> {
+    fn new(policy: &Policy, process_config: &ProcessConfig) -> Result<Self, BrokerError> {
         if process_config.argv.is_empty() {
             return Err(BrokerError::MissingCommandLine);
         }
@@ -59,12 +56,14 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
 
         // Pack together everything that needs to be passed to the new process,
         // and ensure their lifetime is long enough to pass clone()
-        let argv: Vec<*const i8> = process_config.argv
+        let argv: Vec<*const i8> = process_config
+            .argv
             .iter()
             .map(|x| x.as_ptr())
             .chain(std::iter::once(null()))
             .collect();
-        let envp: Vec<*const i8> = process_config.envp
+        let envp: Vec<*const i8> = process_config
+            .envp
             .iter()
             .map(|x| x.as_ptr())
             .chain(std::iter::once(null()))
@@ -81,9 +80,15 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             allowed_file_descriptors: allowed_file_descriptors.as_ptr(),
             allowed_file_descriptors_count: allowed_file_descriptors.len(),
             execve_errno_pipe: child_pipe.as_raw().try_into().unwrap(),
-            stdin: process_config.stdin.map(|h| c_int::try_from(h.as_raw()).unwrap()),
-            stdout: process_config.stdout.map(|h| c_int::try_from(h.as_raw()).unwrap()),
-            stderr: process_config.stderr.map(|h| c_int::try_from(h.as_raw()).unwrap()),
+            stdin: process_config
+                .stdin
+                .map(|h| c_int::try_from(h.as_raw()).unwrap()),
+            stdout: process_config
+                .stdout
+                .map(|h| c_int::try_from(h.as_raw()).unwrap()),
+            stderr: process_config
+                .stderr
+                .map(|h| c_int::try_from(h.as_raw()).unwrap()),
         };
         let entrypoint_params = Box::leak(Box::new(entrypoint_params));
 

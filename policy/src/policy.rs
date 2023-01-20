@@ -1,7 +1,7 @@
 use crate::error::PolicyError;
 use crate::handle::CrossPlatformHandle;
-use crate::os::path::{OS_PATH_SEPARATOR, derive_all_file_paths_from_path};
-use crate::{PolicyRequest, Handle, strip_one_component};
+use crate::os::path::{derive_all_file_paths_from_path, OS_PATH_SEPARATOR};
+use crate::{strip_one_component, Handle, PolicyRequest};
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -83,15 +83,31 @@ impl<'a> Policy<'a> {
         self.inherit_handles.clone()
     }
 
-    fn allow_file_access(&mut self, path: &str, dir: bool, access: (bool, bool, bool, bool, bool)) -> Result<(), PolicyError> {
-        let (new_read, new_write, new_block_readers, new_block_writers, new_block_deleters) = access;
+    fn allow_file_access(
+        &mut self,
+        path: &str,
+        dir: bool,
+        access: (bool, bool, bool, bool, bool),
+    ) -> Result<(), PolicyError> {
+        let (new_read, new_write, new_block_readers, new_block_writers, new_block_deleters) =
+            access;
         for path in derive_all_file_paths_from_path(path)? {
             let path = match path.strip_suffix(OS_PATH_SEPARATOR) {
                 Some(rest) => rest,
                 None => &path,
             };
-            let map = if dir { &mut self.dir_access } else { &mut self.file_access };
-            let (prev_read, prev_write, prev_block_readers, prev_block_writers, prev_block_deleters) = map
+            let map = if dir {
+                &mut self.dir_access
+            } else {
+                &mut self.file_access
+            };
+            let (
+                prev_read,
+                prev_write,
+                prev_block_readers,
+                prev_block_writers,
+                prev_block_deleters,
+            ) = map
                 .get(path)
                 .copied()
                 .unwrap_or((false, false, false, false, false));
@@ -103,7 +119,7 @@ impl<'a> Policy<'a> {
                     prev_block_readers | new_block_readers,
                     prev_block_writers | new_block_writers,
                     prev_block_deleters | new_block_deleters,
-                )
+                ),
             );
         }
         Ok(())
@@ -124,7 +140,17 @@ impl<'a> Policy<'a> {
         block_other_writers: bool,
         block_other_deleters: bool,
     ) -> Result<(), PolicyError> {
-        self.allow_file_access(path, false, (false, false, block_other_readers, block_other_writers, block_other_deleters))
+        self.allow_file_access(
+            path,
+            false,
+            (
+                false,
+                false,
+                block_other_readers,
+                block_other_writers,
+                block_other_deleters,
+            ),
+        )
     }
 
     pub fn allow_dir_read(&mut self, path: &str) -> Result<(), PolicyError> {
@@ -142,7 +168,17 @@ impl<'a> Policy<'a> {
         block_other_writers: bool,
         block_other_deleters: bool,
     ) -> Result<(), PolicyError> {
-        self.allow_file_access(path, true, (false, false, block_other_readers, block_other_writers, block_other_deleters))
+        self.allow_file_access(
+            path,
+            true,
+            (
+                false,
+                false,
+                block_other_readers,
+                block_other_writers,
+                block_other_deleters,
+            ),
+        )
     }
 
     pub(crate) fn get_filepath_allowed_access(&self, path: &str) -> (bool, bool, bool, bool, bool) {
@@ -152,7 +188,9 @@ impl<'a> Policy<'a> {
         let mut verdict_block_readers = false;
         let mut verdict_block_writers = false;
         let mut verdict_block_deleters = false;
-        if let Some((read, write, block_readers, block_writers, block_deleters)) = self.file_access.get(path) {
+        if let Some((read, write, block_readers, block_writers, block_deleters)) =
+            self.file_access.get(path)
+        {
             verdict_read |= read;
             verdict_write |= write;
             verdict_block_readers |= block_readers;
@@ -160,8 +198,15 @@ impl<'a> Policy<'a> {
             verdict_block_deleters |= block_deleters;
         }
         let mut current_path = path;
-        while !verdict_read || !verdict_write || !verdict_block_readers || !verdict_block_writers || !verdict_block_deleters {
-            if let Some((read, write, block_readers, block_writers, block_deleters)) = self.dir_access.get(current_path) {
+        while !verdict_read
+            || !verdict_write
+            || !verdict_block_readers
+            || !verdict_block_writers
+            || !verdict_block_deleters
+        {
+            if let Some((read, write, block_readers, block_writers, block_deleters)) =
+                self.dir_access.get(current_path)
+            {
                 verdict_read |= read;
                 verdict_write |= write;
                 verdict_block_readers |= block_readers;
@@ -186,16 +231,28 @@ impl<'a> Policy<'a> {
         match &verdict {
             PolicyVerdict::Granted => {
                 info!("Worker granted access to {}", request);
-            },
+            }
             PolicyVerdict::DelegationToSandboxNotSupported { why } => {
-                warn!("Worker tried to access {} but delegation is not supported: {}", request, why);
-            },
+                warn!(
+                    "Worker tried to access {} but delegation is not supported: {}",
+                    request, why
+                );
+            }
             PolicyVerdict::DeniedByPolicy { why } => {
-                warn!("Worker tried to access {} but it is not allowed by its policy: {}", request, why);
-            },
-            PolicyVerdict::InvalidRequestParameters { argument_name, reason } => {
-                warn!("Worker tried to access {} but \"{}\" was unexpected: {}", request, argument_name, reason);
-            },
+                warn!(
+                    "Worker tried to access {} but it is not allowed by its policy: {}",
+                    request, why
+                );
+            }
+            PolicyVerdict::InvalidRequestParameters {
+                argument_name,
+                reason,
+            } => {
+                warn!(
+                    "Worker tried to access {} but \"{}\" was unexpected: {}",
+                    request, argument_name, reason
+                );
+            }
         }
         for callback in &self.log_callbacks {
             (callback)(request, verdict);
@@ -205,13 +262,22 @@ impl<'a> Policy<'a> {
 
 impl core::fmt::Debug for Policy<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        let &Policy { log_callbacks: _, inherit_handles, file_access, dir_access, regkey_access } = &self;
+        let &Policy {
+            log_callbacks: _,
+            inherit_handles,
+            file_access,
+            dir_access,
+            regkey_access,
+        } = &self;
         writeln!(f, "Policy {{")?;
         for h in inherit_handles {
             writeln!(f, "    Inherit handle {:?}", h)?;
         }
         for (path, (read, write, lockread, lockwrite, lockdelete)) in file_access {
-            writeln!(f, "    {} file{}{}{}{}{}", path,
+            writeln!(
+                f,
+                "    {} file{}{}{}{}{}",
+                path,
                 if *read { " read" } else { "" },
                 if *write { " write" } else { "" },
                 if *lockread { " block_readers" } else { "" },
@@ -220,7 +286,10 @@ impl core::fmt::Debug for Policy<'_> {
             )?;
         }
         for (path, (read, write, lockread, lockwrite, lockdelete)) in dir_access {
-            writeln!(f, "    {} directory{}{}{}{}{}", path,
+            writeln!(
+                f,
+                "    {} directory{}{}{}{}{}",
+                path,
                 if *read { " read" } else { "" },
                 if *write { " write" } else { "" },
                 if *lockread { " block_readers" } else { "" },
@@ -229,7 +298,10 @@ impl core::fmt::Debug for Policy<'_> {
             )?;
         }
         for (path, (read, write)) in regkey_access {
-            writeln!(f, "    {} registry key{}{}", path,
+            writeln!(
+                f,
+                "    {} registry key{}{}",
+                path,
                 if *read { " read" } else { "" },
                 if *write { " write" } else { "" },
             )?;
@@ -256,9 +328,9 @@ impl PartialEq for Policy<'_> {
             regkey_access: regkey_access_b,
         } = &other;
 
-        inherit_handles_a == inherit_handles_b &&
-        file_access_a == file_access_b &&
-        dir_access_a == dir_access_b &&
-        regkey_access_a == regkey_access_b
+        inherit_handles_a == inherit_handles_b
+            && file_access_a == file_access_b
+            && dir_access_a == dir_access_b
+            && regkey_access_a == regkey_access_b
     }
 }

@@ -1,5 +1,7 @@
 use common::os::wait_for_worker_exit;
-use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file, read_tmp_file};
+use common::{
+    cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file, read_tmp_file,
+};
 use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
 use log::info;
 use std::ffi::CString;
@@ -66,16 +68,22 @@ fn file_path_open() {
             let (mut tmpok, tmpokpath) = open_tmp_file();
             tmpok.write_all(b"OK").unwrap();
             drop(tmpok);
-            info!("Testing access to {} with policy {}readable {}writable",
+            info!(
+                "Testing access to {} with policy {}readable {}writable",
                 tmpokpath.to_string_lossy(),
                 if readable { "" } else { "non-" },
-                if writable { "" } else { "non-" });
+                if writable { "" } else { "non-" }
+            );
             let mut policy = Policy::nothing_allowed();
             if readable {
-                policy.allow_file_read(&tmpokpath.to_string_lossy()).unwrap();
+                policy
+                    .allow_file_read(&tmpokpath.to_string_lossy())
+                    .unwrap();
             }
             if writable {
-                policy.allow_file_write(&tmpokpath.to_string_lossy()).unwrap();
+                policy
+                    .allow_file_write(&tmpokpath.to_string_lossy())
+                    .unwrap();
             }
             let proc_config = ProcessConfig::new(
                 worker_binary.clone(),
@@ -93,8 +101,7 @@ fn file_path_open() {
             .unwrap()
             .with_stderr_redirected(&tmpout)
             .unwrap();
-            let worker = Worker::new(&proc_config, &policy)
-                .expect("worker creation failed");
+            let worker = Worker::new(&proc_config, &policy).expect("worker creation failed");
             assert_eq!(
                 wait_for_worker_exit(&worker),
                 Ok(0),

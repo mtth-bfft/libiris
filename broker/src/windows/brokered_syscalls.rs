@@ -8,9 +8,7 @@ use winapi::shared::ntdef::{
     InitializeObjectAttributes, NTSTATUS, NT_SUCCESS, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE,
     PVOID, ULONG, UNICODE_STRING,
 };
-use winapi::shared::ntstatus::{
-    STATUS_ACCESS_DENIED, STATUS_NOT_SUPPORTED,
-};
+use winapi::shared::ntstatus::{STATUS_ACCESS_DENIED, STATUS_NOT_SUPPORTED};
 use winapi::um::winbase::FILE_FLAG_OPEN_REPARSE_POINT;
 use winapi::um::winnt::{
     SecurityIdentification, ACCESS_MASK, HANDLE, LARGE_INTEGER, LONGLONG, REG_OPENED_EXISTING_KEY,
@@ -163,7 +161,7 @@ fn handle_ntcreatefile(
             &mut obj_attr as *mut _,
             &mut io_status as *mut _,
             &mut alloc_size as *mut _,
-            winapi::um::winnt::FILE_ATTRIBUTE_NORMAL,//file_attributes,
+            winapi::um::winnt::FILE_ATTRIBUTE_NORMAL, //file_attributes,
             share_access,
             create_disposition,
             create_options,

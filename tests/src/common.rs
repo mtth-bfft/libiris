@@ -1,7 +1,7 @@
 use iris_broker::set_unmanaged_handle_inheritable;
 use log::{debug, info};
 use simple_logger::SimpleLogger;
-use std::ffi::{CString, CStr};
+use std::ffi::{CStr, CString};
 use std::fs::{File, OpenOptions};
 use std::sync::Once;
 
@@ -61,8 +61,7 @@ pub fn cleanup_tmp_file(path: &CStr) {
 
 pub fn read_tmp_file(path: &CStr) -> String {
     let path = path.to_string_lossy().to_string();
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|_| format!("<Unable to read {:?}>", path))
+    std::fs::read_to_string(&path).unwrap_or_else(|_| format!("<Unable to read {:?}>", path))
 }
 
 pub fn get_worker_abs_path(name: &str) -> CString {

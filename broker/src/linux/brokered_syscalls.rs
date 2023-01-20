@@ -10,10 +10,7 @@ pub(crate) fn handle_os_specific_request(
     policy: &Policy,
 ) -> (IPCResponse, Option<Handle>) {
     match request {
-        IPCRequest::OpenFile {
-            path,
-            flags,
-        } => handle_open_file(policy, path, flags),
+        IPCRequest::OpenFile { path, flags } => handle_open_file(policy, path, flags),
         unknown => {
             warn!("Unexpected request from worker: {:?}", unknown);
             (IPCResponse::SyscallResult(-(libc::EINVAL as i64)), None)
@@ -26,10 +23,7 @@ pub(crate) fn handle_open_file(
     path: String,
     flags: c_int,
 ) -> (IPCResponse, Option<Handle>) {
-    let req = PolicyRequest::FileOpen {
-        path: &path,
-        flags,
-    };
+    let req = PolicyRequest::FileOpen { path: &path, flags };
     if policy.evaluate_request(&req) != PolicyVerdict::Granted {
         return (IPCResponse::SyscallResult((-libc::EACCES).into()), None);
     }
@@ -46,7 +40,7 @@ pub(crate) fn handle_open_file(
                     .raw_os_error()
                     .unwrap_or(libc::EACCES) as i64;
                 return (IPCResponse::SyscallResult(-err), None);
-            },
+            }
         };
         Handle::new(fd).unwrap()
     };
