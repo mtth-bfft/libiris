@@ -5,9 +5,7 @@ use iris_worker::lower_final_sandbox_privileges_asap;
 fn check() {
     use std::ffi::CString;
     use winapi::um::debugapi::{IsDebuggerPresent, OutputDebugStringA};
-    while unsafe { IsDebuggerPresent() } == 0 {
-        ()
-    }
+    while unsafe { IsDebuggerPresent() } == 0 {}
     let msg = CString::new("Ready for inspection").unwrap();
     unsafe {
         OutputDebugStringA(msg.as_ptr());

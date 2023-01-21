@@ -1,3 +1,4 @@
+use crate::error::IpcError;
 use crate::ipc::IPC_MESSAGE_MAX_SIZE;
 use crate::messagepipe::CrossPlatformMessagePipe;
 use core::ptr::null_mut;
@@ -19,17 +20,17 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
         Self { fd: handle }
     }
 
-    fn new() -> Result<(Self, Self), String> {
+    fn new() -> Result<(Self, Self), IpcError> {
         let mut socks: Vec<c_int> = vec![-1, 2];
         // This is safe as long as we don't return in the middle of this unsafe block. The file
         // descriptors are owned by this block and this block only
         let (fd0, fd1) = unsafe {
             let res = libc::socketpair(libc::AF_UNIX, libc::SOCK_SEQPACKET, 0, socks.as_mut_ptr());
             if res < 0 {
-                return Err(format!(
-                    "socketpair() failed (error {})",
-                    Error::last_os_error()
-                ));
+                return Err(IpcError::InternalOsOperationFailed {
+                    os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
+                    description: "socketpair()".to_owned(),
+                });
             }
             (
                 Handle::new(socks[0] as u64).unwrap(),
@@ -39,7 +40,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
         Ok((Self { fd: fd0 }, Self { fd: fd1 }))
     }
 
-    fn recv(&mut self) -> Result<Vec<u8>, String> {
+    fn recv(&mut self) -> Result<Vec<u8>, IpcError> {
         let mut buffer = vec![0u8; IPC_MESSAGE_MAX_SIZE.try_into().unwrap()];
         let msg_iovec = libc::iovec {
             iov_base: buffer.as_mut_ptr() as *mut c_void,
@@ -62,22 +63,25 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
             )
         };
         if res < 0 {
-            return Err(format!(
-                "recvmsg() failed (error {})",
-                Error::last_os_error()
-            ));
-        }
-        if (msg.msg_flags & libc::MSG_CTRUNC) != 0 {
-            return Err("recvmsg() failed due to truncated ancillary data".to_owned());
-        }
-        if (msg.msg_flags & libc::MSG_TRUNC) != 0 {
-            return Err("recvmsg() failed due to truncated message".to_owned());
+            return Err(IpcError::InternalOsOperationFailed {
+                os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
+                description: "recvmsg()".to_owned(),
+            });
         }
         buffer.truncate(res.try_into().unwrap());
+        if (msg.msg_flags & libc::MSG_CTRUNC) != 0 {
+            // truncated due to ancillary data
+            return Err(IpcError::UnexpectedHandleWithPayload { payload: buffer });
+        }
+        if (msg.msg_flags & libc::MSG_TRUNC) != 0 {
+            return Err(IpcError::PayloadTooBigToTransmit {
+                truncated_payload: buffer,
+            });
+        }
         Ok(buffer)
     }
 
-    fn recv_with_handle(&mut self) -> Result<(Vec<u8>, Option<Handle>), String> {
+    fn recv_with_handle(&mut self) -> Result<(Vec<u8>, Option<Handle>), IpcError> {
         // This call is just a C arithmetic macro translated into rust, in practice it's safe (at least in this libc release)
         let cmsg_space = unsafe { libc::CMSG_SPACE(std::mem::size_of::<c_int>() as u32) } as usize;
         let mut cbuf = vec![0u8; cmsg_space];
@@ -103,49 +107,67 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 &mut msg as *mut libc::msghdr,
                 libc::MSG_NOSIGNAL | libc::MSG_CMSG_CLOEXEC | libc::MSG_WAITALL,
             );
-            if res < 0 {
-                // Safe to return here: if recvmsg() reports an error, no file descriptor can be received and leaked
-                return Err(format!(
-                    "recvmsg() failed (error {})",
-                    Error::last_os_error()
-                ));
-            }
-            if msg.msg_controllen > 0 {
-                let cmsghdr = libc::CMSG_FIRSTHDR(&msg as *const libc::msghdr);
-                if cmsghdr.is_null() {
-                    // We possibly leak a file descriptor by returning here, but this is the best we can do given the libc messed up.
-                    return Err("Failed to parse ancillary data from worker request".to_owned());
+            match res.try_into() {
+                Ok(received_bytes) => buffer.truncate(received_bytes),
+                Err(_) => {
+                    // Safe to return here: if recvmsg() reports an error, no file descriptor can be received and leaked
+                    return Err(IpcError::InternalOsOperationFailed {
+                        os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
+                        description: "recvmsg() failed".to_owned(),
+                    });
                 }
+            }
+            buffer.truncate(res.try_into().unwrap());
+            // Iterate on ancillary payloads, if any (we allocated just enough space for one file descriptor, so we
+            // should never be able to receive more at a time, but iterate and check to match the "safe" way of using
+            // this API)
+            let mut res = Ok((buffer, None));
+            let mut cmsghdr = libc::CMSG_FIRSTHDR(&msg as *const libc::msghdr);
+            while !cmsghdr.is_null() {
                 let (clevel, ctype) = ((*cmsghdr).cmsg_level, (*cmsghdr).cmsg_type);
                 if (clevel, ctype) != (libc::SOL_SOCKET, libc::SCM_RIGHTS) {
                     // We possibly leak a resource here, but the libc handed us something other than a file descriptor
-                    return Err(format!(
-                        "Unexpected ancillary data level={} type={} received with worker request",
-                        clevel, ctype
-                    ));
+                    res = Err(IpcError::InternalOsOperationFailed {
+                        os_code: 0,
+                        description: format!(
+                            "recvmsg() returned unknown ancillary data level={} type={}",
+                            clevel, ctype
+                        ),
+                    });
+                    continue;
                 }
-                let fd = *(libc::CMSG_DATA(cmsghdr) as *const c_int);
-                (res, Some(Handle::new(fd as u64).unwrap()))
-            } else {
-                (res, None)
+                // CMSG_DATA() pointers are not aligned and require the use of an intermediary memcpy (see man cmsg)
+                let mut aligned: c_int = -1;
+                std::ptr::copy_nonoverlapping(
+                    libc::CMSG_DATA(cmsghdr),
+                    &mut aligned as *mut _ as *mut _,
+                    std::mem::size_of_val(&aligned),
+                );
+                let fd = Handle::new(aligned as u64).unwrap();
+                res = match res {
+                    Ok((res, None)) => Ok((res, Some(fd))),
+                    Ok((res, Some(_))) => Err(IpcError::TooManyHandlesWithPayload { payload: res }),
+                    Err(e) => Err(e),
+                };
+
+                cmsghdr = libc::CMSG_NXTHDR(&msg as *const libc::msghdr, cmsghdr);
             }
+            res?
         };
-        if (msg.msg_flags & libc::MSG_CTRUNC) != 0 {
-            return Err("recvmsg() failed due to truncated ancillary data".to_owned());
+        if msg.msg_flags & (libc::MSG_CTRUNC | libc::MSG_TRUNC) != 0 {
+            return Err(IpcError::PayloadTooBigToTransmit {
+                truncated_payload: received_bytes,
+            });
         }
-        if (msg.msg_flags & libc::MSG_TRUNC) != 0 {
-            return Err("recvmsg() failed due to truncated message".to_owned());
-        }
-        buffer.truncate(received_bytes.try_into().unwrap());
-        Ok((buffer, fd))
+        Ok((received_bytes, fd))
     }
 
-    fn set_remote_process(&mut self, _unused_remote_pid: u64) -> Result<(), String> {
+    fn set_remote_process(&mut self, _unused_remote_pid: u64) -> Result<(), IpcError> {
         // no-op on Linux, having a handle to the target process is not necessary with Unix sockets
         Ok(())
     }
 
-    fn send(&mut self, message: &[u8], handle: Option<&Handle>) -> Result<(), String> {
+    fn send(&mut self, message: &[u8], handle: Option<&Handle>) -> Result<(), IpcError> {
         // This call is just a C arithmetic macro translated into rust, in practice it's safe (at least in this libc release)
         let cmsg_space = unsafe { libc::CMSG_SPACE(std::mem::size_of::<c_int>() as u32) } as usize;
         let mut cbuf = vec![0u8; cmsg_space];
@@ -188,10 +210,10 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
             )
         };
         if res < 0 {
-            return Err(format!(
-                "sendmsg() failed with error: {}",
-                Error::last_os_error()
-            ));
+            return Err(IpcError::InternalOsOperationFailed {
+                os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
+                description: "sendmsg() failed".to_owned(),
+            });
         }
         Ok(())
     }

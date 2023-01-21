@@ -1,208 +1,338 @@
-use crate::os::path::derive_all_file_paths_from_path;
-#[cfg(windows)]
-use crate::os::path::derive_all_reg_key_paths_from_path;
-use crate::Handle;
-use glob::Pattern;
+use crate::error::PolicyError;
+use crate::handle::CrossPlatformHandle;
+use crate::os::path::{derive_all_file_paths_from_path, OS_PATH_SEPARATOR};
+use crate::{strip_one_component, Handle, PolicyRequest};
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
-// TODO: Eq required for serializability here. Replace Vec<> with unordered sets
-// to avoid making the semantics of == and != non-intuitive.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum PolicyVerdict {
+    Granted,
+    DeniedByPolicy {
+        why: String,
+    },
+    DelegationToSandboxNotSupported {
+        why: String,
+    },
+    InvalidRequestParameters {
+        argument_name: String,
+        reason: String,
+    },
+}
+
+pub type PolicyLogCallback = dyn Fn(&PolicyRequest, &PolicyVerdict) + Send + Sync;
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Policy<'a> {
     #[serde(skip)]
-    inherit_handles: Vec<&'a Handle>,
-    file_access: HashMap<String, (bool, bool, bool)>,
-    file_lock: HashMap<String, (bool, bool, bool)>,
-    regkey_access: HashMap<String, (bool, bool)>,
+    pub(crate) log_callbacks: Vec<Arc<PolicyLogCallback>>,
+    #[serde(skip)]
+    pub(crate) inherit_handles: HashSet<&'a Handle>,
+    pub(crate) file_access: HashMap<String, (bool, bool, bool, bool, bool)>,
+    pub(crate) dir_access: HashMap<String, (bool, bool, bool, bool, bool)>,
+    pub(crate) regkey_access: HashMap<String, (bool, bool)>,
 }
 
 impl<'a> Policy<'a> {
-    #[deprecated(note = "Use nothing_allowed() instead to explicitly create an empty policy")]
-    pub fn new() -> Self {
-        Self::nothing_allowed()
-    }
-
     pub fn nothing_allowed() -> Self {
         Self {
-            inherit_handles: Vec::new(),
+            log_callbacks: vec![],
+            inherit_handles: HashSet::new(),
             file_access: HashMap::new(),
-            file_lock: HashMap::new(),
+            dir_access: HashMap::new(),
             regkey_access: HashMap::new(),
         }
     }
 
     pub fn get_runtime_policy(&self) -> Policy<'static> {
         Policy {
-            inherit_handles: Vec::new(),
+            log_callbacks: self.log_callbacks.clone(),
+            inherit_handles: HashSet::new(),
             file_access: self.file_access.clone(),
-            file_lock: self.file_lock.clone(),
+            dir_access: self.dir_access.clone(),
             regkey_access: self.regkey_access.clone(),
         }
     }
 
-    pub fn allow_inherit_handle(&mut self, handle: &'a Handle) -> Result<(), String> {
-        self.inherit_handles.push(handle);
+    // Takes a pointer to a callback that will receive notifications whenever access to a
+    // resource is denied. Multiple callbacks can be registered, they all need to be
+    // multithread-safe. A void* context can be passed to the callback, set it to NULL if
+    // you do not intend to use it.
+    pub fn add_log_callback(&mut self, callback: Box<PolicyLogCallback>) {
+        self.log_callbacks.push(Arc::new(callback));
+    }
+
+    pub fn allow_inherit_handle(&mut self, handle: &'a Handle) -> Result<(), PolicyError> {
+        // On Linux, exec() will close all CLOEXEC handles.
+        // On Windows, CreateProcess() with bInheritHandles = TRUE doesn't automatically set the given
+        // handles as inheritable, and instead returns a ERROR_INVALID_PARAMETER if one of them is not.
+        // We cannot just set the handles as inheritable behind the caller's back, since they might
+        // reset it or depend on it in another thread. They have to get this right by themselves.
+        if !handle.is_inheritable()? {
+            return Err(PolicyError::HandleNotInheritable {
+                handle_raw_value: handle.as_raw(),
+            });
+        }
+        self.inherit_handles.insert(handle);
         Ok(())
     }
 
-    pub fn get_inherited_handles(&self) -> &[&Handle] {
-        &self.inherit_handles[..]
+    pub fn get_inherited_handles(&self) -> HashSet<&Handle> {
+        self.inherit_handles.clone()
     }
 
-    pub fn allow_file_access(
+    fn allow_file_access(
         &mut self,
         path: &str,
-        readable: bool,
-        writable: bool,
-        restrict_to_append_only: bool,
-    ) -> Result<(), String> {
-        if restrict_to_append_only && !writable {
-            return Err(
-                "Invalid parameters: to allow appending to a path, it must be writable".to_owned(),
-            );
-        }
-        for path in derive_all_file_paths_from_path(path) {
-            if let Err(e) = Pattern::new(&path) {
-                return Err(format!("Invalid file path pattern: {}", e));
-            }
-            let (prev_readable, prev_writable, prev_restrict_to_append_only) = self
-                .file_access
-                .get(&path)
+        dir: bool,
+        access: (bool, bool, bool, bool, bool),
+    ) -> Result<(), PolicyError> {
+        let (new_read, new_write, new_block_readers, new_block_writers, new_block_deleters) =
+            access;
+        for path in derive_all_file_paths_from_path(path)? {
+            let path = match path.strip_suffix(OS_PATH_SEPARATOR) {
+                Some(rest) => rest,
+                None => &path,
+            };
+            let map = if dir {
+                &mut self.dir_access
+            } else {
+                &mut self.file_access
+            };
+            let (
+                prev_read,
+                prev_write,
+                prev_block_readers,
+                prev_block_writers,
+                prev_block_deleters,
+            ) = map
+                .get(path)
                 .copied()
-                .unwrap_or((false, false, false));
-            let mut restrict_to_append_only = restrict_to_append_only;
-            if writable && prev_writable {
-                // grant the union of both rights: only restrict if both restrict
-                restrict_to_append_only = prev_restrict_to_append_only && restrict_to_append_only;
-            }
-            self.file_access.insert(
+                .unwrap_or((false, false, false, false, false));
+            map.insert(
                 path.to_owned(),
                 (
-                    prev_readable || readable,
-                    prev_writable || writable,
-                    restrict_to_append_only,
+                    prev_read | new_read,
+                    prev_write | new_write,
+                    prev_block_readers | new_block_readers,
+                    prev_block_writers | new_block_writers,
+                    prev_block_deleters | new_block_deleters,
                 ),
             );
         }
         Ok(())
     }
 
-    #[cfg(windows)]
-    pub fn allow_regkey_access(
-        &mut self,
-        path: &str,
-        readable: bool,
-        writable: bool,
-    ) -> Result<(), String> {
-        let (prev_readable, prev_writable) = self
-            .regkey_access
-            .get(path)
-            .copied()
-            .unwrap_or((false, false));
-        for path in derive_all_reg_key_paths_from_path(path)? {
-            self.regkey_access
-                .insert(path, (prev_readable || readable, prev_writable || writable));
-        }
-        Ok(())
+    pub fn allow_file_read(&mut self, path: &str) -> Result<(), PolicyError> {
+        self.allow_file_access(path, false, (true, false, false, false, false))
     }
 
-    pub fn get_file_allowed_access(&self, path: &str) -> (bool, bool, bool) {
-        let mut result_readable = false;
-        let mut result_writable = false;
-        let mut result_restrict_to_append_only = false;
-        for (pattern, (readable, writable, restrict_to_append_only)) in self.file_access.iter() {
-            let pattern = Pattern::new(pattern).unwrap();
-            if pattern.matches(path) {
-                result_readable |= readable;
-                if *writable {
-                    if result_writable {
-                        // grant the union of matching rules: only restrict if both do
-                        result_restrict_to_append_only =
-                            *restrict_to_append_only && result_restrict_to_append_only;
-                    } else {
-                        result_restrict_to_append_only = *restrict_to_append_only;
-                    }
-                    result_writable |= writable;
-                }
-            }
-            if result_readable && result_writable && !result_restrict_to_append_only {
-                break;
-            }
-        }
-        (
-            result_readable,
-            result_writable,
-            result_restrict_to_append_only,
-        )
-    }
-
-    #[cfg(windows)]
-    pub fn get_regkey_allowed_access(&self, path: &str) -> (bool, bool) {
-        let mut result_readable = false;
-        let mut result_writable = false;
-        for (pattern, (readable, writable)) in self.regkey_access.iter() {
-            let pattern = Pattern::new(pattern).unwrap();
-            if pattern.matches(path) {
-                result_readable |= readable;
-                result_writable |= writable;
-            }
-            if result_readable && result_writable {
-                break;
-            }
-        }
-        (result_readable, result_writable)
+    pub fn allow_file_write(&mut self, path: &str) -> Result<(), PolicyError> {
+        self.allow_file_access(path, false, (false, true, false, false, false))
     }
 
     pub fn allow_file_lock(
         &mut self,
         path: &str,
-        readers: bool,
-        writers: bool,
-        deleters: bool,
-    ) -> Result<(), String> {
-        for path in derive_all_file_paths_from_path(path) {
-            if let Err(e) = Pattern::new(&path) {
-                return Err(format!("Invalid file path pattern: {}", e));
-            }
-            if let Some((prev_readers, prev_writers, prev_deleters)) = self
-                .file_lock
-                .insert(path.to_owned(), (readers, writers, deleters))
+        block_other_readers: bool,
+        block_other_writers: bool,
+        block_other_deleters: bool,
+    ) -> Result<(), PolicyError> {
+        self.allow_file_access(
+            path,
+            false,
+            (
+                false,
+                false,
+                block_other_readers,
+                block_other_writers,
+                block_other_deleters,
+            ),
+        )
+    }
+
+    pub fn allow_dir_read(&mut self, path: &str) -> Result<(), PolicyError> {
+        self.allow_file_access(path, true, (true, false, false, false, false))
+    }
+
+    pub fn allow_dir_write(&mut self, path: &str) -> Result<(), PolicyError> {
+        self.allow_file_access(path, true, (false, true, false, false, false))
+    }
+
+    pub fn allow_dir_lock(
+        &mut self,
+        path: &str,
+        block_other_readers: bool,
+        block_other_writers: bool,
+        block_other_deleters: bool,
+    ) -> Result<(), PolicyError> {
+        self.allow_file_access(
+            path,
+            true,
+            (
+                false,
+                false,
+                block_other_readers,
+                block_other_writers,
+                block_other_deleters,
+            ),
+        )
+    }
+
+    pub(crate) fn get_filepath_allowed_access(&self, path: &str) -> (bool, bool, bool, bool, bool) {
+        let path = path.strip_suffix(OS_PATH_SEPARATOR).unwrap_or(path);
+        let mut verdict_read = false;
+        let mut verdict_write = false;
+        let mut verdict_block_readers = false;
+        let mut verdict_block_writers = false;
+        let mut verdict_block_deleters = false;
+        if let Some((read, write, block_readers, block_writers, block_deleters)) =
+            self.file_access.get(path)
+        {
+            verdict_read |= read;
+            verdict_write |= write;
+            verdict_block_readers |= block_readers;
+            verdict_block_writers |= block_writers;
+            verdict_block_deleters |= block_deleters;
+        }
+        let mut current_path = path;
+        while !verdict_read
+            || !verdict_write
+            || !verdict_block_readers
+            || !verdict_block_writers
+            || !verdict_block_deleters
+        {
+            if let Some((read, write, block_readers, block_writers, block_deleters)) =
+                self.dir_access.get(current_path)
             {
-                self.file_lock.insert(
-                    path.to_owned(),
-                    (
-                        (readers || prev_readers),
-                        (writers || prev_writers),
-                        (deleters || prev_deleters),
-                    ),
+                verdict_read |= read;
+                verdict_write |= write;
+                verdict_block_readers |= block_readers;
+                verdict_block_writers |= block_writers;
+                verdict_block_deleters |= block_deleters;
+            }
+            match strip_one_component(current_path, OS_PATH_SEPARATOR) {
+                Some(parent_path) => current_path = parent_path,
+                None => break,
+            }
+        }
+        (
+            verdict_read,
+            verdict_write,
+            verdict_block_readers,
+            verdict_block_writers,
+            verdict_block_deleters,
+        )
+    }
+
+    pub(crate) fn log_verdict(&self, request: &PolicyRequest, verdict: &PolicyVerdict) {
+        match &verdict {
+            PolicyVerdict::Granted => {
+                info!("Worker granted access to {}", request);
+            }
+            PolicyVerdict::DelegationToSandboxNotSupported { why } => {
+                warn!(
+                    "Worker tried to access {} but delegation is not supported: {}",
+                    request, why
+                );
+            }
+            PolicyVerdict::DeniedByPolicy { why } => {
+                warn!(
+                    "Worker tried to access {} but it is not allowed by its policy: {}",
+                    request, why
+                );
+            }
+            PolicyVerdict::InvalidRequestParameters {
+                argument_name,
+                reason,
+            } => {
+                warn!(
+                    "Worker tried to access {} but \"{}\" was unexpected: {}",
+                    request, argument_name, reason
                 );
             }
         }
+        for callback in &self.log_callbacks {
+            (callback)(request, verdict);
+        }
+    }
+}
+
+impl core::fmt::Debug for Policy<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let &Policy {
+            log_callbacks: _,
+            inherit_handles,
+            file_access,
+            dir_access,
+            regkey_access,
+        } = &self;
+        writeln!(f, "Policy {{")?;
+        for h in inherit_handles {
+            writeln!(f, "    Inherit handle {:?}", h)?;
+        }
+        for (path, (read, write, lockread, lockwrite, lockdelete)) in file_access {
+            writeln!(
+                f,
+                "    {} file{}{}{}{}{}",
+                path,
+                if *read { " read" } else { "" },
+                if *write { " write" } else { "" },
+                if *lockread { " block_readers" } else { "" },
+                if *lockwrite { " block_readers" } else { "" },
+                if *lockdelete { " block_readers" } else { "" },
+            )?;
+        }
+        for (path, (read, write, lockread, lockwrite, lockdelete)) in dir_access {
+            writeln!(
+                f,
+                "    {} directory{}{}{}{}{}",
+                path,
+                if *read { " read" } else { "" },
+                if *write { " write" } else { "" },
+                if *lockread { " block_readers" } else { "" },
+                if *lockwrite { " block_readers" } else { "" },
+                if *lockdelete { " block_readers" } else { "" },
+            )?;
+        }
+        for (path, (read, write)) in regkey_access {
+            writeln!(
+                f,
+                "    {} registry key{}{}",
+                path,
+                if *read { " read" } else { "" },
+                if *write { " write" } else { "" },
+            )?;
+        }
+        writeln!(f, "}}")?;
         Ok(())
     }
+}
 
-    pub fn get_file_allowed_lock(&self, path: &str) -> (bool, bool, bool) {
-        let mut result_readers = false;
-        let mut result_writers = false;
-        let mut result_deleters = false;
-        for (pattern, (readers, writers, deleters)) in self.file_lock.iter() {
-            let pattern = Pattern::new(pattern).unwrap();
-            if pattern.matches(path) {
-                result_readers |= readers;
-                result_writers |= writers;
-                result_deleters |= deleters;
-            }
-            if result_readers && result_writers && result_deleters {
-                break;
-            }
-        }
-        (result_readers, result_writers, result_deleters)
+impl PartialEq for Policy<'_> {
+    fn eq(&self, other: &Policy<'_>) -> bool {
+        let &Policy {
+            log_callbacks: _,
+            inherit_handles: inherit_handles_a,
+            file_access: file_access_a,
+            dir_access: dir_access_a,
+            regkey_access: regkey_access_a,
+        } = &self;
+        let &Policy {
+            log_callbacks: _,
+            inherit_handles: inherit_handles_b,
+            file_access: file_access_b,
+            dir_access: dir_access_b,
+            regkey_access: regkey_access_b,
+        } = &other;
+
+        inherit_handles_a == inherit_handles_b
+            && file_access_a == file_access_b
+            && dir_access_a == dir_access_b
+            && regkey_access_a == regkey_access_b
     }
 }
 
-impl<'a> Default for Policy<'a> {
-    fn default() -> Self {
-        Self::nothing_allowed()
-    }
-}
+impl Eq for Policy<'_> {}

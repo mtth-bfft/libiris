@@ -1,28 +1,35 @@
+use crate::error::PolicyError;
 use crate::handle::{CrossPlatformHandle, Handle};
 use libc::{c_int, fcntl, FD_CLOEXEC, F_GETFD, F_SETFD};
+use log::error;
 use std::convert::TryInto;
 use std::io::Error;
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 
 impl CrossPlatformHandle for Handle {
-    unsafe fn new(raw_handle: u64) -> Result<Self, String> {
+    unsafe fn new(raw_handle: u64) -> Result<Self, PolicyError> {
         let fd: c_int = match raw_handle.try_into() {
             Ok(n) => n,
-            Err(_) => return Err(format!("Invalid file descriptor \"{}\"", raw_handle)),
+            Err(_) => {
+                return Err(PolicyError::InvalidHandle {
+                    raw_value: raw_handle,
+                })
+            }
         };
         Ok(Handle {
             val: Some(fd as u64),
         })
     }
 
-    fn set_inheritable(&mut self, allow_inherit: bool) -> Result<(), String> {
+    fn set_inheritable(&mut self, allow_inherit: bool) -> Result<(), PolicyError> {
         let fd = self.as_raw().try_into().unwrap();
         let current_flags = unsafe { fcntl(fd, F_GETFD) };
         if current_flags < 0 {
-            return Err(format!(
-                "fcntl(F_GETFD) failed with error {}",
-                Error::last_os_error().raw_os_error().unwrap_or(0)
-            ));
+            return Err(PolicyError::HandleOsOperationFailed {
+                operation: "fcntl(F_GETFD)".to_owned(),
+                handle_raw_value: self.as_raw(),
+                os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
+            });
         }
         let res = unsafe {
             fcntl(
@@ -32,22 +39,24 @@ impl CrossPlatformHandle for Handle {
             )
         };
         if res < 0 {
-            return Err(format!(
-                "fcntl(F_SETFD, FD_CLOEXEC) failed with error {}",
-                Error::last_os_error().raw_os_error().unwrap_or(0)
-            ));
+            return Err(PolicyError::HandleOsOperationFailed {
+                operation: "fcntl(F_SETFD, FD_CLOEXEC)".to_owned(),
+                handle_raw_value: self.as_raw(),
+                os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
+            });
         }
         Ok(())
     }
 
-    fn is_inheritable(&self) -> Result<bool, String> {
+    fn is_inheritable(&self) -> Result<bool, PolicyError> {
         let fd = self.as_raw().try_into().unwrap();
         let current_flags = unsafe { fcntl(fd, F_GETFD) };
         if current_flags < 0 {
-            return Err(format!(
-                "fcntl(F_GETFD) failed with error {}",
-                Error::last_os_error().raw_os_error().unwrap_or(0)
-            ));
+            return Err(PolicyError::HandleOsOperationFailed {
+                operation: "fcntl(F_GETFD)".to_owned(),
+                handle_raw_value: self.as_raw(),
+                os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
+            });
         }
         Ok((current_flags & FD_CLOEXEC) == 0)
     }
@@ -69,11 +78,16 @@ impl Drop for Handle {
         if let Some(fd) = self.val {
             let res = unsafe { libc::close(fd.try_into().unwrap()) };
             if res < 0 {
-                panic!(
+                let msg = format!(
                     "close(fd={}) failed with error {}",
                     fd,
                     Error::last_os_error().raw_os_error().unwrap_or(0)
                 );
+                if cfg!(debug_assertions) {
+                    panic!("{}", msg);
+                } else {
+                    error!("{}", msg);
+                }
             }
         }
     }
@@ -98,7 +112,7 @@ pub fn downcast_to_handle<T: IntoRawFd>(resource: T) -> Handle {
 pub fn set_unmanaged_handle_inheritable<T: AsRawFd>(
     resource: &T,
     allow_inherit: bool,
-) -> Result<(), String> {
+) -> Result<(), PolicyError> {
     // This block is safe because the file descriptor held by `resource` lives at least
     // for the duration of the block, and we don't take ownership of it
     let fd = resource.as_raw_fd().try_into().unwrap();

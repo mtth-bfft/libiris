@@ -5,20 +5,6 @@ variables:
   RUSTUP_HOME: .rustup
   CARGO_HOME: .cargo
 
-check:
-  image: rust:latest
-  tags:
-    - linux
-    - shared
-  script:
-    - rustup default stable
-    - rustup show
-    - rustup component add clippy rustfmt
-    - cargo clippy --all-features --all-targets -- -D warnings
-    - cargo fmt -- --check
-    - cargo install cargo-license
-    - cargo license --all-features --tsv
-
 build_linux:
   image: rust:latest
   tags:
@@ -29,8 +15,12 @@ build_linux:
   script:
     - rustup default stable
     - cargo build --workspace --all-targets --all-features --verbose
+    - cargo clippy --all-features --all-targets -- -D warnings -A clippy::nonminimal-bool -A clippy::too_many_arguments
+    - cargo fmt -- --check
     - mkdir -p artifacts-tests/workers/
     - cargo build --tests --message-format=json | python tests/copy_artifacts.py artifacts-tests/
+    - cargo install cargo-license
+    - cargo license --all-features --tsv
   artifacts:
     expire_in: 1h
     name: tests-linux
@@ -50,6 +40,8 @@ build_windows:
     - $env:Path=[System.Environment]::GetEnvironmentVariable("Path","Machine")+";"+[System.Environment]::GetEnvironmentVariable("Path","User")
   script:
     - cargo build --workspace --all-targets --all-features --verbose
+    - cargo clippy --all-features --all-targets -- -D warnings -A clippy::nonminimal-bool -A clippy::too_many_arguments
+    - cargo fmt -- --check
     - mkdir -p artifacts-tests/workers/
     - cargo build --tests --message-format=json | python tests/copy_artifacts.py artifacts-tests/
   artifacts:

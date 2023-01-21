@@ -4,7 +4,7 @@ use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::ntdef::{LONGLONG, NTSTATUS, ULONG};
 use winapi::um::winnt::ACCESS_MASK;
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub enum IPCRequest {
     // Initial message sent by workers to signal they are ready to enforce their final
     // sandboxing policy permanently
@@ -31,10 +31,10 @@ pub enum IPCRequest {
     },
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub enum IPCResponse {
     // Acknowledgement of LowerFinalSandboxPrivilegesAsap
-    PolicyApplied(Policy<'static>),
+    PolicyApplied(Box<Policy<'static>>),
     NtCreateFile {
         io_status: ULONG_PTR,
         code: NTSTATUS,
@@ -43,5 +43,5 @@ pub enum IPCResponse {
         disposition: ULONG,
         code: NTSTATUS,
     },
-    GenericError(NTSTATUS),
+    SyscallResult(NTSTATUS),
 }

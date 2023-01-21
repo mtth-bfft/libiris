@@ -1,69 +1,51 @@
+use crate::error::BrokerError;
 use crate::os::brokered_syscalls::handle_os_specific_request;
 use crate::os::process::OSSandboxedProcess;
 use crate::process::CrossPlatformSandboxedProcess;
+use crate::ProcessConfig;
 use iris_ipc::{
     CrossPlatformMessagePipe, IPCMessagePipe, IPCRequest, IPCResponse, MessagePipe,
     IPC_HANDLE_ENV_NAME,
 };
-use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use iris_policy::{CrossPlatformHandle, Policy};
 use log::{debug, warn};
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 
+#[derive(Debug)]
 pub struct Worker {
     process: OSSandboxedProcess,
 }
 
 impl Worker {
-    pub fn new<'a>(
-        policy: &'a Policy,
-        exe: &'a CStr,
-        argv: &[&'a CStr],
-        envp: &[&'a CStr],
-        stdin: Option<&'a Handle>,
-        stdout: Option<&'a Handle>,
-        stderr: Option<&'a Handle>,
-    ) -> Result<Self, String> {
-        let mut policy = policy.clone();
+    pub fn new(process_config: &ProcessConfig, policy: &Policy) -> Result<Self, BrokerError> {
         let (mut broker_pipe, worker_pipe) = MessagePipe::new()?;
         let mut worker_pipe_handle = worker_pipe.into_handle();
         worker_pipe_handle.set_inheritable(true)?;
+        let mut policy = policy.clone();
         policy.allow_inherit_handle(&worker_pipe_handle)?;
-        for handle in [stdin, stdout, stderr].iter().flatten() {
+        for handle in [
+            process_config.stdin,
+            process_config.stdout,
+            process_config.stderr,
+        ]
+        .iter()
+        .flatten()
+        {
             policy.allow_inherit_handle(handle)?;
         }
-        for handle in policy.get_inherited_handles() {
-            // On Linux, exec() will close all CLOEXEC handles.
-            // On Windows, CreateProcess() with bInheritHandles = TRUE doesn't automatically set the given
-            // handles as inheritable, and instead returns a ERROR_INVALID_PARAMETER if one of them is not.
-            // We cannot just set the handles as inheritable behind the caller's back, since they might
-            // reset it or depend on it in another thread. They have to get this right by themselves.
-            if !handle.is_inheritable()? {
-                return Err(format!(
-                    "Cannot make worker inherit handle {:?} which is not set as inheritable",
-                    handle
-                ));
-            }
-        }
-        for env_var in envp {
-            if env_var.to_string_lossy().starts_with(IPC_HANDLE_ENV_NAME) {
-                return Err(format!(
-                    "Workers cannot use the reserved {} environment variable",
-                    IPC_HANDLE_ENV_NAME
-                ));
-            }
-        }
-        let mut envp = Vec::from(envp);
         let ipc_handle_var = CString::new(format!(
             "{}={}",
             IPC_HANDLE_ENV_NAME,
             worker_pipe_handle.as_raw()
         ))
         .unwrap();
-        envp.push(&ipc_handle_var);
-        let process = OSSandboxedProcess::new(&policy, exe, argv, &envp, stdin, stdout, stderr)?;
+        let process_config = process_config
+            .clone()
+            .with_environment_variable(ipc_handle_var)?;
+        let process = OSSandboxedProcess::new(&policy, &process_config)?;
         broker_pipe.set_remote_process(process.get_pid())?;
         let mut broker_pipe = IPCMessagePipe::new(broker_pipe);
-        let policy = policy.get_runtime_policy(); // free resources kept open before passing it to the 'static manager thread
+        let runtime_policy = policy.get_runtime_policy(); // free resources kept open before passing it to the 'static manager thread
         std::thread::spawn(move || {
             // TODO: wait for the initial child message before returning
             // TODO: bind manager thread lifetime to the worker lifetime (cleanup in drop?)
@@ -80,7 +62,7 @@ impl Worker {
                         break;
                     }
                     Err(e) => {
-                        warn!("Manager thread exiting: error when receiving IPC: {}", e);
+                        warn!("Manager thread exiting: error when receiving IPC: {:?}", e);
                         break;
                     }
                 };
@@ -89,13 +71,16 @@ impl Worker {
                     // Handle OS-agnostic requests
                     IPCRequest::LowerFinalSandboxPrivilegesAsap if !has_lowered_privileges => {
                         has_lowered_privileges = true;
-                        (IPCResponse::PolicyApplied(policy.clone()), None)
+                        (
+                            IPCResponse::PolicyApplied(Box::new(runtime_policy.clone())),
+                            None,
+                        )
                     }
-                    other => handle_os_specific_request(other, &policy),
+                    other => handle_os_specific_request(other, &runtime_policy),
                 };
-                debug!("Sending response: {:?}", &resp);
+                debug!("Sending response: {:?} (handle={:?})", &resp, &handle);
                 if let Err(e) = broker_pipe.send(&resp, handle.as_ref()) {
-                    warn!("Broker thread exiting: error when sending IPC: {}", e);
+                    warn!("Broker thread exiting: error when sending IPC: {:?}", e);
                     break;
                 }
             }
@@ -105,9 +90,5 @@ impl Worker {
 
     pub fn get_pid(&self) -> u64 {
         self.process.get_pid()
-    }
-
-    pub fn wait_for_exit(&mut self) -> Result<u64, String> {
-        self.process.wait_for_exit()
     }
 }

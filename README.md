@@ -33,4 +33,4 @@ Then a simple `cargo build` should be all it takes (otherwise, open an issue).
 
 If you use this project, feedback would be appreciated (to sandbox what, on what kinds of platforms, was something hard to grasp, did you face any integration issue, etc).
 
-Even if you do not use the project, code reviews, documentation reviews (especially about design choices and OS isolation internals) is always welcome.
+Even if you do not use the project, you can help with code reviews and documentation reviews (especially about design choices and OS isolation internals).

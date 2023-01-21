@@ -1,10 +1,11 @@
 use crate::os::proc_thread_attribute_list::ProcThreadAttributeList;
 use crate::process::CrossPlatformSandboxedProcess;
+use crate::{BrokerError, ProcessConfig};
 use core::ptr::null_mut;
-use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use iris_policy::{CrossPlatformHandle, Policy};
 use log::{info, warn};
 use std::convert::TryInto;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use winapi::ctypes::c_void;
 use winapi::shared::basetsd::DWORD_PTR;
@@ -14,15 +15,11 @@ use winapi::shared::winerror::HRESULT_FROM_WIN32;
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::libloaderapi::{GetProcAddress, LoadLibraryA};
-use winapi::um::minwinbase::STILL_ACTIVE;
-use winapi::um::processthreadsapi::{
-    CreateProcessA, GetExitCodeProcess, GetProcessId, PROCESS_INFORMATION,
-};
-use winapi::um::synchapi::WaitForSingleObject;
+use winapi::um::processthreadsapi::{CreateProcessA, GetProcessId, PROCESS_INFORMATION};
 use winapi::um::sysinfoapi::GetSystemWindowsDirectoryA;
 use winapi::um::winbase::{
-    DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, INFINITE, STARTF_FORCEOFFFEEDBACK,
-    STARTF_USESTDHANDLES, STARTUPINFOEXA, WAIT_OBJECT_0,
+    DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, STARTF_FORCEOFFFEEDBACK, STARTF_USESTDHANDLES,
+    STARTUPINFOEXA,
 };
 use winapi::um::winnt::{
     HANDLE, HRESULT, PCWSTR, PSID, PSID_AND_ATTRIBUTES, SECURITY_CAPABILITIES,
@@ -80,6 +77,7 @@ const PROCESS_SANITIZED_ENVIRONMENT: &[(&str, Option<&str>)] = &[
 
 static mut PER_PROCESS_APPCONTAINER_ID: std::sync::atomic::AtomicUsize = AtomicUsize::new(0);
 
+#[derive(Debug)]
 pub(crate) struct OSSandboxedProcess {
     pid: u64,
     h_process: HANDLE,
@@ -143,31 +141,15 @@ impl Drop for OSSandboxedProcess {
 }
 
 impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
-    fn new(
-        policy: &Policy,
-        exe: &CStr,
-        argv: &[&CStr],
-        envp: &[&CStr],
-        stdin: Option<&Handle>,
-        stdout: Option<&Handle>,
-        stderr: Option<&Handle>,
-    ) -> Result<Self, String> {
-        if argv.len() < 1 {
-            return Err("Invalid argument: empty argv".to_owned());
+    fn new(policy: &Policy, process_config: &ProcessConfig) -> Result<Self, BrokerError> {
+        if process_config.argv.is_empty() {
+            return Err(BrokerError::MissingCommandLine);
         }
-        for handle in vec![stdin, stdout, stderr] {
-            if let Some(handle) = handle {
-                if !handle.is_inheritable()? {
-                    return Err("Stdin, stdout, and stderr handles must be set as inheritable for them to be usable by a worker".to_owned());
-                }
-            }
-        }
-
         // Build the full commandline with quotes to prevent C:\Program Files\a.exe from launching C:\Program.exe
         let mut cmdline = vec![b'"'];
-        cmdline.extend_from_slice(exe.to_bytes());
+        cmdline.extend_from_slice(process_config.executable_path.to_bytes());
         cmdline.push(b'"');
-        for arg in &argv[1..] {
+        for arg in &process_config.argv[1..] {
             let arg = arg.to_bytes();
             cmdline.push(b' ');
             if arg.contains(&b' ') {
@@ -182,7 +164,8 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
 
         // Build the concatenated environment block (NULL-terminated strings, the last one with a double-NULL terminator)
         // Merge the caller-provided values with sanitized system environment variables
-        let mut merged_envp: Vec<CString> = envp
+        let mut merged_envp: Vec<CString> = process_config
+            .envp
             .iter()
             .map(|s| CString::new(s.to_bytes()).unwrap())
             .collect();
@@ -220,10 +203,10 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             GetSystemWindowsDirectoryA(cwd.as_mut_ptr() as *mut _, cwd.len().try_into().unwrap())
         };
         if res == 0 || res > cwd.len().try_into().unwrap() {
-            return Err(format!(
-                "GetSystemDirectory() failed with error {}",
-                unsafe { GetLastError() }
-            ));
+            return Err(BrokerError::InternalOsOperationFailed {
+                description: "GetSystemDirectory() failed".to_owned(),
+                os_code: unsafe { GetLastError() }.into(),
+            });
         }
         cwd.truncate(res.try_into().unwrap());
         let cwd = CString::new(cwd).unwrap();
@@ -312,7 +295,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                     ) {
                         in_appcontainer = false;
                         warn!(
-                            "Using an AppContainer failed ({}), only using legacy restricted token",
+                            "Using an AppContainer failed ({:?}), only using legacy restricted token",
                             e
                         );
                         continue;
@@ -333,7 +316,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                     std::mem::size_of_val(&lpac_policy),
                 ) {
                     in_less_privileged_appcontainer = false;
-                    warn!("Less privileged AppContainers not supported on this system ({}), using AppContainers with ALL_APPLICATION_PACKAGES SID", e);
+                    warn!("Less privileged AppContainers not supported on this system ({:?}), using AppContainers with ALL_APPLICATION_PACKAGES SID", e);
                     continue;
                 }
 
@@ -358,7 +341,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                     handles_to_inherit.as_ptr() as *const _,
                     handles_to_inherit.len() * std::mem::size_of::<HANDLE>(),
                 ) {
-                    warn!("Handle inheritance filtering is not supported on this system ({}), only relying on worker process cleanup at startup", e);
+                    warn!("Handle inheritance filtering is not supported on this system ({:?}), only relying on worker process cleanup at startup", e);
                     filter_inherited_handles = false;
                     continue;
                 }
@@ -373,7 +356,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                     &child_proc_policy as *const _ as *const _,
                     std::mem::size_of_val(&child_proc_policy),
                 ) {
-                    warn!("Child process creation policy not supported on this system ({}), only using legacy job restriction", e);
+                    warn!("Child process creation policy not supported on this system ({:?}), only using legacy job restriction", e);
                     block_child_process_by_token_policy = false;
                     continue;
                 }
@@ -407,7 +390,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                     std::mem::size_of_val(&mitigation_policy),
                 ) {
                     with_mitigation_policies = false;
-                    warn!("Process mitigation policies not supported on this system ({}), only using legacy job restriction", e);
+                    warn!("Process mitigation policies not supported on this system ({:?}), only using legacy job restriction", e);
                     continue;
                 }
             }
@@ -417,14 +400,17 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             let mut start_info: STARTUPINFOEXA = unsafe { std::mem::zeroed() };
             start_info.StartupInfo.cb = std::mem::size_of_val(&start_info).try_into().unwrap();
             start_info.StartupInfo.dwFlags = STARTF_FORCEOFFFEEDBACK | STARTF_USESTDHANDLES;
-            start_info.StartupInfo.hStdInput = stdin
-                .and_then(|x| Some(x.as_raw() as HANDLE))
+            start_info.StartupInfo.hStdInput = process_config
+                .stdin
+                .map(|x| x.as_raw() as HANDLE)
                 .unwrap_or(INVALID_HANDLE_VALUE);
-            start_info.StartupInfo.hStdOutput = stdout
-                .and_then(|x| Some(x.as_raw() as HANDLE))
+            start_info.StartupInfo.hStdOutput = process_config
+                .stdout
+                .map(|x| x.as_raw() as HANDLE)
                 .unwrap_or(INVALID_HANDLE_VALUE);
-            start_info.StartupInfo.hStdError = stderr
-                .and_then(|x| Some(x.as_raw() as HANDLE))
+            start_info.StartupInfo.hStdError = process_config
+                .stderr
+                .map(|x| x.as_raw() as HANDLE)
                 .unwrap_or(INVALID_HANDLE_VALUE);
             start_info.lpAttributeList = ptal.as_ptr() as *const _ as *mut _;
             // TODO: use CREATE_BREAKAWAY_FROM_JOB if necessary on older OSes where nesting isn't supported
@@ -449,20 +435,20 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                     warn!("Process mitigation policies might not be supported on this system (process creation failed with code {})", err);
                     continue;
                 }
-                return Err(format!(
-                    "CreateProcess({}) failed with error {}",
-                    cmdline.to_string_lossy(),
-                    err
-                ));
+                return Err(BrokerError::InternalOsOperationFailed {
+                    description: format!("CreateProcess({}) failed", cmdline.to_string_lossy()),
+                    os_code: err.into(),
+                });
             }
             unsafe {
                 CloseHandle(proc_info.hThread);
             }
             let pid = unsafe { GetProcessId(proc_info.hProcess) };
             if pid == 0 {
-                return Err(format!("GetProcessId() failed with error {}", unsafe {
-                    GetLastError()
-                }));
+                return Err(BrokerError::InternalOsOperationFailed {
+                    description: "GetProcessId() failed".to_owned(),
+                    os_code: unsafe { GetLastError() }.into(),
+                });
             }
             // Debrief about the settings that worked
             if filter_inherited_handles {
@@ -491,28 +477,5 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
 
     fn get_pid(&self) -> u64 {
         self.pid
-    }
-
-    fn wait_for_exit(&mut self) -> Result<u64, String> {
-        let mut exit_code: DWORD = STILL_ACTIVE;
-        loop {
-            let res = unsafe { GetExitCodeProcess(self.h_process, &mut exit_code as *mut _) };
-            if res == 0 {
-                return Err(format!(
-                    "GetExitCodeProcess() failed with error {}",
-                    unsafe { GetLastError() }
-                ));
-            }
-            if exit_code != STILL_ACTIVE {
-                return Ok(exit_code.into());
-            }
-            let res = unsafe { WaitForSingleObject(self.h_process, INFINITE) };
-            if res != WAIT_OBJECT_0 {
-                return Err(format!(
-                    "WaitForSingleObject() failed with error {}",
-                    unsafe { GetLastError() }
-                ));
-            }
-        }
     }
 }

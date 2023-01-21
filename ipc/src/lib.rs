@@ -1,7 +1,10 @@
 // Common modules
 
+mod error;
 mod ipc;
 mod messagepipe;
+
+pub use error::IpcError;
 
 // OS-specific modules
 

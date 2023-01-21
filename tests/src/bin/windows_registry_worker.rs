@@ -117,8 +117,8 @@ fn main() {
             )
         };
         assert!(
-            (should_work && NT_SUCCESS(res) && hkey != null_mut() && disposition != 0)
-                || (!should_work && res == STATUS_ACCESS_DENIED && hkey == null_mut()),
+            (should_work && NT_SUCCESS(res) && !hkey.is_null() && disposition != 0)
+                || (!should_work && res == STATUS_ACCESS_DENIED && hkey.is_null()),
             "NtCreateKey({}, 0x{:X}) = 0x{:X}",
             path,
             requested_rights,

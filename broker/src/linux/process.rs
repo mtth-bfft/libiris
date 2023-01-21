@@ -1,4 +1,6 @@
+use crate::error::BrokerError;
 use crate::process::CrossPlatformSandboxedProcess;
+use crate::ProcessConfig;
 use core::ffi::c_void;
 use core::ptr::null;
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
@@ -6,11 +8,11 @@ use libc::c_int;
 use linux_entrypoint::{clone_entrypoint, EntrypointParameters};
 use log::debug;
 use std::convert::{TryFrom, TryInto};
-use std::ffi::CStr;
 use std::io::Error;
 
 const DEFAULT_CLONE_STACK_SIZE: usize = 1024 * 1024;
 
+#[derive(Debug)]
 pub struct OSSandboxedProcess {
     pid: u32,
     // Thread stack for clone(2), flagged as "never read" because rust does not
@@ -20,22 +22,9 @@ pub struct OSSandboxedProcess {
 }
 
 impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
-    fn new(
-        policy: &Policy,
-        exe: &CStr,
-        argv: &[&CStr],
-        envp: &[&CStr],
-        stdin: Option<&Handle>,
-        stdout: Option<&Handle>,
-        stderr: Option<&Handle>,
-    ) -> Result<Self, String> {
-        if argv.is_empty() {
-            return Err("Invalid argument: empty argv".to_owned());
-        }
-        for handle in [stdin, stdout, stderr].iter().flatten() {
-            if !handle.is_inheritable()? {
-                return Err("Stdin, stdout, and stderr handles must not be set to be closed on exec() for them to be usable by a worker".to_owned());
-            }
+    fn new(policy: &Policy, process_config: &ProcessConfig) -> Result<Self, BrokerError> {
+        if process_config.argv.is_empty() {
+            return Err(BrokerError::MissingCommandLine);
         }
 
         // Allocate a stack for the process' first thread to use
@@ -53,10 +42,10 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             let res = libc::pipe(clone_error_pipes.as_mut_ptr());
             if res < 0 {
                 // It's safe to return here, if pipe() returned an error it did not give us file descriptors so there is no leak
-                return Err(format!(
-                    "pipe() failed with code {}",
-                    Error::last_os_error()
-                ));
+                return Err(BrokerError::InternalOsOperationFailed {
+                    description: "pipe() failed".to_owned(),
+                    os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
+                });
             }
             (
                 Handle::new(clone_error_pipes[0].try_into().unwrap()).unwrap(),
@@ -67,12 +56,14 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
 
         // Pack together everything that needs to be passed to the new process,
         // and ensure their lifetime is long enough to pass clone()
-        let argv: Vec<*const i8> = argv
+        let argv: Vec<*const i8> = process_config
+            .argv
             .iter()
             .map(|x| x.as_ptr())
             .chain(std::iter::once(null()))
             .collect();
-        let envp: Vec<*const i8> = envp
+        let envp: Vec<*const i8> = process_config
+            .envp
             .iter()
             .map(|x| x.as_ptr())
             .chain(std::iter::once(null()))
@@ -83,15 +74,21 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             .map(|n| n.as_raw().try_into().unwrap())
             .collect();
         let entrypoint_params = EntrypointParameters {
-            exe: exe.as_ptr(),
+            exe: process_config.executable_path.as_ptr(),
             argv: argv.as_ptr(),
             envp: envp.as_ptr(),
             allowed_file_descriptors: allowed_file_descriptors.as_ptr(),
             allowed_file_descriptors_count: allowed_file_descriptors.len(),
             execve_errno_pipe: child_pipe.as_raw().try_into().unwrap(),
-            stdin: stdin.map(|h| c_int::try_from(h.as_raw()).unwrap()),
-            stdout: stdout.map(|h| c_int::try_from(h.as_raw()).unwrap()),
-            stderr: stderr.map(|h| c_int::try_from(h.as_raw()).unwrap()),
+            stdin: process_config
+                .stdin
+                .map(|h| c_int::try_from(h.as_raw()).unwrap()),
+            stdout: process_config
+                .stdout
+                .map(|h| c_int::try_from(h.as_raw()).unwrap()),
+            stderr: process_config
+                .stderr
+                .map(|h| c_int::try_from(h.as_raw()).unwrap()),
         };
         let entrypoint_params = Box::leak(Box::new(entrypoint_params));
 
@@ -109,14 +106,17 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
         unsafe { Box::from_raw(entrypoint_params as *mut EntrypointParameters) };
         drop(child_pipe);
 
-        if pid <= 0 {
-            return Err(format!(
-                "clone() failed with code {}",
-                Error::last_os_error()
-            ));
-        }
+        let pid: u32 = match pid.try_into() {
+            Ok(n) => n,
+            Err(_) => {
+                return Err(BrokerError::InternalOsOperationFailed {
+                    description: "clone()".to_owned(),
+                    os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
+                })
+            }
+        };
 
-        let mut execve_errno = vec![0u8; 4];
+        let mut execve_errno = [0u8; 4];
         let res = unsafe {
             libc::read(
                 parent_pipe.as_raw().try_into().unwrap(),
@@ -125,42 +125,21 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             )
         };
         if res > 0 {
-            return Err(format!(
-                "execve() failed with code {}",
-                u32::from_be_bytes(execve_errno[..].try_into().unwrap())
-            ));
+            return Err(BrokerError::InternalOsOperationFailed {
+                description: "execve()".to_owned(),
+                os_code: u32::from_be_bytes(execve_errno).into(),
+            });
         }
 
         debug!("Worker PID={} created", pid);
 
         Ok(Self {
-            pid: pid.try_into().unwrap(),
+            pid,
             initial_thread_stack: stack,
         })
     }
 
     fn get_pid(&self) -> u64 {
         self.pid.into()
-    }
-
-    fn wait_for_exit(&mut self) -> Result<u64, String> {
-        let mut wstatus: c_int = 0;
-        loop {
-            let res =
-                unsafe { libc::waitpid(self.pid as i32, &mut wstatus as *mut _, libc::__WALL) };
-            if res == -1 {
-                return Err(format!(
-                    "waitpid({}) failed with code {}",
-                    self.pid,
-                    Error::last_os_error().raw_os_error().unwrap_or(0)
-                ));
-            }
-            if libc::WIFEXITED(wstatus) {
-                return Ok(libc::WEXITSTATUS(wstatus).try_into().unwrap());
-            }
-            if libc::WIFSIGNALED(wstatus) {
-                return Ok((128 + libc::WTERMSIG(wstatus)).try_into().unwrap());
-            }
-        }
     }
 }

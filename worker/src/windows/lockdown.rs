@@ -1,4 +1,5 @@
 #![allow(non_snake_case)]
+#![allow(clippy::upper_case_acronyms)]
 
 use core::ffi::c_void;
 use core::ptr::{null, null_mut};
@@ -157,7 +158,7 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
     // Enumerate all loaded DLLs and find their base address
     while list_pos != list_head {
         let dos_header = unsafe {
-            *(((list_pos as *const u8).offset(list_entry_to_dllbase_offset as isize))
+            *(((list_pos as *const u8).add(list_entry_to_dllbase_offset))
                 as *const *const IMAGE_DOS_HEADER)
         };
         let pe_base = dos_header as *const i8;
@@ -286,7 +287,7 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
                                         PAGE_READWRITE,
                                     )
                                 };
-                                if res == null_mut() {
+                                if res.is_null() {
                                     panic!(
                                         "VirtualAlloc({:?}) failed with error {}",
                                         ptr_candidate,
@@ -478,7 +479,7 @@ fn unprotect_memory_area(location: *const u8, size: usize) -> DWORD {
     let res = unsafe {
         VirtualProtect(
             location as *mut _,
-            size.try_into().unwrap(),
+            size,
             PAGE_READWRITE,
             &mut old_protection as *mut _,
         )
@@ -498,7 +499,7 @@ fn reprotect_memory_area(location: *const u8, size: usize, old_protection: DWORD
     let res = unsafe {
         VirtualProtect(
             location as *mut _,
-            size.try_into().unwrap(),
+            size,
             old_protection,
             &mut hotpatch_protection as *mut _,
         )
@@ -580,7 +581,7 @@ extern "system" fn hook_ntcreatefile(
             };
             code as NTSTATUS
         }
-        (IPCResponse::GenericError(code), None) => return code as NTSTATUS,
+        (IPCResponse::SyscallResult(code), None) => code as NTSTATUS,
         other => panic!(
             "Unexpected response from broker to NtCreateFile request: {:?}",
             other
@@ -644,7 +645,7 @@ extern "system" fn hook_ntopenfile(
             };
             code as NTSTATUS
         }
-        (IPCResponse::GenericError(code), None) => code as NTSTATUS,
+        (IPCResponse::SyscallResult(code), None) => code as NTSTATUS,
         other => panic!(
             "Unexpected response from broker to NtCreateFile request: {:?}",
             other
@@ -721,7 +722,7 @@ extern "system" fn hook_ntcreatekey(
             }
             code as NTSTATUS
         }
-        (IPCResponse::GenericError(code), None) => return code as NTSTATUS,
+        (IPCResponse::SyscallResult(code), None) => code as NTSTATUS,
         other => panic!(
             "Unexpected response from broker to NtCreateKey request: {:?}",
             other

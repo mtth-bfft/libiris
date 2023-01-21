@@ -2,14 +2,17 @@
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)]
+#![allow(clippy::enum_variant_names)]
 
 use core::ptr::null_mut;
 use iris_broker::Worker;
+use iris_policy::{CrossPlatformHandle, Handle};
 use log::{debug, info, warn};
 use std::convert::TryInto;
 use std::ffi::CString;
 use std::fs::File;
 use std::os::windows::io::AsRawHandle;
+use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{BYTE, DWORD};
 use winapi::shared::ntdef::{HANDLE, NTSTATUS, PULONG, PVOID, PWSTR, ULONG, USHORT, WCHAR};
 use winapi::shared::ntstatus::{STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS};
@@ -22,15 +25,16 @@ use winapi::um::fileapi::OPEN_EXISTING;
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::handleapi::{CloseHandle, DuplicateHandle};
 use winapi::um::memoryapi::ReadProcessMemory;
-use winapi::um::minwinbase::{DEBUG_EVENT, OUTPUT_DEBUG_STRING_EVENT};
+use winapi::um::minwinbase::{DEBUG_EVENT, OUTPUT_DEBUG_STRING_EVENT, STILL_ACTIVE};
 use winapi::um::processthreadsapi::OpenProcessToken;
 use winapi::um::processthreadsapi::SetThreadToken;
-use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess};
+use winapi::um::processthreadsapi::{GetCurrentProcess, GetExitCodeProcess, OpenProcess};
 use winapi::um::securitybaseapi::{DuplicateToken, RevertToSelf};
-use winapi::um::winbase::INFINITE;
+use winapi::um::synchapi::WaitForSingleObject;
+use winapi::um::winbase::{INFINITE, WAIT_OBJECT_0};
 use winapi::um::winnt::{
     SecurityImpersonation, DBG_CONTINUE, DUPLICATE_SAME_ACCESS, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, PROCESS_DUP_HANDLE, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+    FILE_SHARE_WRITE, PROCESS_DUP_HANDLE, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ, SYNCHRONIZE,
     TOKEN_DUPLICATE,
 };
 
@@ -397,7 +401,7 @@ pub fn check_worker_handles(worker: &Worker) {
         });
 
         debug!(
-            "> {} (name: {:?}) (shared with {:?})",
+            "Has handle to {} (name: {:?}) (shared with {:?})",
             obj_type, name, other_holder_processes
         );
         // Only tolerate an allow-list of types, each with type-specific conditions
@@ -444,9 +448,8 @@ pub fn check_worker_handles(worker: &Worker) {
         } else if obj_type == "etwregistration" {
             // This object type cannot be duplicated between processes, so we cannot inspect it further.
             // Just make sure it stays this way.
-            assert_ne!(
+            assert!(
                 copy.is_some(),
-                true,
                 "EtwRegistration handles should not be duplicatable between processes"
             );
         } else if obj_type == "alpc port" {
@@ -479,7 +482,7 @@ pub fn check_worker_handles(worker: &Worker) {
             let err = unsafe { GetLastError() };
             assert_ne!(
                 hsameobject, INVALID_HANDLE_VALUE,
-                "could not open file {} with rights {} (error {})",
+                "worker has handle to file {} with rights {} but could not have opened it (error {})",
                 name, handle.GrantedAccess, err
             );
             unsafe {
@@ -534,4 +537,41 @@ pub fn check_worker_handles(worker: &Worker) {
         worker.get_pid(),
         unsafe { GetLastError() }
     );
+}
+
+pub fn wait_for_worker_exit(worker: &Worker) -> Result<u64, String> {
+    let pid = worker.get_pid() as u32;
+    let h_process = unsafe {
+        let res = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_INFORMATION, 0, pid);
+        if res.is_null() {
+            return Err(format!(
+                "OpenProcess({}) failed with error {}",
+                pid,
+                GetLastError()
+            ));
+        }
+        Handle::new(res as u64).unwrap()
+    };
+    let mut exit_code: DWORD = STILL_ACTIVE;
+    loop {
+        let res = unsafe {
+            GetExitCodeProcess(h_process.as_raw() as *mut c_void, &mut exit_code as *mut _)
+        };
+        if res == 0 {
+            return Err(format!(
+                "GetExitCodeProcess() failed with error {}",
+                unsafe { GetLastError() }
+            ));
+        }
+        if exit_code != STILL_ACTIVE {
+            return Ok(exit_code.into());
+        }
+        let res = unsafe { WaitForSingleObject(h_process.as_raw() as *mut c_void, INFINITE) };
+        if res != WAIT_OBJECT_0 {
+            return Err(format!(
+                "WaitForSingleObject() failed with error {}",
+                unsafe { GetLastError() }
+            ));
+        }
+    }
 }

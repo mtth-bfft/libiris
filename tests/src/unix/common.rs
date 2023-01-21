@@ -22,3 +22,27 @@ pub fn check_worker_handles(worker: &Worker) {
         panic!("File descriptor leaked into worker process: {}", path);
     }
 }
+
+pub fn wait_for_worker_exit(worker: &Worker) -> Result<u64, String> {
+    let pid: i32 = worker
+        .get_pid()
+        .try_into()
+        .map_err(|_| "Invalid PID".to_owned())?;
+    let mut wstatus: libc::c_int = 0;
+    loop {
+        let res = unsafe { libc::waitpid(pid, &mut wstatus as *mut _, libc::__WALL) };
+        if res == -1 {
+            return Err(format!(
+                "waitpid({}) failed with code {}",
+                pid,
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            ));
+        }
+        if libc::WIFEXITED(wstatus) {
+            return Ok(libc::WEXITSTATUS(wstatus).try_into().unwrap());
+        }
+        if libc::WIFSIGNALED(wstatus) {
+            return Ok((128 + libc::WTERMSIG(wstatus)).try_into().unwrap());
+        }
+    }
+}
