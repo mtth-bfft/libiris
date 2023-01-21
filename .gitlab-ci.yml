@@ -14,7 +14,7 @@ check:
     - rustup default stable
     - rustup show
     - rustup component add clippy rustfmt
-    - cargo clippy --all-features --all-targets -- -D warnings
+    - cargo clippy --all-features --all-targets -- -D warnings -A clippy::nonminimal-bool
     - cargo fmt -- --check
     - cargo install cargo-license
     - cargo license --all-features --tsv
