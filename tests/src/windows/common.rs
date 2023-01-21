@@ -2,6 +2,7 @@
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)]
+#![allow(clippy::enum_variant_names)]
 
 use core::ptr::null_mut;
 use iris_broker::Worker;
@@ -447,9 +448,8 @@ pub fn check_worker_handles(worker: &Worker) {
         } else if obj_type == "etwregistration" {
             // This object type cannot be duplicated between processes, so we cannot inspect it further.
             // Just make sure it stays this way.
-            assert_ne!(
+            assert!(
                 copy.is_some(),
-                true,
                 "EtwRegistration handles should not be duplicatable between processes"
             );
         } else if obj_type == "alpc port" {

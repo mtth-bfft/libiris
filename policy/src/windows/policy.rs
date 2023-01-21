@@ -143,7 +143,7 @@ impl Policy<'_> {
         }
         if (create_options & FILE_FLAG_OPEN_REPARSE_POINT) == 0 {
             return PolicyVerdict::DelegationToSandboxNotSupported {
-                why: format!("opening files with reparse points enabled is not supported"),
+                why: "opening files with reparse points enabled is not supported".to_owned(),
             };
         }
         if !SUPPORTED_FILE_CREATE_DISPOSITIONS.contains(&create_disposition) {
@@ -209,7 +209,7 @@ impl Policy<'_> {
             || (requests_block_writers && !can_block_writers)
             || (requests_block_deleters && !can_block_deleters)
         {
-            let mut why = format!("requests to block other");
+            let mut why = "requests to block other".to_owned();
             if requests_block_readers {
                 why.push_str(" readers");
             }
@@ -317,7 +317,7 @@ impl Policy<'_> {
         }
         let requests_read = (desired_access & KEY_READ_RIGHTS) != 0;
         let requests_write = (desired_access & KEY_WRITE_RIGHTS) != 0 || do_create;
-        let (can_read, can_write) = self.get_regkey_allowed_access(&path);
+        let (can_read, can_write) = self.get_regkey_allowed_access(path);
         if !(can_read || can_write)
             || (requests_read && !can_read)
             || (requests_write && !can_write)

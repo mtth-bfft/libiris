@@ -142,7 +142,7 @@ impl Drop for OSSandboxedProcess {
 
 impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
     fn new(policy: &Policy, process_config: &ProcessConfig) -> Result<Self, BrokerError> {
-        if process_config.argv.len() < 1 {
+        if process_config.argv.is_empty() {
             return Err(BrokerError::MissingCommandLine);
         }
         // Build the full commandline with quotes to prevent C:\Program Files\a.exe from launching C:\Program.exe
@@ -402,15 +402,15 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             start_info.StartupInfo.dwFlags = STARTF_FORCEOFFFEEDBACK | STARTF_USESTDHANDLES;
             start_info.StartupInfo.hStdInput = process_config
                 .stdin
-                .and_then(|x| Some(x.as_raw() as HANDLE))
+                .map(|x| x.as_raw() as HANDLE)
                 .unwrap_or(INVALID_HANDLE_VALUE);
             start_info.StartupInfo.hStdOutput = process_config
                 .stdout
-                .and_then(|x| Some(x.as_raw() as HANDLE))
+                .map(|x| x.as_raw() as HANDLE)
                 .unwrap_or(INVALID_HANDLE_VALUE);
             start_info.StartupInfo.hStdError = process_config
                 .stderr
-                .and_then(|x| Some(x.as_raw() as HANDLE))
+                .map(|x| x.as_raw() as HANDLE)
                 .unwrap_or(INVALID_HANDLE_VALUE);
             start_info.lpAttributeList = ptal.as_ptr() as *const _ as *mut _;
             // TODO: use CREATE_BREAKAWAY_FROM_JOB if necessary on older OSes where nesting isn't supported

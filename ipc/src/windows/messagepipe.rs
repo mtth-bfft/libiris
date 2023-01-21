@@ -7,8 +7,7 @@ use log::debug;
 use std::convert::TryInto;
 use std::ffi::CString;
 use winapi::shared::minwindef::DWORD;
-use winapi::shared::winerror::ERROR_BROKEN_PIPE;
-use winapi::shared::winerror::ERROR_PIPE_CONNECTED;
+use winapi::shared::winerror::{ERROR_ACCESS_DENIED, ERROR_BROKEN_PIPE, ERROR_PIPE_CONNECTED};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::{CreateFileA, ReadFile, WriteFile, OPEN_EXISTING};
 use winapi::um::handleapi::{DuplicateHandle, INVALID_HANDLE_VALUE};
@@ -61,12 +60,16 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     0,
                     null_mut(),
                 );
-                if res == null_mut() || res == INVALID_HANDLE_VALUE {
+                if res.is_null() || res == INVALID_HANDLE_VALUE {
                     // No handle was returned, it is safe to just exit the unsafe block
-                    // TODO: handle the "name already in use" case gracefully, continue;
+                    let err = GetLastError();
+                    if err == ERROR_ACCESS_DENIED {
+                        // pipe already exists
+                        continue;
+                    }
                     return Err(IpcError::InternalOsOperationFailed {
                         description: "CreateNamedPipe() failed".to_owned(),
-                        os_code: GetLastError().into(),
+                        os_code: err.into(),
                     });
                 }
                 Handle::new(res as u64).unwrap()
@@ -92,7 +95,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 }
                 Handle::new(res as u64).unwrap()
             };
-            let res = unsafe { ConnectNamedPipe((&handle1).as_raw() as HANDLE, null_mut()) };
+            let res = unsafe { ConnectNamedPipe(handle1.as_raw() as HANDLE, null_mut()) };
             if res == 0 {
                 let err = unsafe { GetLastError() };
                 if err != ERROR_PIPE_CONNECTED {
@@ -194,7 +197,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
         };
         self.remote_process_handle = unsafe {
             let res = OpenProcess(PROCESS_DUP_HANDLE, 0, remote_pid);
-            if res == null_mut() {
+            if res.is_null() {
                 // It is safe to return here, OpenProcess() failed to open any handle
                 return Err(IpcError::UnableToOpenProcessOnTheOtherEnd {
                     pid: remote_pid.into(),

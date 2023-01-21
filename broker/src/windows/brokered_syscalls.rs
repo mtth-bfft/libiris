@@ -114,7 +114,7 @@ fn handle_ntcreatefile(
 ) -> (IPCResponse, Option<Handle>) {
     let create_options = create_options | FILE_FLAG_OPEN_REPARSE_POINT; // never follow reparse points
     let req = PolicyRequest::FileOpen {
-        path: &path,
+        path,
         desired_access,
         file_attributes,
         share_access,
@@ -137,7 +137,7 @@ fn handle_ntcreatefile(
         Buffer: unicode_name.as_mut_ptr(),
     };
     let mut sec_qos = SECURITY_QUALITY_OF_SERVICE {
-        Length: std::mem::size_of::<SECURITY_QUALITY_OF_SERVICE> as u32,
+        Length: std::mem::size_of::<SECURITY_QUALITY_OF_SERVICE>() as u32,
         ImpersonationLevel: SecurityIdentification,
         ContextTrackingMode: SECURITY_DYNAMIC_TRACKING,
         EffectiveOnly: 1,
@@ -178,7 +178,7 @@ fn handle_ntcreatefile(
             (status, io_status.Information, None)
         }
     };
-    return (IPCResponse::NtCreateFile { io_status, code }, handle);
+    (IPCResponse::NtCreateFile { io_status, code }, handle)
 }
 
 fn handle_ntcreatekey(
@@ -280,5 +280,5 @@ fn handle_ntcreatekey(
             }
         }
     };
-    return (IPCResponse::NtCreateKey { disposition, code }, handle);
+    (IPCResponse::NtCreateKey { disposition, code }, handle)
 }

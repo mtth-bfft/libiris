@@ -11,9 +11,7 @@ fn check() {
     // know we finished initialization and we are ready for resource
     // leak inspection
     info!("Waiting for parent to debug us...");
-    while unsafe { IsDebuggerPresent() } == 0 {
-        ()
-    }
+    while unsafe { IsDebuggerPresent() } == 0 {}
     info!("Parent is watching us, signaling we're ready");
     let out_str = CString::new("Ready for inspection").unwrap();
     unsafe {

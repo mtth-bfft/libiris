@@ -52,9 +52,7 @@ fn transform_path(path: &str) -> String {
 
     let str_len = us_nt_path.Length as usize / std::mem::size_of::<WCHAR>();
     let resolved = unsafe { std::slice::from_raw_parts(us_nt_path.Buffer, str_len) };
-    let resolved = String::from_utf16(&resolved).expect("non-unicode resolved NT path");
-
-    resolved
+    String::from_utf16(resolved).expect("non-unicode resolved NT path")
 }
 
 #[test]

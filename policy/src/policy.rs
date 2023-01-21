@@ -334,3 +334,5 @@ impl PartialEq for Policy<'_> {
             && regkey_access_a == regkey_access_b
     }
 }
+
+impl Eq for Policy<'_> {}

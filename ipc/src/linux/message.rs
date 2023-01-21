@@ -10,7 +10,7 @@ pub enum IPCRequest {
     OpenFile { path: String, flags: libc::c_int },
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub enum IPCResponse {
     // Acknowledgement of LowerFinalSandboxPrivilegesAsap
     PolicyApplied(Box<Policy<'static>>),
