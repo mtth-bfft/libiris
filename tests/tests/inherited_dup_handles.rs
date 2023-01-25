@@ -14,9 +14,8 @@ fn inherited_dup_handles() {
     policy.allow_inherit_handle(&tmpin).unwrap();
 
     let worker_binary = get_worker_abs_path("inherited_dup_handles_worker");
-    let proc_conf = ProcessConfig::new(worker_binary.clone(), &[worker_binary])
-        .with_stdin_redirected(&tmpin)
-        .unwrap();
+    let mut proc_conf = ProcessConfig::new(worker_binary.clone(), &[worker_binary]);
+    proc_conf.redirect_stdin(Some(&tmpin)).unwrap();
 
     let worker = Worker::new(&proc_conf, &policy).expect("worker creation failed");
     assert_eq!(

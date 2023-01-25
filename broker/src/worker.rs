@@ -39,9 +39,8 @@ impl Worker {
             worker_pipe_handle.as_raw()
         ))
         .unwrap();
-        let process_config = process_config
-            .clone()
-            .with_environment_variable(ipc_handle_var)?;
+        let mut process_config = process_config.clone();
+        process_config.set_environment_variable(ipc_handle_var)?;
         let process = OSSandboxedProcess::new(&policy, &process_config)?;
         broker_pipe.set_remote_process(process.get_pid())?;
         let mut broker_pipe = IPCMessagePipe::new(broker_pipe);

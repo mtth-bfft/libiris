@@ -35,12 +35,15 @@ impl<'a> ProcessConfig<'a> {
         }
     }
 
-    pub fn with_current_working_directory(mut self, cwd: CString) -> Result<Self, BrokerError> {
-        self.cwd = Some(cwd);
+    pub fn set_current_working_directory(
+        &mut self,
+        cwd: Option<CString>,
+    ) -> Result<&mut Self, BrokerError> {
+        self.cwd = cwd;
         Ok(self)
     }
 
-    pub fn with_environment_variable(mut self, env_var: CString) -> Result<Self, BrokerError> {
+    pub fn set_environment_variable(&mut self, env_var: CString) -> Result<&mut Self, BrokerError> {
         let name = name_from_env(&env_var);
         for prev in &self.envp {
             if name_from_env(prev) == name {
@@ -55,18 +58,27 @@ impl<'a> ProcessConfig<'a> {
         Ok(self)
     }
 
-    pub fn with_stdin_redirected(mut self, new_stdin: &'a Handle) -> Result<Self, BrokerError> {
-        self.stdin = Some(new_stdin);
+    pub fn redirect_stdin(
+        &mut self,
+        new_stdin: Option<&'a Handle>,
+    ) -> Result<&mut Self, BrokerError> {
+        self.stdin = new_stdin;
         Ok(self)
     }
 
-    pub fn with_stdout_redirected(mut self, new_stdout: &'a Handle) -> Result<Self, BrokerError> {
-        self.stdout = Some(new_stdout);
+    pub fn redirect_stdout(
+        &mut self,
+        new_stdout: Option<&'a Handle>,
+    ) -> Result<&mut Self, BrokerError> {
+        self.stdout = new_stdout;
         Ok(self)
     }
 
-    pub fn with_stderr_redirected(mut self, new_stderr: &'a Handle) -> Result<Self, BrokerError> {
-        self.stderr = Some(new_stderr);
+    pub fn redirect_stderr(
+        &mut self,
+        new_stderr: Option<&'a Handle>,
+    ) -> Result<&mut Self, BrokerError> {
+        self.stderr = new_stderr;
         Ok(self)
     }
 }

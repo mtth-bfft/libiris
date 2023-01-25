@@ -8,18 +8,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Eq)]
+#[repr(C, u8)]
 pub enum PolicyVerdict {
     Granted,
-    DeniedByPolicy {
-        why: String,
-    },
-    DelegationToSandboxNotSupported {
-        why: String,
-    },
-    InvalidRequestParameters {
-        argument_name: String,
-        reason: String,
-    },
+    DeniedByPolicy { why: String },
+    DelegationToSandboxNotSupported { why: String },
+    InvalidRequestParameters { argument_name: String, why: String },
 }
 
 pub type PolicyLogCallback = dyn Fn(&PolicyRequest, &PolicyVerdict) + Send + Sync;
@@ -244,13 +238,10 @@ impl<'a> Policy<'a> {
                     request, why
                 );
             }
-            PolicyVerdict::InvalidRequestParameters {
-                argument_name,
-                reason,
-            } => {
+            PolicyVerdict::InvalidRequestParameters { argument_name, why } => {
                 warn!(
                     "Worker tried to access {} but \"{}\" was unexpected: {}",
-                    request, argument_name, reason
+                    request, argument_name, why
                 );
             }
         }

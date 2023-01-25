@@ -5,7 +5,7 @@ mod policy;
 
 pub use error::PolicyError;
 pub use handle::{CrossPlatformHandle, Handle};
-pub use policy::{Policy, PolicyVerdict};
+pub use policy::{Policy, PolicyLogCallback, PolicyVerdict};
 
 // OS-specific modules
 

@@ -17,12 +17,13 @@ fn stdout_stderr() {
     let tmpin = downcast_to_handle(tmpin);
     let tmpout = downcast_to_handle(tmpout);
     let tmperr = downcast_to_handle(tmperr);
-    let proc_config = ProcessConfig::new(worker_binary.clone(), &[worker_binary])
-        .with_stdin_redirected(&tmpin)
+    let mut proc_config = ProcessConfig::new(worker_binary.clone(), &[worker_binary]);
+    proc_config
+        .redirect_stdin(Some(&tmpin))
         .unwrap()
-        .with_stdout_redirected(&tmpout)
+        .redirect_stdout(Some(&tmpout))
         .unwrap()
-        .with_stderr_redirected(&tmperr)
+        .redirect_stderr(Some(&tmperr))
         .unwrap();
     let worker =
         Worker::new(&proc_config, &Policy::nothing_allowed()).expect("worker creation failed");

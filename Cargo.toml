@@ -7,6 +7,7 @@ members = [
     "broker",
     "tests",
     "linux-entrypoint",
+    "bindings/C/broker",
 ]
 
 [profile.release]
