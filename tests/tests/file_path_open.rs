@@ -46,8 +46,7 @@ fn transform_path(path: &str) -> String {
     };
     assert!(
         NT_SUCCESS(status),
-        "RtlDosPathNameToRelativeNtPathName_U_WithStatus() failed with status 0x{:08X}",
-        status
+        "RtlDosPathNameToRelativeNtPathName_U_WithStatus() failed with status 0x{status:08X}"
     );
 
     let str_len = us_nt_path.Length as usize / std::mem::size_of::<WCHAR>();

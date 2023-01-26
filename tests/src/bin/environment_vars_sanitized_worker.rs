@@ -6,7 +6,7 @@ fn main() {
     common_test_setup();
     for (var, val) in std::env::vars() {
         if FORBIDDEN_VARS.contains(&var.as_str().to_lowercase().as_str()) {
-            panic!("{} leaked in environment: {}", var, val);
+            panic!("{var} leaked in environment: {val}");
         }
     }
 }

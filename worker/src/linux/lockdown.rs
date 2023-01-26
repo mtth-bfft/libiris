@@ -91,7 +91,7 @@ fn get_fd_for_path_with_perms(path: &str, flags: c_int) -> Result<Handle, i64> {
     match send_recv(&request, None) {
         (IPCResponse::SyscallResult(_), Some(fd)) => Ok(fd),
         (IPCResponse::SyscallResult(code), None) if code < 0 => Err(code),
-        err => panic!("Unexpected response from broker to file request: {:?}", err),
+        err => panic!("Unexpected response from broker to file request: {err:?}"),
     }
 }
 
@@ -259,8 +259,7 @@ pub(crate) fn get_syscall_number(name: &str) -> Result<i32, String> {
     let nr = unsafe { seccomp_syscall_resolve_name(name_null_terminated.as_ptr()) };
     if nr == __NR_SCMP_ERROR {
         return Err(format!(
-            "Syscall name \"{}\" not resolved by libseccomp",
-            name
+            "Syscall name \"{name}\" not resolved by libseccomp"
         ));
     }
     Ok(nr)
@@ -393,10 +392,7 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc
             unsafe { handle.into_raw() }.try_into().unwrap()
         }
         (IPCResponse::SyscallResult(code), None) => code,
-        other => panic!(
-            "Unexpected response from broker to file request: {:?}",
-            other
-        ),
+        other => panic!("Unexpected response from broker to file request: {other:?}",),
     }
 }
 

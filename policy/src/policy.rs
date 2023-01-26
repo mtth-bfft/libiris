@@ -262,7 +262,7 @@ impl core::fmt::Debug for Policy<'_> {
         } = &self;
         writeln!(f, "Policy {{")?;
         for h in inherit_handles {
-            writeln!(f, "    Inherit handle {:?}", h)?;
+            writeln!(f, "    Inherit handle {h:?}")?;
         }
         for (path, (read, write, lockread, lockwrite, lockdelete)) in file_access {
             writeln!(

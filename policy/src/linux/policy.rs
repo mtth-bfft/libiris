@@ -42,7 +42,7 @@ impl Policy<'_> {
         if !path_is_sane(path) {
             return PolicyVerdict::InvalidRequestParameters {
                 argument_name: "path".to_owned(),
-                why: format!("path to open \"{}\" is not in canonical form", path),
+                why: format!("path to open \"{path}\" is not in canonical form"),
             };
         }
         // When O_PATH is set, other flags than O_CLOEXEC, O_DIRECTORY, and O_NOFOLLOW are supposed to be ignored by the kernel
@@ -92,7 +92,7 @@ impl<'a> core::fmt::Display for PolicyRequest<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
         match self {
             PolicyRequest::FileOpen { path, flags } => {
-                write!(f, "file {} with flags {:#X}", path, flags)
+                write!(f, "file {path} with flags {flags:#X}")
             }
         }
     }

@@ -83,7 +83,7 @@ impl ProcThreadAttributeList {
         };
         if res == 0 {
             return Err(BrokerError::InternalOsOperationFailed {
-                description: format!("UpdateProcThreadAttribute({}) failed", attr),
+                description: format!("UpdateProcThreadAttribute({attr}) failed"),
                 os_code: unsafe { GetLastError() }.into(),
             });
         }

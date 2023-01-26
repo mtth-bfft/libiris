@@ -130,8 +130,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     res = Err(IpcError::InternalOsOperationFailed {
                         os_code: 0,
                         description: format!(
-                            "recvmsg() returned unknown ancillary data level={} type={}",
-                            clevel, ctype
+                            "recvmsg() returned unknown ancillary data level={clevel} type={ctype}"
                         ),
                     });
                     continue;

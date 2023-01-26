@@ -230,8 +230,7 @@ pub fn check_worker_handles(worker: &Worker) {
         );
         assert_eq!(
             res, STATUS_SUCCESS,
-            "NtQueryObject(ObjectAllInformation) failed with status 0x{:X}",
-            res
+            "NtQueryObject(ObjectAllInformation) failed with status 0x{res:X}"
         );
         let buffer = buffer.as_ptr() as *const OBJECT_TYPES_INFORMATION;
         let number_of_object_types = (*buffer).NumberOfObjectTypes as usize;
@@ -320,7 +319,7 @@ pub fn check_worker_handles(worker: &Worker) {
         let mut hworkertoken: HANDLE = null_mut();
         let res = OpenProcessToken(hworker, TOKEN_DUPLICATE, &mut hworkertoken as *mut _);
         let err = GetLastError();
-        assert_ne!(res, 0, "OpenProcessToken() failed with error {}", err);
+        assert_ne!(res, 0, "OpenProcessToken() failed with error {err}");
         let mut himpersonationtoken: HANDLE = null_mut();
         let res = DuplicateToken(
             hworkertoken,
@@ -328,7 +327,7 @@ pub fn check_worker_handles(worker: &Worker) {
             &mut himpersonationtoken as *mut _,
         );
         let err = GetLastError();
-        assert_ne!(res, 0, "DuplicateToken() failed with error {}", err);
+        assert_ne!(res, 0, "DuplicateToken() failed with error {err}");
         CloseHandle(hworkertoken);
         himpersonationtoken
     };
@@ -421,8 +420,7 @@ pub fn check_worker_handles(worker: &Worker) {
             assert_eq!(
                 other_holder_processes,
                 vec![],
-                "completion port shared with other processes: {:?}",
-                other_holder_processes
+                "completion port shared with other processes: {other_holder_processes:?}"
             );
         } else if obj_type == "tpworkerfactory" {
             // We should not hold a handle to another process' thread pool, otherwise we could create arbitrary threads in it.
@@ -432,8 +430,7 @@ pub fn check_worker_handles(worker: &Worker) {
             assert_eq!(
                 other_holder_processes,
                 vec![],
-                "thread pool shared with other processes: {:?}",
-                other_holder_processes
+                "thread pool shared with other processes: {other_holder_processes:?}"
             );
         } else if obj_type == "irtimer" {
             // NtCreateIRTimer() calls are redirected in the kernel to NtCreateTimer2()
@@ -442,8 +439,7 @@ pub fn check_worker_handles(worker: &Worker) {
             assert_eq!(
                 other_holder_processes,
                 vec![],
-                "irtimer shared with other processes: {:?}",
-                other_holder_processes
+                "irtimer shared with other processes: {other_holder_processes:?}"
             );
         } else if obj_type == "etwregistration" {
             // This object type cannot be duplicated between processes, so we cannot inspect it further.
@@ -464,7 +460,7 @@ pub fn check_worker_handles(worker: &Worker) {
         } else if obj_type == "file" {
             // This can be a file, file directory, or named pipe
             let name = name.expect("unexpected unnamed file opened by process");
-            let win32_path: Vec<u16> = format!("\\\\?\\GLOBALROOT{}", name)
+            let win32_path: Vec<u16> = format!("\\\\?\\GLOBALROOT{name}")
                 .encode_utf16()
                 .chain(Some(0))
                 .collect();

@@ -89,7 +89,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     // No handle was returned, it is safe to just exit the unsafe block
                     // Continuing will also destroy handle1 created just above
                     return Err(IpcError::InternalOsOperationFailed {
-                        description: format!("CreateFile({:?}) failed", name_nul),
+                        description: format!("CreateFile({name_nul:?}) failed"),
                         os_code: GetLastError().into(),
                     });
                 }
@@ -100,7 +100,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 let err = unsafe { GetLastError() };
                 if err != ERROR_PIPE_CONNECTED {
                     return Err(IpcError::InternalOsOperationFailed {
-                        description: format!("ConnectNamedPipe({:?}) failed", name_nul),
+                        description: format!("ConnectNamedPipe({name_nul:?}) failed"),
                         os_code: err.into(),
                     });
                 }
@@ -117,7 +117,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
             };
             if res == 0 {
                 return Err(IpcError::InternalOsOperationFailed {
-                    description: format!("SetNamedPipeHandleState({:?}) failed", name_nul),
+                    description: format!("SetNamedPipeHandleState({name_nul:?}) failed"),
                     os_code: unsafe { GetLastError() }.into(),
                 });
             }

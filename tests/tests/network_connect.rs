@@ -19,7 +19,7 @@ fn network_connect_loopback() {
     info!("Waiting for connection on 127.0.0.1:{}", port);
     thread::spawn(move || match listener.accept() {
         Ok((_sock, addr)) => info!("Ok, received connect from {:?}", addr),
-        Err(e) => panic!("Could not accept() incoming connections: {}", e),
+        Err(e) => panic!("Could not accept() incoming connections: {e}"),
     });
 
     let policy = Policy::nothing_allowed();
@@ -31,7 +31,7 @@ fn network_connect_loopback() {
         &[
             worker_binary,
             CString::new("127.0.0.1").unwrap(),
-            CString::new(format!("{}", port)).unwrap(),
+            CString::new(format!("{port}")).unwrap(),
         ],
     );
     proc_config

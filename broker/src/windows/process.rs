@@ -183,9 +183,9 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             }
             if !explicitly_set {
                 if let Some(forced_val) = forced_val {
-                    merged_envp.push(CString::new(format!("{}={}", var_name, forced_val)).unwrap());
+                    merged_envp.push(CString::new(format!("{var_name}={forced_val}")).unwrap());
                 } else if let Ok(system_val) = std::env::var(var_name) {
-                    merged_envp.push(CString::new(format!("{}={}", var_name, system_val)).unwrap());
+                    merged_envp.push(CString::new(format!("{var_name}={system_val}")).unwrap());
                 }
             }
         }

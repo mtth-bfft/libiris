@@ -3,7 +3,7 @@ use common::{
     cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file, read_tmp_file,
 };
 use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
-use std::io::{Seek, SeekFrom, Write};
+use std::io::{Seek, Write};
 
 #[test]
 fn stdout_stderr() {
@@ -12,7 +12,7 @@ fn stdout_stderr() {
     let (tmpout, tmpoutpath) = open_tmp_file();
     let (tmperr, tmperrpath) = open_tmp_file();
     tmpin.write_all(b"OK_STDIN").unwrap();
-    tmpin.seek(SeekFrom::Start(0)).unwrap();
+    tmpin.rewind().unwrap();
     let worker_binary = get_worker_abs_path("stdout_stderr_worker");
     let tmpin = downcast_to_handle(tmpin);
     let tmpout = downcast_to_handle(tmpout);

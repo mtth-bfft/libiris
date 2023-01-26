@@ -22,8 +22,8 @@ fn policy_log_callback() {
     let closure_state = state.clone();
     policy.add_log_callback(Box::new(
         move |request: &PolicyRequest, verdict: &PolicyVerdict| {
-            println!("Request: {:?}", request);
-            println!("Verdict: {:?}", verdict);
+            println!("Request: {request:?}");
+            println!("Verdict: {verdict:?}");
             let mut lock = closure_state
                 .lock()
                 .expect("failed to acquire lock in closure");

@@ -22,7 +22,7 @@ fn check(ip: &str, port: u16) {
     let mut wsa_data: WSADATA = unsafe { std::mem::zeroed() };
     let res = unsafe { WSAStartup(MAKEWORD(2, 2), &mut wsa_data as *mut _) };
     if res != 0 {
-        panic!("WSAStartup failed with code {}", res);
+        panic!("WSAStartup failed with code {res}");
     }
     let sock = unsafe { socket(AF_INET, SOCK_STREAM, IPPROTO_TCP as i32) };
     if sock == INVALID_SOCKET {
