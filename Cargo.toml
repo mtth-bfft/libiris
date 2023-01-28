@@ -8,6 +8,7 @@ members = [
     "tests",
     "linux-entrypoint",
     "bindings/C/broker",
+    "bindings/C/worker",
 ]
 
 [profile.release]
