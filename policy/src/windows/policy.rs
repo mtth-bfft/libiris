@@ -157,7 +157,7 @@ impl Policy<'_> {
         if !path_is_sane(path) {
             return PolicyVerdict::InvalidRequestParameters {
                 argument_name: "path".to_owned(),
-                reason: format!("path to open \"{}\" is not in canonical form", path),
+                why: format!("path to open \"{}\" is not in canonical form", path),
             };
         }
         // Ensure the access requested matches the worker's policy

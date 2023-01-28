@@ -22,7 +22,7 @@ impl Drop for IrisPolicyRequest {
     fn drop(&mut self) {
         match *self {
             IrisPolicyRequest::FileOpen { path, .. } => {
-                drop(unsafe { CString::from_raw(path as *mut i8) })
+                drop(unsafe { CString::from_raw(path as *mut i8) });
             }
         }
     }

@@ -11,3 +11,7 @@ crate-type = ["cdylib", "staticlib"]
 iris-policy = { path = "../../../policy" }
 iris-broker = { path = "../../../broker" }
 iris-ipc = { path = "../../../ipc" }
+
+[target.'cfg(target_os="windows")'.dependencies]
+winapi = { version = "0.3.9", features = [] }
+
