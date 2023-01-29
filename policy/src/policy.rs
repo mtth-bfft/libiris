@@ -27,6 +27,7 @@ pub struct Policy<'a> {
     pub(crate) file_access: HashMap<String, (bool, bool, bool, bool, bool)>,
     pub(crate) dir_access: HashMap<String, (bool, bool, bool, bool, bool)>,
     pub(crate) regkey_access: HashMap<String, (bool, bool)>,
+    pub(crate) audit_only: bool,
 }
 
 impl<'a> Policy<'a> {
@@ -37,7 +38,14 @@ impl<'a> Policy<'a> {
             file_access: HashMap::new(),
             dir_access: HashMap::new(),
             regkey_access: HashMap::new(),
+            audit_only: false,
         }
+    }
+
+    pub fn unsafe_testing_audit_only() -> Self {
+        let mut res = Self::nothing_allowed();
+        res.audit_only = true;
+        res
     }
 
     pub fn get_runtime_policy(&self) -> Policy<'static> {
@@ -47,6 +55,7 @@ impl<'a> Policy<'a> {
             file_access: self.file_access.clone(),
             dir_access: self.dir_access.clone(),
             regkey_access: self.regkey_access.clone(),
+            audit_only: self.audit_only,
         }
     }
 
@@ -259,8 +268,13 @@ impl core::fmt::Debug for Policy<'_> {
             file_access,
             dir_access,
             regkey_access,
+            audit_only,
         } = &self;
-        writeln!(f, "Policy {{")?;
+        if *audit_only {
+            writeln!(f, "Policy [/!\\ audit mode, nothing will be blocked] {{")?;
+        } else {
+            writeln!(f, "Policy {{")?;
+        }
         for h in inherit_handles {
             writeln!(f, "    Inherit handle {h:?}")?;
         }
@@ -310,6 +324,7 @@ impl PartialEq for Policy<'_> {
             file_access: file_access_a,
             dir_access: dir_access_a,
             regkey_access: regkey_access_a,
+            audit_only: audit_only_a,
         } = &self;
         let &Policy {
             log_callbacks: _,
@@ -317,12 +332,14 @@ impl PartialEq for Policy<'_> {
             file_access: file_access_b,
             dir_access: dir_access_b,
             regkey_access: regkey_access_b,
+            audit_only: audit_only_b,
         } = &other;
 
         inherit_handles_a == inherit_handles_b
             && file_access_a == file_access_b
             && dir_access_a == dir_access_b
             && regkey_access_a == regkey_access_b
+            && audit_only_a == audit_only_b
     }
 }
 

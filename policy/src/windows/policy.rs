@@ -86,7 +86,7 @@ pub enum PolicyRequest<'a> {
 
 impl Policy<'_> {
     pub fn evaluate_request(&self, req: &PolicyRequest) -> PolicyVerdict {
-        let res = match req {
+        let mut res = match req {
             PolicyRequest::FileOpen {
                 path,
                 desired_access,
@@ -112,6 +112,9 @@ impl Policy<'_> {
             } => self.check_reg_key_open(path, *desired_access, *create_options, *do_create),
         };
         self.log_verdict(req, &res);
+        if self.audit_only {
+            res = PolicyVerdict::Granted;
+        }
         res
     }
 

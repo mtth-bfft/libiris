@@ -23,10 +23,13 @@ pub enum PolicyRequest<'a> {
 
 impl Policy<'_> {
     pub fn evaluate_request(&self, req: &PolicyRequest) -> PolicyVerdict {
-        let res = match req {
+        let mut res = match req {
             PolicyRequest::FileOpen { path, flags } => self.check_file_open(path, *flags),
         };
         self.log_verdict(req, &res);
+        if self.audit_only {
+            res = PolicyVerdict::Granted;
+        }
         res
     }
 
