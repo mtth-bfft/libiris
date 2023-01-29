@@ -3,7 +3,7 @@ use core::ptr::null;
 use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use libc::{c_char, c_int, O_PATH};
-use log::{debug, warn};
+use log::debug;
 use seccomp_sys::{
     scmp_arg_cmp, scmp_compare, scmp_filter_attr, seccomp_attr_set, seccomp_init, seccomp_load,
     seccomp_release, seccomp_rule_add, seccomp_syscall_resolve_name, SCMP_ACT_ALLOW, SCMP_ACT_TRAP,
@@ -330,26 +330,27 @@ pub(crate) extern "C" fn sigsys_handler(
                 a1 as i32,
                 a2 as i32,
             );
-            handle_openat(libc::AT_FDCWD, &path, flags, mode)
+            handle_openat(&path, flags, mode)
         }
-        libc::SYS_openat => {
+        libc::SYS_openat
+            if a0 as i32 == libc::AT_FDCWD || unsafe { *(a1 as *const u8) } == b'/' =>
+        {
             // Note: the dirfd passed cannot be accurately resolved to a valid path (you can
-            // readlink(/proc/self/fd/%d) but it might not be up to date if the folder has been moved)
-            let (dirfd, path, flags, mode) = (
-                a0 as i32,
+            // readlink(/proc/self/fd/%d) but it might not be up to date if e.g. the folder has been moved)
+            let (path, flags, mode) = (
                 read_string_from_ptr(a1 as *const c_char),
                 a2 as i32,
                 a3 as i32,
             );
-            handle_openat(dirfd, &path, flags, mode)
+            handle_openat(&path, flags, mode)
         }
         libc::SYS_chdir => {
             let path = read_string_from_ptr(a0 as *const c_char);
             handle_chdir(&path)
         }
-        _ => {
-            warn!("Syscall not supported yet, denied by default");
-            -(libc::EPERM as i64)
+        other_nb => {
+            let ip = read_i64_from_ptr(ucontext, libc::REG_RIP);
+            handle_syscall(other_nb, [a0, a1, a2, a3, a4, a5], ip)
         }
     };
     debug!("Syscall result: {}", response_code);
@@ -371,19 +372,9 @@ fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Opt
     (resp, handle)
 }
 
-fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc::c_int) -> i64 {
-    // Resolve the path manually, brokers only accept nonambiguous absolute paths
-    let path = if path.is_empty() {
-        return (-libc::ENOENT).into();
-    } else if path.starts_with('/') {
-        path.to_owned()
-    } else {
-        if dirfd != libc::AT_FDCWD {
-            warn!(
-                "openat(dirfd, relative path) is only supported with AT_FDCWD in Linux sandboxes"
-            );
-            return (-(libc::EACCES)).into();
-        }
+fn handle_openat(path: &str, flags: libc::c_int, _mode: libc::c_int) -> i64 {
+    // Resolve the path ourselves, brokers only accept nonambiguous absolute paths
+    let path = if !path.starts_with('/') {
         let mut abspath = std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| String::new());
@@ -392,6 +383,8 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc
         }
         abspath.push_str(path);
         abspath
+    } else {
+        path.to_owned()
     };
     debug!(
         "Requesting access to file path {:?} (flags={:#X})",
@@ -409,10 +402,6 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc
 
 fn handle_access(path: &str, mode: libc::c_int) -> i64 {
     debug!("Requesting access({}, {})", path, mode);
-    // Workers cannot execute anything anyway
-    if (mode & libc::X_OK) != 0 {
-        return -(libc::EACCES as i64);
-    }
     match get_fd_for_path_with_perms(path, mode) {
         Ok(_) => 0,
         Err(e) => e,
@@ -450,4 +439,15 @@ fn handle_chdir(path: &str) -> i64 {
         return (-err).into();
     }
     0
+}
+
+fn handle_syscall(nb: i64, args: [i64; 6], ip: i64) -> i64 {
+    let request = IPCRequest::Syscall { nb, args, ip };
+    match send_recv(&request, None) {
+        (IPCResponse::SyscallResult(_), Some(handle)) => {
+            unsafe { handle.into_raw() }.try_into().unwrap()
+        }
+        (IPCResponse::SyscallResult(code), None) => code,
+        other => panic!("Unexpected response from broker to syscall request: {other:?}",),
+    }
 }
