@@ -8,6 +8,8 @@ pub enum IPCRequest {
     LowerFinalSandboxPrivilegesAsap,
     // Worker request to open or create a file (possibly with a directory handle attached, in which case `path` is relative to that directory)
     OpenFile { path: String, flags: libc::c_int },
+    // Raw system call that is not allowed by the seccomp policy
+    Syscall { nb: i64, args: [i64; 6], ip: i64 },
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]

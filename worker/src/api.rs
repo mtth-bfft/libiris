@@ -28,10 +28,7 @@ pub fn lower_final_sandbox_privileges_asap() {
         .expect("unable to read worker policy from broker");
     let pol = match resp {
         Some(IPCResponse::PolicyApplied(pol)) => pol,
-        other => panic!(
-            "unexpected initial response received from broker: {:?}",
-            other
-        ),
+        other => panic!("unexpected initial response received from broker: {other:?}"),
     };
     debug!("Policy applied: {:?}", pol);
 

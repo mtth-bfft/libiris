@@ -55,10 +55,11 @@ fn inherited_resources_detects_leak() {
     let worker_binary = get_worker_abs_path("inherited_resources_detects_leak_worker");
     let (tmpout, _) = open_tmp_file();
     let tmpout = downcast_to_handle(tmpout);
-    let proc_config = ProcessConfig::new(worker_binary.clone(), &[worker_binary])
-        .with_stdout_redirected(&tmpout)
+    let mut proc_config = ProcessConfig::new(worker_binary.clone(), &[worker_binary]);
+    proc_config
+        .redirect_stdout(Some(&tmpout))
         .unwrap()
-        .with_stderr_redirected(&tmpout)
+        .redirect_stderr(Some(&tmpout))
         .unwrap();
     let policy = Policy::nothing_allowed(); // don't allow any resource to be inherited, check that it receives nothing
     let worker = Worker::new(&proc_config, &policy).expect("worker creation failed");

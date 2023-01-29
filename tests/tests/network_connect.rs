@@ -19,25 +19,26 @@ fn network_connect_loopback() {
     info!("Waiting for connection on 127.0.0.1:{}", port);
     thread::spawn(move || match listener.accept() {
         Ok((_sock, addr)) => info!("Ok, received connect from {:?}", addr),
-        Err(e) => panic!("Could not accept() incoming connections: {}", e),
+        Err(e) => panic!("Could not accept() incoming connections: {e}"),
     });
 
     let policy = Policy::nothing_allowed();
     let worker_binary = get_worker_abs_path("network_connect_worker");
     let (tmpout, tmpoutpath) = open_tmp_file();
     let tmpout = downcast_to_handle(tmpout);
-    let proc_config = ProcessConfig::new(
+    let mut proc_config = ProcessConfig::new(
         worker_binary.clone(),
         &[
             worker_binary,
             CString::new("127.0.0.1").unwrap(),
-            CString::new(format!("{}", port)).unwrap(),
+            CString::new(format!("{port}")).unwrap(),
         ],
-    )
-    .with_stdout_redirected(&tmpout)
-    .unwrap()
-    .with_stderr_redirected(&tmpout)
-    .unwrap();
+    );
+    proc_config
+        .redirect_stdout(Some(&tmpout))
+        .unwrap()
+        .redirect_stderr(Some(&tmpout))
+        .unwrap();
     let worker = Worker::new(&proc_config, &policy).expect("worker creation failed");
     assert_eq!(
         wait_for_worker_exit(&worker),

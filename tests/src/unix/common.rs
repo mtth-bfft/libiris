@@ -19,7 +19,7 @@ pub fn check_worker_handles(worker: &Worker) {
             sandbox_ipc_socket_found = true; // ignore exactly one Unix socket, the one we use to communicate with our broker
             continue;
         }
-        panic!("File descriptor leaked into worker process: {}", path);
+        panic!("File descriptor leaked into worker process: {path}");
     }
 }
 

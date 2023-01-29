@@ -22,27 +22,19 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
         if should_work {
             assert!(
                 res >= 0,
-                "open({}, flags={}) should have worked, failed with errno {}",
-                path,
-                flags,
-                err
+                "open({path}, flags={flags}) should have worked, failed with errno {err}"
             );
             let res = unsafe { libc::close(res.try_into().expect("invalid file descriptor")) };
             assert_eq!(res, 0, "unable to close file descriptor");
         } else {
             assert!(
                 res < 0,
-                "open({}, flags={}) should have failed, succeeded",
-                path,
-                flags
+                "open({path}, flags={flags}) should have failed, succeeded"
             );
             assert_eq!(
                 err,
                 libc::EACCES,
-                "open({}, flags={}) should have failed with errno EACCES, failed with errno {}",
-                path,
-                flags,
-                err
+                "open({path}, flags={flags}) should have failed with errno EACCES, failed with errno {err}"
             );
         }
         // Perform the same test using openat()
@@ -62,25 +54,17 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
         if should_work {
             assert!(
                 res >= 0,
-                "openat({}, flags={}) should have worked, failed with errno {}",
-                path,
-                flags,
-                err
+                "openat({path}, flags={flags}) should have worked, failed with errno {err}"
             );
         } else {
             assert!(
                 res < 0,
-                "openat({}, flags={}) should have failed, succeeded",
-                path,
-                flags
+                "openat({path}, flags={flags}) should have failed, succeeded"
             );
             assert_eq!(
                 err,
                 libc::EACCES,
-                "openat({}, flags={}) should have failed with errno EACCES, failed with errno {}",
-                path,
-                flags,
-                err
+                "openat({path}, flags={flags}) should have failed with errno EACCES, failed with errno {err}"
             );
         }
         if res >= 0 {
@@ -101,9 +85,7 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
             if (flags & O_TRUNC) == 0 {
                 assert!(
                     res >= 0,
-                    "read() failed on fd flags={:#X} with errno {}",
-                    flags,
-                    err
+                    "read() failed on fd flags={flags:#X} with errno {err}"
                 );
                 assert_eq!(res, 2, "wrong number of bytes read from test file");
                 assert_eq!(b"OK", &buf[..2], "unexpected content read from test file");
@@ -129,7 +111,7 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
         let res = unsafe { libc::write(fd, b"KO?".as_ptr() as *const c_void, 3) };
         let err = unsafe { *(libc::__errno_location()) };
         if (flags & (O_WRONLY | O_RDWR)) != 0 && (flags & O_PATH) == 0 {
-            assert_eq!(res, 3, "write() failed with error {}", err);
+            assert_eq!(res, 3, "write() failed with error {err}");
             // Check the result using fstat() which requires no permission
             // on the file (reading would fail when write-only)
             let mut stat: libc::stat = unsafe { std::mem::zeroed() };
@@ -138,8 +120,7 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
             let expected_size = if (flags & O_APPEND) == 0 { 3 } else { 5 };
             assert_eq!(
                 stat.st_size, expected_size,
-                "unexpected file size after write with flags={:#X}",
-                flags
+                "unexpected file size after write with flags={flags:#X}"
             );
             // Reset the file as we found it
             let res = unsafe { libc::ftruncate(fd, 0) };
@@ -151,8 +132,7 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
         } else {
             assert_eq!(
                 res, -1,
-                "write() should have failed due to flags={:#X}",
-                flags
+                "write() should have failed due to flags={flags:#X}"
             );
             assert_eq!(err, libc::EBADF, "write() failed with the wrong errno");
         }
@@ -242,8 +222,8 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
             assert_eq!(res, 0, "ReadFile should not have succeeded");
             assert_eq!(err, ERROR_ACCESS_DENIED, "unexpected ReadFile error code");
         } else {
-            assert_ne!(res, 0, "ReadFile failed with error code {}", err);
-            assert_eq!(err, 0, "ReadFile set error code {} unexpectedly", err);
+            assert_ne!(res, 0, "ReadFile failed with error code {err}");
+            assert_eq!(err, 0, "ReadFile set error code {err} unexpectedly");
             assert_eq!(bytes_read, 2, "wrong number of bytes read");
             assert_eq!(
                 b"OK",
@@ -271,9 +251,9 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
             assert_eq!(res, 0, "WriteFile should have failed");
             assert_eq!(err, ERROR_ACCESS_DENIED, "unexpected WriteFile error code");
         } else {
-            assert_ne!(res, 0, "WriteFile failed (error {})", err);
+            assert_ne!(res, 0, "WriteFile failed (error {err})");
             assert_eq!(bytes_written, 3, "unexpected number of bytes written");
-            assert_eq!(err, 0, "WriteFile set error to {} unexpectedly", err);
+            assert_eq!(err, 0, "WriteFile set error to {err} unexpectedly");
             // Check the result: should be "OKKO?" if append-only, "KO?" otherwise
             // Do this check using GetFileSize() which requires no permission on the file (reading would fail
             // when not readable by policy)
@@ -356,7 +336,7 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
             )
         };
         if should_work {
-            assert!(NT_SUCCESS(res), "NtCreateFile({}, access_mask={:#X}, share={:#X}, create_disposition={:#X}, create_options={:#X}) should have succeeded", path, desired_access, share_access, create_disposition, create_options);
+            assert!(NT_SUCCESS(res), "NtCreateFile({path}, access_mask={desired_access:#X}, share={share_access:#X}, create_disposition={create_disposition:#X}, create_options={create_options:#X}) should have succeeded");
             assert_ne!(
                 hfile,
                 null_mut(),

@@ -11,6 +11,11 @@ pub(crate) fn handle_os_specific_request(
 ) -> (IPCResponse, Option<Handle>) {
     match request {
         IPCRequest::OpenFile { path, flags } => handle_open_file(policy, path, flags),
+        IPCRequest::Syscall { nb, args, ip } => {
+            warn!("Unsupported system call #{nb} used in worker at address {ip:#X} with arguments ({:#X}, {:#X}, {:#X}, {:#X}, {:#X}, {:#X})",
+                args[0], args[1], args[2], args[3], args[4], args[5]);
+            (IPCResponse::SyscallResult(-(libc::ENOSYS as i64)), None)
+        }
         unknown => {
             warn!("Unexpected request from worker: {:?}", unknown);
             (IPCResponse::SyscallResult(-(libc::EINVAL as i64)), None)

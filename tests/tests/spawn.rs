@@ -8,10 +8,11 @@ fn spawn() {
     let worker_binary = get_worker_abs_path("spawn_worker");
     let (tmpout, tmpoutpath) = open_tmp_file();
     let tmpout = downcast_to_handle(tmpout);
-    let proc_config = ProcessConfig::new(worker_binary.clone(), &[worker_binary])
-        .with_stdout_redirected(&tmpout)
+    let mut proc_config = ProcessConfig::new(worker_binary.clone(), &[worker_binary]);
+    proc_config
+        .redirect_stdout(Some(&tmpout))
         .unwrap()
-        .with_stderr_redirected(&tmpout)
+        .redirect_stderr(Some(&tmpout))
         .unwrap();
 
     let worker =

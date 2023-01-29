@@ -22,8 +22,8 @@ fn policy_log_callback() {
     let closure_state = state.clone();
     policy.add_log_callback(Box::new(
         move |request: &PolicyRequest, verdict: &PolicyVerdict| {
-            println!("Request: {:?}", request);
-            println!("Verdict: {:?}", verdict);
+            println!("Request: {request:?}");
+            println!("Verdict: {verdict:?}");
             let mut lock = closure_state
                 .lock()
                 .expect("failed to acquire lock in closure");
@@ -39,10 +39,11 @@ fn policy_log_callback() {
     ));
 
     let worker_binary = get_worker_abs_path("policy_log_callback_worker");
-    let proc_config = ProcessConfig::new(worker_binary.clone(), &[worker_binary, tmpokpath])
-        .with_stdout_redirected(&tmpout)
+    let mut proc_config = ProcessConfig::new(worker_binary.clone(), &[worker_binary, tmpokpath]);
+    proc_config
+        .redirect_stdout(Some(&tmpout))
         .unwrap()
-        .with_stderr_redirected(&tmpout)
+        .redirect_stderr(Some(&tmpout))
         .unwrap();
     let worker = Worker::new(&proc_config, &policy).expect("worker creation failed");
     assert_eq!(

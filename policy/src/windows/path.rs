@@ -48,8 +48,7 @@ pub(crate) fn derive_all_file_paths_from_path(path: &str) -> Result<Vec<String>,
                 Ok(s) => s,
                 Err(e) => {
                     println!(
-                        " [!] GetFullPathNameW({}) returned a non-unicode result, {}: {:?}",
-                        path, e, buf
+                        " [!] GetFullPathNameW({path}) returned a non-unicode result, {e}: {buf:?}"
                     );
                     path.to_owned()
                 }
@@ -59,7 +58,7 @@ pub(crate) fn derive_all_file_paths_from_path(path: &str) -> Result<Vec<String>,
     let mut res = vec![];
     // Drive-absolute path type
     if absolute.get(1..3) == Some(":\\") {
-        res.push(format!("\\??\\{}", absolute)); // \??\C:\Windows\Temp\a.txt
+        res.push(format!("\\??\\{absolute}")); // \??\C:\Windows\Temp\a.txt
     }
     // TODO: improve validation, fail on unsupported types (e.g. relative ones)
     Ok(res)
@@ -73,18 +72,16 @@ pub fn derive_all_reg_key_paths_from_path(path: &str) -> Result<Vec<String>, Pol
             rest
         )])
     } else if let Some(rest) = path.strip_prefix("HKEY_USERS") {
-        Ok(vec![format!("\\REGISTRY\\USER{}", rest)])
+        Ok(vec![format!("\\REGISTRY\\USER{rest}")])
     } else if let Some(rest) = path.strip_prefix("HKEY_LOCAL_MACHINE") {
-        Ok(vec![format!("\\REGISTRY\\MACHINE{}", rest)])
+        Ok(vec![format!("\\REGISTRY\\MACHINE{rest}")])
     } else if let Some(rest) = path.strip_prefix("HKEY_CLASSES_ROOT") {
         Ok(vec![format!(
-            "\\REGISTRY\\MACHINE\\SOFTWARE\\Classes{}",
-            rest
+            "\\REGISTRY\\MACHINE\\SOFTWARE\\Classes{rest}"
         )])
     } else if let Some(rest) = path.strip_prefix("HKEY_CURRENT_CONFIG") {
         Ok(vec![format!(
-            "\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Hardware Profiles\\Current{}",
-            rest
+            "\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Hardware Profiles\\Current{rest}"
         )])
     } else {
         Err(PolicyError::UnsupportedRegistryPath {

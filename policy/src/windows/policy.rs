@@ -86,7 +86,7 @@ pub enum PolicyRequest<'a> {
 
 impl Policy<'_> {
     pub fn evaluate_request(&self, req: &PolicyRequest) -> PolicyVerdict {
-        let res = match req {
+        let mut res = match req {
             PolicyRequest::FileOpen {
                 path,
                 desired_access,
@@ -112,6 +112,9 @@ impl Policy<'_> {
             } => self.check_reg_key_open(path, *desired_access, *create_options, *do_create),
         };
         self.log_verdict(req, &res);
+        if self.audit_only {
+            res = PolicyVerdict::Granted;
+        }
         res
     }
 
@@ -129,16 +132,13 @@ impl Policy<'_> {
             desired_access & !(FILE_ALWAYS_GRANTED_RIGHTS | FILE_READ_RIGHTS | FILE_WRITE_RIGHTS);
         if unsupported_access_rights != 0 {
             return PolicyVerdict::DelegationToSandboxNotSupported {
-                why: format!(
-                    "access right {:#X} not supported",
-                    unsupported_access_rights
-                ),
+                why: format!("access right {unsupported_access_rights:#X} not supported"),
             };
         }
         let unsupported_attributes = file_attributes & !SUPPORTED_FILE_ATTRIBUTES;
         if unsupported_attributes != 0 {
             return PolicyVerdict::DelegationToSandboxNotSupported {
-                why: format!("file attribute {:#X} not supported", unsupported_attributes),
+                why: format!("file attribute {unsupported_attributes:#X} not supported"),
             };
         }
         if (create_options & FILE_FLAG_OPEN_REPARSE_POINT) == 0 {
@@ -148,16 +148,13 @@ impl Policy<'_> {
         }
         if !SUPPORTED_FILE_CREATE_DISPOSITIONS.contains(&create_disposition) {
             return PolicyVerdict::DelegationToSandboxNotSupported {
-                why: format!(
-                    "file creation disposition {:#X} not supported",
-                    create_disposition
-                ),
+                why: format!("file creation disposition {create_disposition:#X} not supported"),
             };
         }
         if !path_is_sane(path) {
             return PolicyVerdict::InvalidRequestParameters {
                 argument_name: "path".to_owned(),
-                reason: format!("path to open \"{}\" is not in canonical form", path),
+                why: format!("path to open \"{path}\" is not in canonical form"),
             };
         }
         // Ensure the access requested matches the worker's policy
@@ -299,20 +296,14 @@ impl Policy<'_> {
             desired_access & !(KEY_READ_RIGHTS | KEY_WRITE_RIGHTS | KEY_ALWAYS_GRANTED_RIGHTS);
         if unsupported_access_rights != 0 {
             return PolicyVerdict::DelegationToSandboxNotSupported {
-                why: format!(
-                    "access right {:#X} not supported",
-                    unsupported_access_rights
-                ),
+                why: format!("access right {unsupported_access_rights:#X} not supported"),
             };
         }
         let unsupported_create_options =
             create_options & !(REG_OPTION_VOLATILE | REG_OPTION_NON_VOLATILE);
         if unsupported_create_options != 0 {
             return PolicyVerdict::DelegationToSandboxNotSupported {
-                why: format!(
-                    "creation option {:#X} not supported",
-                    unsupported_create_options
-                ),
+                why: format!("creation option {unsupported_create_options:#X} not supported"),
             };
         }
         let requests_read = (desired_access & KEY_READ_RIGHTS) != 0;
@@ -360,8 +351,7 @@ impl<'a> core::fmt::Display for PolicyRequest<'a> {
                 create_options,
                 ea,
             } => {
-                write!(f, "file {} with access_mask {:#X} (sharing {:#X}) (attributes {:#X}) (create_disposition {:#X} and create_options {:#X})",
-                    path, desired_access, share_access, file_attributes, create_disposition, create_options)?;
+                write!(f, "file {path} with access_mask {desired_access:#X} (sharing {share_access:#X}) (attributes {file_attributes:#X}) (create_disposition {create_disposition:#X} and create_options {create_options:#X})")?;
                 if !ea.is_empty() {
                     write!(f, "with {} bytes of extended attributes", ea.len())?;
                 }
@@ -375,14 +365,12 @@ impl<'a> core::fmt::Display for PolicyRequest<'a> {
             } => {
                 write!(
                     f,
-                    "registry key {} with access_mask {:#X}",
-                    path, desired_access
+                    "registry key {path} with access_mask {desired_access:#X}"
                 )?;
                 if *do_create {
                     write!(
                         f,
-                        ", creating it with options {:#X} if it does not exist",
-                        create_options
+                        ", creating it with options {create_options:#X} if it does not exist"
                     )?;
                 }
                 Ok(())

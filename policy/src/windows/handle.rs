@@ -1,12 +1,17 @@
 use crate::error::PolicyError;
 use crate::handle::{CrossPlatformHandle, Handle};
+use core::ptr::null_mut;
 use log::error;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle};
 use std::os::windows::prelude::RawHandle;
 use winapi::shared::minwindef::DWORD;
 use winapi::um::errhandlingapi::GetLastError;
-use winapi::um::handleapi::{CloseHandle, GetHandleInformation, SetHandleInformation};
+use winapi::um::handleapi::{
+    CloseHandle, DuplicateHandle, GetHandleInformation, SetHandleInformation,
+};
+use winapi::um::processthreadsapi::GetCurrentProcess;
 use winapi::um::winbase::HANDLE_FLAG_INHERIT;
+use winapi::um::winnt::{DUPLICATE_SAME_ACCESS, HANDLE};
 
 impl CrossPlatformHandle for Handle {
     unsafe fn new(raw_handle: u64) -> Result<Self, PolicyError> {
@@ -109,5 +114,31 @@ pub fn set_unmanaged_handle_inheritable<T: AsRawHandle>(
         let res = handle.set_inheritable(allow_inherit);
         let _ = handle.into_raw(); // leak voluntarily
         res
+    }
+}
+
+impl Clone for Handle {
+    fn clone(&self) -> Self {
+        let cur_raw = self.as_raw();
+        unsafe {
+            let mut new_raw: HANDLE = null_mut();
+            let res = DuplicateHandle(
+                GetCurrentProcess(),
+                cur_raw as *mut _,
+                GetCurrentProcess(),
+                &mut new_raw as *mut _,
+                0,
+                0,
+                DUPLICATE_SAME_ACCESS,
+            );
+            if res < 0 {
+                panic!(
+                    "DuplicateHandle() failed on {}: error {}",
+                    cur_raw,
+                    GetLastError()
+                );
+            }
+            Self::new(res.try_into().unwrap()).unwrap()
+        }
     }
 }

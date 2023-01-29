@@ -1,0 +1,9 @@
+pragma_once = true
+header = "/* Automatically generated with cbindgen --config cbindgen.toml (do not modify) */"
+
+[enum]
+rename_variants = "QualifiedScreamingSnakeCase"
+
+[defines]
+"target_os = windows" = "_WIN32"
+"target_os = linux" = "__linux__"

@@ -1,0 +1,17 @@
+[package]
+name = "iris-bindings-c-broker"
+version = "0.6.0"
+edition = "2021"
+
+[lib]
+name = "iris_broker"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+iris-policy = { path = "../../../policy" }
+iris-broker = { path = "../../../broker" }
+iris-ipc = { path = "../../../ipc" }
+
+[target.'cfg(target_os="windows")'.dependencies]
+winapi = { version = "0.3.9", features = [] }
+

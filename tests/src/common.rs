@@ -33,7 +33,7 @@ pub fn common_test_setup() {
 pub fn open_tmp_file() -> (File, CString) {
     let mut tmpdir = std::env::temp_dir();
     for i in 1..1000 {
-        tmpdir.push(format!("tmp_test_{}", i));
+        tmpdir.push(format!("tmp_test_{i}"));
         if let Ok(f) = OpenOptions::new()
             .read(true)
             .write(true)
@@ -55,13 +55,13 @@ pub fn open_tmp_file() -> (File, CString) {
 pub fn cleanup_tmp_file(path: &CStr) {
     let path = path.to_string_lossy().to_string();
     if let Err(e) = std::fs::remove_file(&path) {
-        panic!("Unable to remove temporary file {} : {}", path, e);
+        panic!("Unable to remove temporary file {path} : {e}");
     }
 }
 
 pub fn read_tmp_file(path: &CStr) -> String {
     let path = path.to_string_lossy().to_string();
-    std::fs::read_to_string(&path).unwrap_or_else(|_| format!("<Unable to read {:?}>", path))
+    std::fs::read_to_string(&path).unwrap_or_else(|_| format!("<Unable to read {path:?}>"))
 }
 
 pub fn get_worker_abs_path(name: &str) -> CString {

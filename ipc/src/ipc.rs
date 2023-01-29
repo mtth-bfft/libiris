@@ -34,12 +34,12 @@ impl IPCMessagePipe {
             Ok(v) => v,
             Err(ErrorKind::SizeLimit) => {
                 return Err(IpcError::PayloadTooBigToSerialize {
-                    payload: format!("{:?}", msg),
+                    payload: format!("{msg:?}"),
                 })
             }
             Err(e) => {
                 return Err(IpcError::InternalSerializationError {
-                    payload: format!("{:?}", msg),
+                    payload: format!("{msg:?}"),
                     description: e.to_string(),
                 })
             }

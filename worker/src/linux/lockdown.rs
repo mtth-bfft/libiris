@@ -3,7 +3,7 @@ use core::ptr::null;
 use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse};
 use iris_policy::{CrossPlatformHandle, Handle, Policy};
 use libc::{c_char, c_int, O_PATH};
-use log::{debug, warn};
+use log::debug;
 use seccomp_sys::{
     scmp_arg_cmp, scmp_compare, scmp_filter_attr, seccomp_attr_set, seccomp_init, seccomp_load,
     seccomp_release, seccomp_rule_add, seccomp_syscall_resolve_name, SCMP_ACT_ALLOW, SCMP_ACT_TRAP,
@@ -15,7 +15,7 @@ use std::sync::{Mutex, MutexGuard};
 
 const SYS_SECCOMP: i32 = 1;
 
-const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 57] = [
+const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 76] = [
     "read",
     "write",
     "readv",
@@ -39,7 +39,8 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 57] = [
     "exit_group",
     "restart_syscall",
     "rt_sigreturn",
-    "rt_sigaction", // FIXME: should really be handled separately, to hook rt_sigaction(SIGSYS,..)
+    "rt_sigprocmask", // FIXME: should be trapped to avoid masking SIGSYS
+    "rt_sigaction",   // FIXME: should be trapped to avoid masking SIGSYS
     "getpid",
     "gettid",
     "alarm",
@@ -73,6 +74,24 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 57] = [
     "nice",
     "pause",
     "clock_nanosleep",
+    "poll",
+    "pipe",
+    "mremap",
+    "msync",
+    "mincore",
+    "madvise",
+    "dup",
+    "dup2",
+    "dup3",
+    "fcntl",
+    "getitimer",
+    "setitimer",
+    "sendfile",
+    "listen",
+    "getsockname",
+    "getpeername",
+    "socketpair",
+    "getsockopt",
 ];
 
 // TODO: use a thread_local!{} pipe, and a global mutex-protected pipe to request new thread-specific ones
@@ -91,7 +110,7 @@ fn get_fd_for_path_with_perms(path: &str, flags: c_int) -> Result<Handle, i64> {
     match send_recv(&request, None) {
         (IPCResponse::SyscallResult(_), Some(fd)) => Ok(fd),
         (IPCResponse::SyscallResult(code), None) if code < 0 => Err(code),
-        err => panic!("Unexpected response from broker to file request: {:?}", err),
+        err => panic!("Unexpected response from broker to file request: {err:?}"),
     }
 }
 
@@ -172,21 +191,6 @@ pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePi
         }
     }
 
-    // Add special case handling for fcntl() with F_GETFL only
-    // - F_SETFL would allow a worker to clear the O_APPEND flag on an opened file
-    let syscall_nr = get_syscall_number("fcntl").unwrap();
-    debug!("Allowing syscall fcntl / {} for F_GETFL only", syscall_nr);
-    let a0_pid_comparator = scmp_arg_cmp {
-        arg: 0, // first syscall argument
-        op: scmp_compare::SCMP_CMP_EQ,
-        datum_a: libc::F_GETFL.try_into().unwrap(),
-        datum_b: 0, // unused with SCMP_CMP_EQ
-    };
-    let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a0_pid_comparator) };
-    if res != 0 {
-        panic!("seccomp_rule_add(SCMP_ACT_ALLOW, fcntl, SCMP_A0(SCMP_CMP_EQ, F_GETFL)) failed with code {}", -res);
-    }
-
     // Add special case handling for kill() on ourselves only (useful for e.g. raise())
     let syscall_nr = get_syscall_number("kill").unwrap();
     debug!("Allowing syscall kill / {} on ourselves only", syscall_nr);
@@ -259,8 +263,7 @@ pub(crate) fn get_syscall_number(name: &str) -> Result<i32, String> {
     let nr = unsafe { seccomp_syscall_resolve_name(name_null_terminated.as_ptr()) };
     if nr == __NR_SCMP_ERROR {
         return Err(format!(
-            "Syscall name \"{}\" not resolved by libseccomp",
-            name
+            "Syscall name \"{name}\" not resolved by libseccomp"
         ));
     }
     Ok(nr)
@@ -286,7 +289,7 @@ pub(crate) extern "C" fn sigsys_handler(
     // Be very careful when modifying this function: it *cannot* use
     // any syscall except those directly explicitly allowed by our
     // seccomp filter
-    // TODO: atomically set-compare a flag and panic!() if it's already set
+    // TODO: atomically set-compare a thread-local flag and panic!() if it's already set
     if signal_no != libc::SIGSYS {
         return;
     }
@@ -314,32 +317,40 @@ pub(crate) extern "C" fn sigsys_handler(
             let (path, mode) = (read_string_from_ptr(a0 as *const c_char), a1 as i32);
             handle_access(&path, mode)
         }
+        libc::SYS_stat => {
+            let (path, out_ptr) = (
+                read_string_from_ptr(a0 as *const c_char),
+                a1 as *mut libc::stat,
+            );
+            handle_stat(&path, out_ptr)
+        }
         libc::SYS_open => {
             let (path, flags, mode) = (
                 read_string_from_ptr(a0 as *const c_char),
                 a1 as i32,
                 a2 as i32,
             );
-            handle_openat(libc::AT_FDCWD, &path, flags, mode)
+            handle_openat(&path, flags, mode)
         }
-        libc::SYS_openat => {
+        libc::SYS_openat
+            if a0 as i32 == libc::AT_FDCWD || unsafe { *(a1 as *const u8) } == b'/' =>
+        {
             // Note: the dirfd passed cannot be accurately resolved to a valid path (you can
-            // readlink(/proc/self/fd/%d) but it might not be up to date if the folder has been moved)
-            let (dirfd, path, flags, mode) = (
-                a0 as i32,
+            // readlink(/proc/self/fd/%d) but it might not be up to date if e.g. the folder has been moved)
+            let (path, flags, mode) = (
                 read_string_from_ptr(a1 as *const c_char),
                 a2 as i32,
                 a3 as i32,
             );
-            handle_openat(dirfd, &path, flags, mode)
+            handle_openat(&path, flags, mode)
         }
         libc::SYS_chdir => {
             let path = read_string_from_ptr(a0 as *const c_char);
             handle_chdir(&path)
         }
-        _ => {
-            warn!("Syscall not supported yet, denied by default");
-            -(libc::EPERM as i64)
+        other_nb => {
+            let ip = read_i64_from_ptr(ucontext, libc::REG_RIP);
+            handle_syscall(other_nb, [a0, a1, a2, a3, a4, a5], ip)
         }
     };
     debug!("Syscall result: {}", response_code);
@@ -361,19 +372,9 @@ fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Opt
     (resp, handle)
 }
 
-fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc::c_int) -> i64 {
-    // Resolve the path manually, brokers only accept nonambiguous absolute paths
-    let path = if path.is_empty() {
-        return (-libc::ENOENT).into();
-    } else if path.starts_with('/') {
-        path.to_owned()
-    } else {
-        if dirfd != libc::AT_FDCWD {
-            warn!(
-                "openat(dirfd, relative path) is only supported with AT_FDCWD in Linux sandboxes"
-            );
-            return (-(libc::EACCES)).into();
-        }
+fn handle_openat(path: &str, flags: libc::c_int, _mode: libc::c_int) -> i64 {
+    // Resolve the path ourselves, brokers only accept nonambiguous absolute paths
+    let path = if !path.starts_with('/') {
         let mut abspath = std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| String::new());
@@ -382,6 +383,8 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc
         }
         abspath.push_str(path);
         abspath
+    } else {
+        path.to_owned()
     };
     debug!(
         "Requesting access to file path {:?} (flags={:#X})",
@@ -393,24 +396,33 @@ fn handle_openat(dirfd: libc::c_int, path: &str, flags: libc::c_int, _mode: libc
             unsafe { handle.into_raw() }.try_into().unwrap()
         }
         (IPCResponse::SyscallResult(code), None) => code,
-        other => panic!(
-            "Unexpected response from broker to file request: {:?}",
-            other
-        ),
+        other => panic!("Unexpected response from broker to file request: {other:?}",),
     }
 }
 
 fn handle_access(path: &str, mode: libc::c_int) -> i64 {
     debug!("Requesting access({}, {})", path, mode);
-    // Workers cannot execute anything anyway
-    if (mode & libc::X_OK) != 0 {
-        return -(libc::EACCES as i64);
-    }
     match get_fd_for_path_with_perms(path, mode) {
         Ok(_) => 0,
         Err(e) => e,
     }
     // File descriptor acquired is closed automatically here
+}
+
+fn handle_stat(path: &str, out_ptr: *mut libc::stat) -> i64 {
+    let fd = match get_fd_for_path_with_perms(path, O_PATH) {
+        Ok(fd) => fd,
+        Err(code) => return code,
+    };
+    unsafe {
+        *(libc::__errno_location()) = 0;
+    }
+    let res = unsafe { libc::fstat(fd.as_raw() as i32, out_ptr) };
+    if res != 0 {
+        let err = unsafe { *(libc::__errno_location()) };
+        return (-err).into();
+    }
+    0
 }
 
 fn handle_chdir(path: &str) -> i64 {
@@ -427,4 +439,15 @@ fn handle_chdir(path: &str) -> i64 {
         return (-err).into();
     }
     0
+}
+
+fn handle_syscall(nb: i64, args: [i64; 6], ip: i64) -> i64 {
+    let request = IPCRequest::Syscall { nb, args, ip };
+    match send_recv(&request, None) {
+        (IPCResponse::SyscallResult(_), Some(handle)) => {
+            unsafe { handle.into_raw() }.try_into().unwrap()
+        }
+        (IPCResponse::SyscallResult(code), None) => code,
+        other => panic!("Unexpected response from broker to syscall request: {other:?}",),
+    }
 }

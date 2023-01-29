@@ -144,7 +144,7 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
         )
     };
     if res != STATUS_SUCCESS || basic_info.PebBaseAddress.is_null() {
-        panic!("NtQueryInformationProcess() failed with code {}", res);
+        panic!("NtQueryInformationProcess() failed with code {res}");
     }
     let list_head = unsafe {
         &((*(*basic_info.PebBaseAddress).Ldr).InMemoryOrderModuleList) as *const LIST_ENTRY
@@ -166,10 +166,7 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
         // Their DOS header is at the DLL base address
         let magic = unsafe { (*dos_header).e_magic };
         if magic != IMAGE_DOS_HDR_MAGIC {
-            panic!(
-                "Invalid DOS header encountered at address {:?} : {}",
-                dos_header, magic
-            );
+            panic!("Invalid DOS header encountered at address {dos_header:?} : {magic}");
         }
 
         // Compute the address of the PE header
@@ -179,10 +176,7 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
         };
         let magic = unsafe { (*pe_header).Signature };
         if magic != IMAGE_PE_HDR_MAGIC {
-            panic!(
-                "Invalid PE header encountered at address {:?} : {}",
-                pe_header, magic
-            );
+            panic!("Invalid PE header encountered at address {pe_header:?} : {magic}");
         }
 
         // Compute the address of the data directories (their array offset depends on the architecture the DLL was compiled for)
@@ -200,10 +194,7 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
                     .DataDirectory) as *const IMAGE_DATA_DIRECTORY
             }
         } else {
-            panic!(
-                "DLL at {:?} uses unknown architecture ID {}",
-                dos_header, arch
-            );
+            panic!("DLL at {dos_header:?} uses unknown architecture ID {arch}");
         };
 
         // Patch exports before imports, so that there is no race condition: if a thread starts importing before we patch,
@@ -383,10 +374,7 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
                     } else if arch == IMAGE_FILE_MACHINE_I386 {
                         unsafe { (*(thunks.offset(thunk_nb * 4) as *const u32)) as u64 }
                     } else {
-                        panic!(
-                            "DLL at {:?} uses unknown architecture ID {}",
-                            dos_header, arch
-                        );
+                        panic!("DLL at {dos_header:?} uses unknown architecture ID {arch}");
                     };
                     // The end of the IMAGE_THUNK_DATA array is marked by an entry with all fields set to 0
                     if thunk == 0 {
@@ -405,10 +393,7 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
                                 unsafe { thunks.offset(thunk_nb * 4) } as *mut u32,
                             );
                         } else {
-                            panic!(
-                                "DLL at {:?} uses unknown architecture ID {}",
-                                dos_header, arch
-                            );
+                            panic!("DLL at {dos_header:?} uses unknown architecture ID {arch}");
                         }
                     }
                 }
@@ -582,10 +567,7 @@ extern "system" fn hook_ntcreatefile(
             code as NTSTATUS
         }
         (IPCResponse::SyscallResult(code), None) => code as NTSTATUS,
-        other => panic!(
-            "Unexpected response from broker to NtCreateFile request: {:?}",
-            other
-        ),
+        other => panic!("Unexpected response from broker to NtCreateFile request: {other:?}"),
     }
 }
 
@@ -646,10 +628,7 @@ extern "system" fn hook_ntopenfile(
             code as NTSTATUS
         }
         (IPCResponse::SyscallResult(code), None) => code as NTSTATUS,
-        other => panic!(
-            "Unexpected response from broker to NtCreateFile request: {:?}",
-            other
-        ),
+        other => panic!("Unexpected response from broker to NtCreateFile request: {other:?}"),
     }
 }
 
@@ -723,10 +702,7 @@ extern "system" fn hook_ntcreatekey(
             code as NTSTATUS
         }
         (IPCResponse::SyscallResult(code), None) => code as NTSTATUS,
-        other => panic!(
-            "Unexpected response from broker to NtCreateKey request: {:?}",
-            other
-        ),
+        other => panic!("Unexpected response from broker to NtCreateKey request: {other:?}"),
     }
 }
 

@@ -46,8 +46,7 @@ fn transform_path(path: &str) -> String {
     };
     assert!(
         NT_SUCCESS(status),
-        "RtlDosPathNameToRelativeNtPathName_U_WithStatus() failed with status 0x{:08X}",
-        status
+        "RtlDosPathNameToRelativeNtPathName_U_WithStatus() failed with status 0x{status:08X}"
     );
 
     let str_len = us_nt_path.Length as usize / std::mem::size_of::<WCHAR>();
@@ -83,7 +82,7 @@ fn file_path_open() {
                     .allow_file_write(&tmpokpath.to_string_lossy())
                     .unwrap();
             }
-            let proc_config = ProcessConfig::new(
+            let mut proc_config = ProcessConfig::new(
                 worker_binary.clone(),
                 &[
                     worker_binary.clone(),
@@ -94,11 +93,12 @@ fn file_path_open() {
                     CString::new(if readable { "1" } else { "0" }).unwrap(),
                     CString::new(if writable { "1" } else { "0" }).unwrap(),
                 ],
-            )
-            .with_stdout_redirected(&tmpout)
-            .unwrap()
-            .with_stderr_redirected(&tmpout)
-            .unwrap();
+            );
+            proc_config
+                .redirect_stdout(Some(&tmpout))
+                .unwrap()
+                .redirect_stderr(Some(&tmpout))
+                .unwrap();
             let worker = Worker::new(&proc_config, &policy).expect("worker creation failed");
             assert_eq!(
                 wait_for_worker_exit(&worker),

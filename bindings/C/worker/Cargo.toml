@@ -1,0 +1,11 @@
+[package]
+name = "iris-bindings-c-worker"
+version = "0.6.0"
+edition = "2021"
+
+[lib]
+name = "iris_worker"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+iris-worker = { path = "../../../worker" }
