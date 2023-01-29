@@ -15,7 +15,7 @@ use std::sync::{Mutex, MutexGuard};
 
 const SYS_SECCOMP: i32 = 1;
 
-const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 57] = [
+const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 76] = [
     "read",
     "write",
     "readv",
@@ -39,7 +39,8 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 57] = [
     "exit_group",
     "restart_syscall",
     "rt_sigreturn",
-    "rt_sigaction", // FIXME: should really be handled separately, to hook rt_sigaction(SIGSYS,..)
+    "rt_sigprocmask", // FIXME: should be trapped to avoid masking SIGSYS
+    "rt_sigaction",   // FIXME: should be trapped to avoid masking SIGSYS
     "getpid",
     "gettid",
     "alarm",
@@ -73,6 +74,24 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 57] = [
     "nice",
     "pause",
     "clock_nanosleep",
+    "poll",
+    "pipe",
+    "mremap",
+    "msync",
+    "mincore",
+    "madvise",
+    "dup",
+    "dup2",
+    "dup3",
+    "fcntl",
+    "getitimer",
+    "setitimer",
+    "sendfile",
+    "listen",
+    "getsockname",
+    "getpeername",
+    "socketpair",
+    "getsockopt",
 ];
 
 // TODO: use a thread_local!{} pipe, and a global mutex-protected pipe to request new thread-specific ones
@@ -170,21 +189,6 @@ pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePi
                 syscall_name, -res
             );
         }
-    }
-
-    // Add special case handling for fcntl() with F_GETFL only
-    // - F_SETFL would allow a worker to clear the O_APPEND flag on an opened file
-    let syscall_nr = get_syscall_number("fcntl").unwrap();
-    debug!("Allowing syscall fcntl / {} for F_GETFL only", syscall_nr);
-    let a0_pid_comparator = scmp_arg_cmp {
-        arg: 0, // first syscall argument
-        op: scmp_compare::SCMP_CMP_EQ,
-        datum_a: libc::F_GETFL.try_into().unwrap(),
-        datum_b: 0, // unused with SCMP_CMP_EQ
-    };
-    let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a0_pid_comparator) };
-    if res != 0 {
-        panic!("seccomp_rule_add(SCMP_ACT_ALLOW, fcntl, SCMP_A0(SCMP_CMP_EQ, F_GETFL)) failed with code {}", -res);
     }
 
     // Add special case handling for kill() on ourselves only (useful for e.g. raise())
@@ -285,7 +289,7 @@ pub(crate) extern "C" fn sigsys_handler(
     // Be very careful when modifying this function: it *cannot* use
     // any syscall except those directly explicitly allowed by our
     // seccomp filter
-    // TODO: atomically set-compare a flag and panic!() if it's already set
+    // TODO: atomically set-compare a thread-local flag and panic!() if it's already set
     if signal_no != libc::SIGSYS {
         return;
     }
@@ -312,6 +316,13 @@ pub(crate) extern "C" fn sigsys_handler(
         libc::SYS_access => {
             let (path, mode) = (read_string_from_ptr(a0 as *const c_char), a1 as i32);
             handle_access(&path, mode)
+        }
+        libc::SYS_stat => {
+            let (path, out_ptr) = (
+                read_string_from_ptr(a0 as *const c_char),
+                a1 as *mut libc::stat,
+            );
+            handle_stat(&path, out_ptr)
         }
         libc::SYS_open => {
             let (path, flags, mode) = (
@@ -407,6 +418,22 @@ fn handle_access(path: &str, mode: libc::c_int) -> i64 {
         Err(e) => e,
     }
     // File descriptor acquired is closed automatically here
+}
+
+fn handle_stat(path: &str, out_ptr: *mut libc::stat) -> i64 {
+    let fd = match get_fd_for_path_with_perms(path, O_PATH) {
+        Ok(fd) => fd,
+        Err(code) => return code,
+    };
+    unsafe {
+        *(libc::__errno_location()) = 0;
+    }
+    let res = unsafe { libc::fstat(fd.as_raw() as i32, out_ptr) };
+    if res != 0 {
+        let err = unsafe { *(libc::__errno_location()) };
+        return (-err).into();
+    }
+    0
 }
 
 fn handle_chdir(path: &str) -> i64 {
