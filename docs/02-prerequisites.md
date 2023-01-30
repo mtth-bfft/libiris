@@ -11,6 +11,12 @@ When starting a project from scratch, it might be worthwhile to take the time to
 Using a code versionning tool like Git can give insights into how many people maintain each part of a codebase. Parts with too few maintainers for their complexity can be prioritized, simplified, or replaced with external libraries.
 Likewise, dependencies to third-party libraries need to be reviewed: are they the root cause of security vulnerabilities in your project, or do they take a long time to be updated (especially when vulnerabilities are found)? If so, looking for an equivalent library could be worthwhile.
 
+## Priorization
+
+Introducing sandboxing comes at a cost (development and maintenance time, and performance overhead at runtime), so you should prioritize and start with your most sensitive applications. Depending on your attack scenarios, this could be e.g. a server exposed to a large network, or a document parser running on a host containing sensitive data.
+
+When doing this inventory, keep in mind that every application you manage to remove from this list is a lot of time and effort saved. Sandboxing is way more costly than e.g. reducing network exposure, or moving sensitive data to other hosts and isolating the untrusted host at the network level.
+
 ## Static code analysis and additional compiler verifications
 
 Using an up-to-date compiler is often sufficient to warn developers if they use legacy functions which do not check their parameters sufficiently (e.g. `strcpy`, `sprintf`), or are otherwise common sources of vulnerabilities. This is done by default by MSVC since at least Microsoft Visual Studio 2008 (just ensure `_CRT_SECURE_NO_WARNINGS` is not defined)[8][9]. Additional checks should be enabled, e.g. using the `/sdl` and `/W4` flag for the MSVC compiler[2], and the `-Wall`, `-Wextra`, `-pedantic` for the GNU C Compiler[21].

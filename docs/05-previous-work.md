@@ -28,6 +28,18 @@ Work published in the Capsicum project and its patchset for Linux have been of i
 - for its approach of file restrictions through a new `O_BENEATH` flag, and its warning of race conditions when allowing `..\` in path lookups;
 - for its precise documentation.
 
+## gVisor
+
+This project, written and Go and started by Google, uses virtualization and a virtual machine monitor bundled with a minimal kernel. It mostly targets containers, by offering a container runtime compatible with e.g. Docker, but may also be used to sandbox individual applications.
+
+Since this approach uses a hypervisor, it requires a hypervisor to be installed and administrator privileges, which is not compatible with our end-user requirements.
+
+## Cappsule
+
+This project, written in C and assembly and started by Quarkslab, inserts a minimal hypervisor (~15'000 lines of C) under the running OS, and creates lightweight VMs for each application. VMs have a single vCPU, a copy-on-write view of system RAM, and no access to the hardware. Processes in VMs communicate with the original OS via shared memory to emulate network features, filesystem features, and GUI features (through the same code as Qubes OS).
+
+Since this approach uses a custom Linux hypervisor, it requires administrator privileges to load kernel modules, and does not work for e.g. Windows, which is not compatible with our end-user requirements.
+
 ## TODO
 
 WebKitGTK, Flatpak and GNOME
