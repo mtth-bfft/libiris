@@ -4,8 +4,8 @@ use iris_worker::lower_final_sandbox_privileges_asap;
 use std::io::{self, Read};
 
 fn main() {
-    lower_final_sandbox_privileges_asap();
     common_test_setup();
+    lower_final_sandbox_privileges_asap();
 
     println!("OK_STDOUT");
     eprintln!("OK_STDERR");

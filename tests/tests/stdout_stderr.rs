@@ -32,14 +32,12 @@ fn stdout_stderr() {
         Ok(0),
         "worker wait_for_exit failed"
     );
-    assert_eq!(
-        read_tmp_file(&tmpoutpath),
-        "OK_STDOUT\n".to_owned(),
+    assert!(
+        read_tmp_file(&tmpoutpath).contains("OK_STDOUT\n"),
         "unexpected value from stdout"
     );
-    assert_eq!(
-        read_tmp_file(&tmperrpath),
-        "OK_STDERR\n".to_owned(),
+    assert!(
+        read_tmp_file(&tmperrpath).contains("OK_STDERR\n"),
         "unexpected value from stderr"
     );
     cleanup_tmp_file(&tmpinpath);

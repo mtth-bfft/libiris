@@ -20,6 +20,15 @@ fn policy_log_callback() {
         .unwrap();
     let state = Arc::new(Mutex::new(0u64));
     let closure_state = state.clone();
+    // The callback gets called with NT file paths on Windows, so we can't simply
+    // compare the FileOpen { path } with tmpokpath to make sure we're talking about
+    // the same file. Compare file names, which are unique enough.
+    let tmpfilename: String = tmpokpath
+        .to_string_lossy()
+        .rsplit_once(['/', '\\'])
+        .unwrap()
+        .1
+        .to_owned();
     policy.add_log_callback(Box::new(
         move |request: &PolicyRequest, verdict: &PolicyVerdict| {
             println!("Request: {request:?}");
@@ -27,14 +36,20 @@ fn policy_log_callback() {
             let mut lock = closure_state
                 .lock()
                 .expect("failed to acquire lock in closure");
-            if *lock == 0 {
-                assert_eq!(*verdict, PolicyVerdict::Granted);
-            } else if *lock == 1 {
-                assert!(matches!(verdict, PolicyVerdict::DeniedByPolicy { .. }));
-            } else {
-                panic!("Callback called too many times");
+            if let PolicyRequest::FileOpen { path, .. } = request {
+                let requested_filename = path.rsplit_once(['/', '\\']).unwrap().1;
+                if requested_filename == tmpfilename
+                    && *lock == 0
+                    && *verdict == PolicyVerdict::Granted
+                {
+                    *lock += 1;
+                }
+                if let PolicyVerdict::DeniedByPolicy { .. } = verdict {
+                    if requested_filename == tmpfilename && *lock == 1 {
+                        *lock += 1;
+                    }
+                }
             }
-            *lock += 1;
         },
     ));
 

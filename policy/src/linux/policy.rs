@@ -19,12 +19,16 @@ const SUPPORTED_FILE_OPEN_FLAGS: c_int = O_RDONLY
 #[derive(Debug, PartialEq, Eq)]
 pub enum PolicyRequest<'a> {
     FileOpen { path: &'a str, flags: c_int },
+    Syscall { nb: i64, args: [i64; 6], ip: i64 },
 }
 
 impl Policy<'_> {
     pub fn evaluate_request(&self, req: &PolicyRequest) -> PolicyVerdict {
         let mut res = match req {
             PolicyRequest::FileOpen { path, flags } => self.check_file_open(path, *flags),
+            PolicyRequest::Syscall { .. } => PolicyVerdict::DelegationToSandboxNotSupported {
+                why: "unsupported system call".to_owned(),
+            },
         };
         self.log_verdict(req, &res);
         if self.audit_only {
@@ -96,6 +100,10 @@ impl<'a> core::fmt::Display for PolicyRequest<'a> {
         match self {
             PolicyRequest::FileOpen { path, flags } => {
                 write!(f, "file {path} with flags {flags:#X}")
+            }
+            PolicyRequest::Syscall { nb, args, ip } => {
+                write!(f, "syscall nb#{nb} with arguments ({:#X}, {:#X}, {:#X}, {:#X}, {:#X}, {:#X}) at address {:#X}",
+                    args[0], args[1], args[2], args[3], args[4], args[5], ip)
             }
         }
     }

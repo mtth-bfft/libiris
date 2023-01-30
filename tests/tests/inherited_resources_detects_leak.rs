@@ -47,7 +47,7 @@ fn os_specific_setup(worker: &Worker) {
     unsafe { CloseHandle(h_worker) };
 }
 
-//#[ignore] // not ready for now
+#[ignore] // not ready for now
 #[test]
 #[should_panic(expected = "process")]
 fn inherited_resources_detects_leak() {

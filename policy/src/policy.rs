@@ -59,6 +59,10 @@ impl<'a> Policy<'a> {
         }
     }
 
+    pub fn is_audit_only(&self) -> bool {
+        self.audit_only
+    }
+
     // Takes a pointer to a callback that will receive notifications whenever access to a
     // resource is denied. Multiple callbacks can be registered, they all need to be
     // multithread-safe. A void* context can be passed to the callback, set it to NULL if

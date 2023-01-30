@@ -537,6 +537,7 @@ pub fn check_worker_handles(worker: &Worker) {
 
 pub fn wait_for_worker_exit(worker: &Worker) -> Result<u64, String> {
     let pid = worker.get_pid() as u32;
+    info!("Waiting for worker PID {} to exit", pid);
     let h_process = unsafe {
         let res = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_INFORMATION, 0, pid);
         if res.is_null() {

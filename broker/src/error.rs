@@ -8,6 +8,7 @@ pub enum BrokerError {
     CannotBuildPolicyForWorker(PolicyError),
     WorkerCommunicationError(IpcError),
     InternalOsOperationFailed { description: String, os_code: u64 },
+    ProcessExitedDuringInitialization,
 }
 
 impl From<PolicyError> for BrokerError {
