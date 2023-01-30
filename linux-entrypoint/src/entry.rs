@@ -15,7 +15,7 @@ pub struct EntrypointParameters {
 }
 
 // You should be extra-careful when editing this function: it is executed as
-// the entry point of clone(), which means it cannot use any of libc/stdlib
+// the entry point of clone(), which means it cannot use any of libc's functions
 // which may use locks (e.g. memory allocators)
 pub extern "C" fn clone_entrypoint(args: *mut c_void) -> c_int {
     unsafe {

@@ -1,98 +1,22 @@
 use core::ffi::c_void;
 use core::ptr::null;
-use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse};
-use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse, IPC_SECCOMP_CALL_SITE_PLACEHOLDER};
+use iris_policy::{CrossPlatformHandle, Handle};
 use libc::{c_char, c_int, O_PATH};
-use log::debug;
-use seccomp_sys::{
-    scmp_arg_cmp, scmp_compare, scmp_filter_attr, seccomp_attr_set, seccomp_init, seccomp_load,
-    seccomp_release, seccomp_rule_add, seccomp_syscall_resolve_name, SCMP_ACT_ALLOW, SCMP_ACT_TRAP,
-    __NR_SCMP_ERROR,
-};
+use log::{debug, info};
+use std::borrow::BorrowMut;
 use std::convert::TryInto;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 const SYS_SECCOMP: i32 = 1;
 
-const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 76] = [
-    "read",
-    "write",
-    "readv",
-    "writev",
-    "recvmsg",
-    "sendmsg",
-    "tee",
-    "fstat",
-    "lseek",
-    "_llseek",
-    "select",
-    "_newselect",
-    "accept",
-    "accept4",
-    "ftruncate",
-    "close",
-    "memfd_create",
-    "sigaltstack",
-    "munmap",
-    "nanosleep",
-    "exit_group",
-    "restart_syscall",
-    "rt_sigreturn",
-    "rt_sigprocmask", // FIXME: should be trapped to avoid masking SIGSYS
-    "rt_sigaction",   // FIXME: should be trapped to avoid masking SIGSYS
-    "getpid",
-    "gettid",
-    "alarm",
-    "arch_prctl",
-    "brk",
-    "cacheflush",
-    "close_range",
-    "getresuid",
-    "getresgid",
-    "getresuid32",
-    "getresgid32",
-    "getrandom",
-    "getuid",
-    "getuid32",
-    "readdir",
-    "timer_create",
-    "timer_delete",
-    "timer_getoverrun",
-    "timer_gettime",
-    "timer_settime",
-    "timerfd_create",
-    "timerfd_gettime",
-    "timerfd_settime",
-    "times",
-    "sched_yield",
-    "time",
-    "uname",
-    "fsync",
-    "fdatasync",
-    "shutdown",
-    "nice",
-    "pause",
-    "clock_nanosleep",
-    "poll",
-    "pipe",
-    "mremap",
-    "msync",
-    "mincore",
-    "madvise",
-    "dup",
-    "dup2",
-    "dup3",
-    "fcntl",
-    "getitimer",
-    "setitimer",
-    "sendfile",
-    "listen",
-    "getsockname",
-    "getpeername",
-    "socketpair",
-    "getsockopt",
-];
+static AUDIT_ONLY_MODE: AtomicBool = AtomicBool::new(false);
+
+thread_local! {
+    static IN_SIGSYS_HANDLER: bool = false;
+}
 
 // TODO: use a thread_local!{} pipe, and a global mutex-protected pipe to request new thread-specific ones
 // OR: create a global pool of threads which wait on a global lock-free queue
@@ -114,159 +38,119 @@ fn get_fd_for_path_with_perms(path: &str, flags: c_int) -> Result<Handle, i64> {
     }
 }
 
-pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePipe) {
+pub(crate) fn lower_final_sandbox_privileges(ipc: IPCMessagePipe) {
     // Initialization of globals. This is safe as long as we are only called once
     unsafe {
         // Store the IPC pipe to handle all future syscall requests
         IPC_PIPE_SINGLETON = Box::leak(Box::new(Mutex::new(ipc))) as *const _;
     }
-    // Set our own SIGSYS handler
-    let mut empty_signal_set: libc::sigset_t = unsafe { std::mem::zeroed() };
-    unsafe { libc::sigemptyset(&mut empty_signal_set as *mut _) };
-    let new_sigaction = libc::sigaction {
-        sa_sigaction: sigsys_handler as usize,
-        sa_mask: empty_signal_set,
-        sa_flags: libc::SA_SIGINFO,
-        sa_restorer: None,
+
+    get_ipc_pipe()
+        .send(&IPCRequest::InitializationRequest, None)
+        .expect("unable to send IPC message to broker");
+    let resp = get_ipc_pipe()
+        .recv()
+        .expect("unable to read worker policy from broker");
+    let (policy, mut seccomp_filter) = match resp {
+        Some(IPCResponse::InitializationResponse {
+            policy_applied,
+            seccomp_filter_to_apply,
+        }) => (policy_applied, seccomp_filter_to_apply),
+        other => panic!("unexpected initial response received from broker: {other:?}"),
     };
-    let mut old_sigaction = libc::sigaction {
-        sa_sigaction: 0,
-        sa_mask: empty_signal_set,
-        sa_flags: 0,
-        sa_restorer: None,
-    };
-    let res = unsafe {
-        libc::sigaction(
-            libc::SIGSYS,
-            &new_sigaction as *const _,
-            &mut old_sigaction as *mut _,
-        )
-    };
-    if res != 0 {
-        panic!(
-            "sigaction(SIGSYS) failed with error {}",
-            std::io::Error::last_os_error()
-        );
-    }
-    if old_sigaction.sa_sigaction != libc::SIG_DFL && old_sigaction.sa_sigaction != libc::SIG_IGN {
-        panic!("SIGSYS handler is already used by something else, cannot use seccomp-bpf");
+
+    if policy.is_audit_only() {
+        AUDIT_ONLY_MODE.store(true, Ordering::Relaxed);
     }
 
-    let res = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
-    if res != 0 {
-        panic!(
-            "prctl(PR_SET_NO_NEW_PRIVS) failed with error {}",
-            std::io::Error::last_os_error()
-        );
-    }
-
-    let filter = unsafe { seccomp_init(SCMP_ACT_TRAP) };
-    if filter.is_null() {
-        panic!("seccomp_init() failed, no error information available");
-    }
-
-    let res = unsafe { seccomp_attr_set(filter, scmp_filter_attr::SCMP_FLTATR_CTL_TSYNC, 1) };
-    if res != 0 {
-        panic!(
-            "seccomp_attr_set(SCMP_FLTATR_CTL_TSYNC) failed with error {}",
-            -res
-        );
-    }
-
-    for syscall_name in &SYSCALLS_ALLOWED_BY_DEFAULT {
-        let syscall_nr = match get_syscall_number(syscall_name) {
-            Ok(n) => n,
-            Err(e) => {
-                debug!("Syscall probably not supported {} : {}", syscall_name, e);
-                continue;
-            }
+    if seccomp_filter.is_empty() {
+        info!("No seccomp filter to load");
+    } else {
+        // TODO: use seccomp user notifications instead, when supported by the kernel + libseccomp
+        // Set our own SIGSYS handler
+        let mut empty_signal_set: libc::sigset_t = unsafe { std::mem::zeroed() };
+        unsafe { libc::sigemptyset(&mut empty_signal_set as *mut _) };
+        let new_sigaction = libc::sigaction {
+            sa_sigaction: sigsys_handler as usize,
+            sa_mask: empty_signal_set,
+            // Do not mask SIGSYS when in the handler, thanks to SA_NODEFER.
+            // We could leave it masked, and recurse infinitely if our handler triggers
+            // a syscall again, but crashing with a stack overflow is harder to debug than
+            // a panic!() with a clear error message and stack trace.
+            sa_flags: libc::SA_SIGINFO | libc::SA_NODEFER,
+            sa_restorer: None,
         };
-        debug!("Allowing syscall {} / {}", syscall_name, syscall_nr);
-        let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 0) };
+        let mut old_sigaction = libc::sigaction {
+            sa_sigaction: 0,
+            sa_mask: empty_signal_set,
+            sa_flags: 0,
+            sa_restorer: None,
+        };
+        let res = unsafe {
+            libc::sigaction(
+                libc::SIGSYS,
+                &new_sigaction as *const _,
+                &mut old_sigaction as *mut _,
+            )
+        };
         if res != 0 {
             panic!(
-                "seccomp_rule_add(SCMP_ACT_ALLOW, {}) failed with code {}",
-                syscall_name, -res
+                "sigaction(SIGSYS) failed with error {}",
+                std::io::Error::last_os_error()
             );
         }
-    }
+        if old_sigaction.sa_sigaction != libc::SIG_DFL
+            && old_sigaction.sa_sigaction != libc::SIG_IGN
+        {
+            panic!("SIGSYS handler is already used by something else, cannot use seccomp-bpf");
+        }
+        if AUDIT_ONLY_MODE.load(Ordering::Relaxed) {
+            let actual_call_site: usize =
+                (rerun_syscall as *const u8 as usize) + SYSCALL_ASM_OFFSET;
+            debug!("Audit mode: allowing all system calls from call site {actual_call_site:#X}");
+            // Replace the placeholder inserted by our broker, in a platform
+            // endianness independent way
+            let bytes = u64::to_ne_bytes(actual_call_site as u64);
+            let actual_first = [bytes[0], bytes[1], bytes[2], bytes[3]];
+            let actual_second = [bytes[4], bytes[5], bytes[6], bytes[7]];
+            let bytes = u64::to_ne_bytes(IPC_SECCOMP_CALL_SITE_PLACEHOLDER);
+            let placeholder_first = [bytes[0], bytes[1], bytes[2], bytes[3]];
+            let placeholder_second = [bytes[4], bytes[5], bytes[6], bytes[7]];
+            let mut start = 0;
+            while start + 4 < seccomp_filter.len() {
+                if seccomp_filter[start..start + 4] == placeholder_first {
+                    seccomp_filter[start..start + 4].clone_from_slice(&actual_first);
+                }
+                if seccomp_filter[start..start + 4] == placeholder_second {
+                    seccomp_filter[start..start + 4].clone_from_slice(&actual_second);
+                }
+                start += 1;
+            }
+        }
 
-    // Add special case handling for kill() on ourselves only (useful for e.g. raise())
-    let syscall_nr = get_syscall_number("kill").unwrap();
-    debug!("Allowing syscall kill / {} on ourselves only", syscall_nr);
-    let mypid = std::process::id();
-    let a0_pid_comparator = scmp_arg_cmp {
-        arg: 0, // first syscall argument
-        op: scmp_compare::SCMP_CMP_EQ,
-        datum_a: mypid.try_into().unwrap(),
-        datum_b: 0, // unused with SCMP_CMP_EQ
-    };
-    let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a0_pid_comparator) };
-    if res != 0 {
-        panic!("seccomp_rule_add(SCMP_ACT_ALLOW, kill, SCMP_A0(SCMP_CMP_EQ, getpid())) failed with code {}", -res);
+        let filter_insn_count = seccomp_filter.len() / std::mem::size_of::<libc::sock_filter>();
+        let seccomp_filter = libc::sock_fprog {
+            len: filter_insn_count as u16,
+            filter: seccomp_filter.as_ptr() as *const _ as *mut _, // doesn't really need *mut
+        };
+        let res = unsafe {
+            libc::prctl(
+                libc::PR_SET_SECCOMP,
+                libc::SECCOMP_MODE_FILTER,
+                &seccomp_filter as *const _,
+            )
+        };
+        if res != 0 {
+            panic!(
+                "prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) failed with error {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        info!(
+            "Seccomp filter with {} instructions applied successfully",
+            filter_insn_count
+        );
     }
-
-    let syscall_nr = get_syscall_number("tgkill").unwrap();
-    debug!(
-        " [.] Allowing syscall tgkill / {} on ourselves only",
-        syscall_nr
-    );
-    let a0_pid_comparator = scmp_arg_cmp {
-        arg: 0, // first syscall argument
-        op: scmp_compare::SCMP_CMP_EQ,
-        datum_a: mypid.try_into().unwrap(),
-        datum_b: 0, // unused with SCMP_CMP_EQ
-    };
-    let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a0_pid_comparator) };
-    if res != 0 {
-        panic!("seccomp_rule_add(SCMP_ACT_ALLOW, tgkill, SCMP_A0(SCMP_CMP_EQ, getpid())) failed with code {}", -res);
-    }
-
-    let syscall_nr = get_syscall_number("tkill").unwrap();
-    debug!("Allowing syscall tkill / {} on ourselves only", syscall_nr);
-    let mytid = unsafe { libc::syscall(libc::SYS_gettid) };
-    let a0_tid_comparator = scmp_arg_cmp {
-        arg: 0, // first syscall argument
-        op: scmp_compare::SCMP_CMP_EQ,
-        datum_a: mytid.try_into().unwrap(),
-        datum_b: 0, // unused with SCMP_CMP_EQ
-    };
-    let res = unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a0_tid_comparator) };
-    if res != 0 {
-        panic!("seccomp_rule_add(SCMP_ACT_ALLOW, tkill, SCMP_A0(SCMP_CMP_EQ, gettid())) failed with code {}", -res);
-    }
-
-    let syscall_nr = get_syscall_number("ioctl").unwrap();
-    debug!("Allowing syscall ioctl / {} for TCGETS only", syscall_nr);
-    let a1_tcgets_comparator = scmp_arg_cmp {
-        arg: 1, // second syscall argument (first is the file descriptor)
-        op: scmp_compare::SCMP_CMP_EQ,
-        datum_a: 21505,
-        datum_b: 0, // unused with SCMP_CMP_EQ
-    };
-    let res =
-        unsafe { seccomp_rule_add(filter, SCMP_ACT_ALLOW, syscall_nr, 1, a1_tcgets_comparator) };
-    if res != 0 {
-        panic!("seccomp_rule_add(SCMP_ACT_ALLOW, ioctl, SCMP_A0(SCMP_CMP_EQ, TCGETS)) failed with code {}", -res);
-    }
-
-    let res = unsafe { seccomp_load(filter) };
-    if res != 0 {
-        panic!("seccomp_load() failed with error {}", -res);
-    }
-    unsafe { seccomp_release(filter) };
-    debug!("Process seccomp filter applied successfully");
-}
-
-pub(crate) fn get_syscall_number(name: &str) -> Result<i32, String> {
-    let name_null_terminated = CString::new(name).unwrap();
-    let nr = unsafe { seccomp_syscall_resolve_name(name_null_terminated.as_ptr()) };
-    if nr == __NR_SCMP_ERROR {
-        return Err(format!(
-            "Syscall name \"{name}\" not resolved by libseccomp"
-        ));
-    }
-    Ok(nr)
 }
 
 fn read_string_from_ptr(ptr: *const c_char) -> String {
@@ -289,7 +173,6 @@ pub(crate) extern "C" fn sigsys_handler(
     // Be very careful when modifying this function: it *cannot* use
     // any syscall except those directly explicitly allowed by our
     // seccomp filter
-    // TODO: atomically set-compare a thread-local flag and panic!() if it's already set
     if signal_no != libc::SIGSYS {
         return;
     }
@@ -307,12 +190,23 @@ pub(crate) extern "C" fn sigsys_handler(
     let a3 = read_i64_from_ptr(ucontext, libc::REG_R10);
     let a4 = read_i64_from_ptr(ucontext, libc::REG_R8);
     let a5 = read_i64_from_ptr(ucontext, libc::REG_R9);
+    let ip = read_i64_from_ptr(ucontext, libc::REG_RIP);
+    IN_SIGSYS_HANDLER.with(|mut b| {
+        if *b {
+            panic!(
+                "Seccomp signal handler triggered unauthorized syscall {syscall_nr}, this is fatal",
+            );
+        }
+        *b.borrow_mut() = &true;
+    });
+    // FIXME: make everything below architecture-dependent (read siginfo->arch)
     debug!(
-        "Intercepted syscall nr={} ({}, {}, {}, {}, {}, {}) with seccomp-trap",
+        "Intercepted syscall nr={} ({}, {}, {}, {}, {}, {}) at ip={ip:#X} with seccomp-trap",
         syscall_nr, a0, a1, a2, a3, a4, a5
     );
 
     let response_code = match syscall_nr {
+        // TODO: handle legacy syscall tkill(), needs proxying to parent to check it belongs to the worker
         libc::SYS_access => {
             let (path, mode) = (read_string_from_ptr(a0 as *const c_char), a1 as i32);
             handle_access(&path, mode)
@@ -357,6 +251,9 @@ pub(crate) extern "C" fn sigsys_handler(
     unsafe {
         (*ucontext).uc_mcontext.gregs[libc::REG_RAX as usize] = response_code;
     }
+    IN_SIGSYS_HANDLER.with(|mut b| {
+        *b.borrow_mut() = &false;
+    });
 }
 
 fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Option<Handle>) {
@@ -406,7 +303,6 @@ fn handle_access(path: &str, mode: libc::c_int) -> i64 {
         Ok(_) => 0,
         Err(e) => e,
     }
-    // File descriptor acquired is closed automatically here
 }
 
 fn handle_stat(path: &str, out_ptr: *mut libc::stat) -> i64 {
@@ -443,11 +339,73 @@ fn handle_chdir(path: &str) -> i64 {
 
 fn handle_syscall(nb: i64, args: [i64; 6], ip: i64) -> i64 {
     let request = IPCRequest::Syscall { nb, args, ip };
-    match send_recv(&request, None) {
+    let response = match send_recv(&request, None) {
         (IPCResponse::SyscallResult(_), Some(handle)) => {
             unsafe { handle.into_raw() }.try_into().unwrap()
         }
         (IPCResponse::SyscallResult(code), None) => code,
         other => panic!("Unexpected response from broker to syscall request: {other:?}",),
+    };
+
+    // In audit mode, do a best effort to replay the syscall from an allow-listed
+    // location, so that we logged into the broker that the syscall was denied,
+    // but the program will (probably) still continue running as intended. Some system
+    // calls change semantics depending on where they're called from (e.g. sigreturn,
+    // fork, etc.) but hopefully they are already handled separately.
+    if AUDIT_ONLY_MODE.load(Ordering::Relaxed) && response == -(libc::ENOSYS as i64) {
+        // Note: we can't use libc::syscall here, otherwise code in the audited application
+        // could use it, be allow-listed, and the audit mode would completely miss these syscalls.
+        unsafe { rerun_syscall(nb, args[0], args[1], args[2], args[3], args[4], args[5]) }
+    } else {
+        response
     }
+}
+
+// Offset in bytes from the beginning of rerun_syscall() to the actual syscall site
+#[cfg(target_arch = "x86_64")]
+const SYSCALL_ASM_OFFSET: usize = 91;
+
+#[cfg(target_arch = "x86_64")]
+core::arch::global_asm!(
+    r#"
+.globl rerun_syscall
+rerun_syscall:
+    sub    rsp,0x58
+    mov    QWORD PTR [rsp],r9
+    mov    r10,r8
+    mov    r8,QWORD PTR [rsp]
+    mov    QWORD PTR [rsp+0x8],rcx
+    mov    rax,rdx
+    mov    rdx,QWORD PTR [rsp+0x8]
+    mov    QWORD PTR [rsp+0x10],rax
+    mov    rax,rsi
+    mov    rsi,QWORD PTR [rsp+0x10]
+    mov    QWORD PTR [rsp+0x18],rax
+    mov    rax,rdi
+    mov    rdi,QWORD PTR [rsp+0x18]
+    mov    r9,QWORD PTR [rsp+0x60]
+    mov    QWORD PTR [rsp+0x28],rax
+    mov    QWORD PTR [rsp+0x30],rdi
+    mov    QWORD PTR [rsp+0x38],rsi
+    mov    QWORD PTR [rsp+0x40],rdx
+    mov    QWORD PTR [rsp+0x48],r10
+    mov    QWORD PTR [rsp+0x50],r8
+    syscall
+    mov    QWORD PTR [rsp+0x20],rax
+    mov    rax,QWORD PTR [rsp+0x20]
+    add    rsp,0x58
+    ret
+"#
+);
+
+extern "C" {
+    fn rerun_syscall(
+        nb: i64,
+        arg0: i64,
+        arg1: i64,
+        arg2: i64,
+        arg3: i64,
+        arg4: i64,
+        arg5: i64,
+    ) -> i64;
 }

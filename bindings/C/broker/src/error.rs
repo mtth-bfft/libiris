@@ -18,7 +18,8 @@ pub enum IrisStatus {
     // 0x2000 : BrokerError
     BrokerConflictingEnvironmentVariable = 2001,
     BrokerMissingCommandLine = 2002,
-    InternalOsOperationFailed = 2003,
+    BrokerInternalOsOperationFailed = 2003,
+    ProcessExitedDuringInitialization = 2004,
     // 0x3000 : IpcError
     IpcUnexpectedHandleWithPayload = 3001,
     IpcTooManyHandlesWithPayload = 3002,
@@ -30,6 +31,7 @@ pub enum IrisStatus {
     IpcInternalSerializationError = 3008,
     IpcInternalDeserializationError = 3009,
     IpcInternalOsOperationFailed = 3010,
+    IpcUnexpectedMessageInThisContext = 3011,
 }
 
 impl From<PolicyError> for IrisStatus {
@@ -59,7 +61,12 @@ impl From<BrokerError> for IrisStatus {
             BrokerError::MissingCommandLine => IrisStatus::BrokerMissingCommandLine,
             BrokerError::CannotBuildPolicyForWorker(e) => IrisStatus::from(e),
             BrokerError::WorkerCommunicationError(e) => IrisStatus::from(e),
-            BrokerError::InternalOsOperationFailed { .. } => IrisStatus::InternalOsOperationFailed,
+            BrokerError::InternalOsOperationFailed { .. } => {
+                IrisStatus::BrokerInternalOsOperationFailed
+            }
+            BrokerError::ProcessExitedDuringInitialization => {
+                IrisStatus::ProcessExitedDuringInitialization
+            }
         }
     }
 }
@@ -87,6 +94,9 @@ impl From<IpcError> for IrisStatus {
                 IrisStatus::IpcInternalDeserializationError
             }
             IpcError::InternalOsOperationFailed { .. } => IrisStatus::IpcInternalOsOperationFailed,
+            IpcError::UnexpectedMessageInThisContext { .. } => {
+                IrisStatus::IpcUnexpectedMessageInThisContext
+            }
         }
     }
 }

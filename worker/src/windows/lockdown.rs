@@ -5,7 +5,7 @@ use core::ffi::c_void;
 use core::ptr::{null, null_mut};
 use core::sync::atomic::compiler_fence;
 use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse};
-use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use iris_policy::{CrossPlatformHandle, Handle};
 use log::{debug, info};
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
@@ -728,11 +728,16 @@ fn get_ipc_pipe() -> MutexGuard<'static, IPCMessagePipe> {
     unsafe { (*IPC_PIPE_SINGLETON).lock().unwrap() }
 }
 
-pub(crate) fn lower_final_sandbox_privileges(_policy: &Policy, ipc: IPCMessagePipe) {
+pub(crate) fn lower_final_sandbox_privileges(ipc: IPCMessagePipe) {
     // Initialization of globals. This is safe as long as we are only called once
     unsafe {
         // Store the IPC pipe to handle all future syscall requests
         IPC_PIPE_SINGLETON = Box::leak(Box::new(Mutex::new(ipc))) as *const _;
+    }
+    let resp = send_recv(&IPCRequest::InitializationRequest, None);
+    match resp {
+        (IPCResponse::InitializationResponse { .. }, None) => (),
+        other => panic!("unexpected initial response received from broker: {other:?}"),
     }
     hook_function(
         "ntdll.dll",

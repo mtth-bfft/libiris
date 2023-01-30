@@ -34,4 +34,7 @@ pub enum IpcError {
         os_code: u64,
         description: String,
     },
+    UnexpectedMessageInThisContext {
+        received_type: String,
+    },
 }
