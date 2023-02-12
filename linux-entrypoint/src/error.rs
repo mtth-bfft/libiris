@@ -18,8 +18,7 @@ impl StackBuffer {
 impl core::fmt::Write for StackBuffer {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         let capacity = self.buf.len() - 1; // always keep a null byte
-                                           // Truncate the rest, don't panic!()
-        for (i, &b) in self.buf[self.used_bytes..capacity]
+        for (i, &b) in self.buf[self.used_bytes..capacity] // truncate the rest, don't panic!()
             .iter_mut()
             .zip(s.as_bytes().iter())
         {
@@ -41,6 +40,22 @@ macro_rules! log_fatal {
             core::str::from_utf8(&buf.buf[0..buf.used_bytes]).unwrap_or("unable to format error to UTF-8")
         };
         libc::write(libc::STDERR_FILENO, s.as_ptr() as *const _, s.len());
-        libc::exit(10000 + line);
+        libc::exit(1);
+    }}
+}
+
+macro_rules! log_nonfatal {
+    ($debug_fd: expr, $($stuff: expr),+) => {{
+        if let Some(debug_fd) = $debug_fd {
+            let line = core::line!() as i32;
+            let mut buf = crate::error::StackBuffer::new();
+            let _ = write!(&mut buf, "Warning in clone() entrypoint at line {}: ", line);
+            let s = if let Err(_) = write!(&mut buf, $($stuff),+) {
+                "unable to format error message"
+            } else {
+                core::str::from_utf8(&buf.buf[0..buf.used_bytes]).unwrap_or("unable to format error to UTF-8")
+            };
+            libc::write(debug_fd, s.as_ptr() as *const _, s.len());
+        }
     }}
 }

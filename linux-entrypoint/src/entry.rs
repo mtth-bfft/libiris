@@ -3,6 +3,11 @@ use core::fmt::Write;
 use libc::c_int;
 
 pub struct EntrypointParameters {
+    pub debug_fd: Option<c_int>,
+    pub uid_map: *const i8,
+    pub uid_map_len: usize,
+    pub gid_map: *const i8,
+    pub gid_map_len: usize,
     pub exe: *const i8,
     pub argv: *const *const i8,
     pub envp: *const *const i8,
@@ -26,6 +31,110 @@ pub extern "C" fn clone_entrypoint(args: *mut c_void) -> c_int {
         let res = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
         if res != 0 {
             log_fatal!("prctl(PR_SET_NO_NEW_PRIVS) failed with errno {}\n", errno());
+        }
+
+        // Prevent ourselves from calling setgroups(), which could allow us to remove a supplementary
+        // group that restricts us from accessing certain files. This is also required to write the
+        // gid_map, when using user namespaces.
+        let setgroups_path = CStr::from_bytes_with_nul(b"/proc/self/setgroups\0").unwrap();
+        let setgroups_fd = libc::open(setgroups_path.as_ptr(), libc::O_WRONLY);
+        if setgroups_fd < 0 {
+            log_nonfatal!(
+                args.debug_fd,
+                "open(/proc/self/setgroups) failed with errno {}\n",
+                errno()
+            );
+        } else {
+            let res = libc::write(setgroups_fd, b"deny".as_ptr() as *const _, 4);
+            if res != 4 {
+                log_nonfatal!(
+                    args.debug_fd,
+                    "write(/proc/self/setgroups, deny) failed with errno {}\n",
+                    errno()
+                );
+            }
+            libc::close(setgroups_fd);
+        }
+
+        // Write our UID and GID mapping: map the current user to themselves. This just has the
+        // benefit of removing UID 0 in our namespace.
+        if args.uid_map_len > 0 {
+            let mapping_path = CStr::from_bytes_with_nul(b"/proc/self/uid_map\0").unwrap();
+            let mapping_fd = libc::open(mapping_path.as_ptr(), libc::O_WRONLY);
+            if mapping_fd < 0 {
+                log_nonfatal!(
+                    args.debug_fd,
+                    "open(/proc/self/uid_map) failed with errno {}\n",
+                    errno()
+                );
+            } else {
+                let res = libc::write(mapping_fd, args.uid_map as *const c_void, args.uid_map_len);
+                if res < 0 || (res as usize) != args.uid_map_len {
+                    log_nonfatal!(
+                        args.debug_fd,
+                        "write(/proc/self/uid_map) failed with errno {}\n",
+                        errno()
+                    );
+                }
+                libc::close(mapping_fd);
+            }
+        }
+        if args.gid_map_len > 0 {
+            let mapping_path = CStr::from_bytes_with_nul(b"/proc/self/gid_map\0").unwrap();
+            let mapping_fd = libc::open(mapping_path.as_ptr(), libc::O_WRONLY);
+            if mapping_fd < 0 {
+                log_nonfatal!(
+                    args.debug_fd,
+                    "open(/proc/self/gid_map) failed with errno {}\n",
+                    errno()
+                );
+            } else {
+                let res = libc::write(mapping_fd, args.gid_map as *const c_void, args.gid_map_len);
+                if res < 0 || (res as usize) != args.gid_map_len {
+                    log_nonfatal!(
+                        args.debug_fd,
+                        "write(/proc/self/gid_map) failed with errno {}\n",
+                        errno()
+                    );
+                }
+                libc::close(mapping_fd);
+            }
+        }
+
+        // Isolate ourselves from the broker's IPC namespace
+        let ipc_namespace_err = libc::unshare(libc::CLONE_NEWIPC);
+        if ipc_namespace_err != 0 {
+            log_nonfatal!(
+                args.debug_fd,
+                "unshare(CLONE_NEWIPC) failed with errno {}\n",
+                errno()
+            );
+        }
+
+        // Create a mount namespace based on the broker's one, but in which
+        // we can make modifications
+        let mount_namespace_err = libc::unshare(libc::CLONE_NEWNS);
+        if mount_namespace_err != 0 {
+            log_nonfatal!(
+                args.debug_fd,
+                "unshare(CLONE_NEWNS) failed with errno {}\n",
+                errno()
+            );
+        } else {
+            let res = libc::mount(
+                b"none\0".as_ptr() as *const i8,
+                b"/proc/\0".as_ptr() as *const i8,
+                b"proc\0".as_ptr() as *const i8,
+                0,
+                b"\0".as_ptr() as *const c_void,
+            );
+            if res != 0 {
+                log_nonfatal!(
+                    args.debug_fd,
+                    "mount(/proc) failed with errno {}\n",
+                    errno()
+                );
+            }
         }
 
         // Cleanup leftover file descriptors from our parent or from code injected into our process
