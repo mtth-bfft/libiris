@@ -3,6 +3,7 @@ use core::ffi::{c_char, c_void, CStr};
 use core::ptr::null_mut;
 use iris_broker::ProcessConfig;
 use iris_policy::{CrossPlatformHandle, Handle};
+use std::ffi::CString;
 
 pub type IrisProcessConfigHandle = *mut c_void;
 
@@ -17,25 +18,24 @@ pub(crate) struct SelfContainedProcessConfig {
 /// processes created with this config.
 /// # Safety
 /// This call is safe as long as executable_path points to a NULL-terminated string,
-/// and argv points to a NULL-terminated array of pointers to NULL-terminated strings.
+/// and argv points to a sized-array of length argc.
 #[no_mangle]
 pub unsafe extern "C" fn iris_process_config_new(
     executable_path: *const c_char,
+    argc: usize,
     argv: *const *const c_char,
     process_config: *mut IrisProcessConfigHandle,
 ) -> IrisStatus {
-    if executable_path.is_null() || argv.is_null() || process_config.is_null() {
+    if executable_path.is_null() || argv.is_null() || argc == 0 || process_config.is_null() {
         return IrisStatus::InvalidArguments;
     }
     *process_config = null_mut();
     let executable_path = CStr::from_ptr(executable_path).to_owned();
-    let argv = {
-        let mut collect = vec![];
-        while !(*argv).is_null() {
-            collect.push(CStr::from_ptr(*argv).to_owned());
-        }
-        collect
-    };
+    let argv: Vec<CString> = std::slice::from_raw_parts(argv, argc)
+        .iter()
+        .map(|cstr| CStr::from_ptr(*cstr).to_owned())
+        .collect();
+
     let out = SelfContainedProcessConfig {
         inner: ProcessConfig::new(executable_path, &argv),
         stdin_handle: None,
