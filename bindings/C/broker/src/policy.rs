@@ -25,6 +25,15 @@ pub extern "C" fn iris_policy_new_nothing_allowed() -> IrisPolicyHandle {
     Box::into_raw(Box::new(policy)) as IrisPolicyHandle
 }
 
+#[no_mangle]
+pub extern "C" fn iris_policy_new_audit() -> IrisPolicyHandle {
+    let policy = SelfContainedPolicy {
+        inner: Policy::unsafe_testing_audit_only(),
+        referenced_handles: vec![None; IRIS_MAX_HANDLES_PER_POLICY],
+    };
+    Box::into_raw(Box::new(policy)) as IrisPolicyHandle
+}
+
 /// Frees all memory allocated for a policy.
 /// # Safety
 /// The handle passed must be a valid handle returned by iris_policy_new_nothing_allowed(),
