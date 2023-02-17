@@ -19,7 +19,7 @@ pub unsafe extern "C" fn iris_worker_new(
     policy: IrisPolicyHandle,
     worker: *mut IrisWorkerHandle,
 ) -> IrisStatus {
-    if process_config.is_null() || policy.is_null() || worker.is_null() || !(*worker).is_null() {
+    if process_config.is_null() || policy.is_null() || worker.is_null() {
         return IrisStatus::InvalidArguments;
     }
     let process_config = Box::from_raw(process_config as *mut SelfContainedProcessConfig);
