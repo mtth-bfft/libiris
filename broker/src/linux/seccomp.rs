@@ -5,7 +5,7 @@ use libseccomp::{
 use log::info;
 use std::io::{Read, Seek};
 
-const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 77] = [
+const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 83] = [
     "read",
     "write",
     "readv",
@@ -14,6 +14,7 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 77] = [
     "sendmsg",
     "tee",
     "fstat",
+    "fstat64",
     "lseek",
     "_llseek",
     "select",
@@ -64,6 +65,9 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 77] = [
     "nice",
     "pause",
     "clock_nanosleep",
+    "clock_gettime",
+    "clock_gettime64",
+    "clock_getres",
     "poll",
     "pipe",
     "mremap",
@@ -83,6 +87,8 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 77] = [
     "socketpair",
     "getsockopt",
     "futex",
+    "exit",
+    "exit_group",
 ];
 
 macro_rules! get_offset {
