@@ -4,7 +4,7 @@ $at_least_one=0
 Get-ChildItem -Path "$($args[0])" -Filter '*.exe' -ErrorAction Stop | % {
     Write-Host "===== $($_.BaseName)"
     $at_least_one=1
-    & "$($_.FullName)"
+    & "$($_.FullName)" --nocapture
     if ($LASTEXITCODE -ne 0) {
         $exit_code = $LASTEXITCODE
         Write-Error "$($_.BaseName) failed with code $LASTEXITCODE"
