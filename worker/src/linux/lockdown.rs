@@ -3,7 +3,7 @@ use core::ptr::null;
 use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse, IPC_SECCOMP_CALL_SITE_PLACEHOLDER};
 use iris_policy::{CrossPlatformHandle, Handle};
 use libc::{c_char, c_int, O_PATH};
-use log::{debug, info};
+use log::{debug, info, warn};
 use std::borrow::BorrowMut;
 use std::convert::TryInto;
 use std::ffi::CStr;
@@ -74,7 +74,10 @@ pub(crate) fn lower_final_sandbox_privileges(ipc: IPCMessagePipe) {
         info!("No seccomp filter to load");
     } else {
         // TODO: use seccomp user notifications instead, when supported by the kernel + libseccomp
-        // Set our own SIGSYS handler
+        // First, set our own SIGSYS handler: as soon as the seccomp filter is loaded,
+        // we might get a SIGSYS even before the sigaction() function returns (e.g. if we get
+        // another signal delivered, and its handler uses a denied syscall), so we need to set
+        // everything up before enforcing seccomp.
         let mut empty_signal_set: libc::sigset_t = unsafe { std::mem::zeroed() };
         unsafe { libc::sigemptyset(&mut empty_signal_set as *mut _) };
         let new_sigaction = libc::sigaction {
@@ -141,17 +144,28 @@ pub(crate) fn lower_final_sandbox_privileges(ipc: IPCMessagePipe) {
             filter: seccomp_filter.as_ptr() as *const _ as *mut _, // doesn't really need *mut
         };
         let res = unsafe {
-            libc::prctl(
-                libc::PR_SET_SECCOMP,
-                libc::SECCOMP_MODE_FILTER,
+            libc::syscall(
+                libc::SYS_seccomp,
+                libc::SECCOMP_SET_MODE_FILTER,
+                libc::SECCOMP_FILTER_FLAG_TSYNC,
                 &seccomp_filter as *const _,
             )
         };
         if res != 0 {
-            panic!(
-                "prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) failed with error {}",
-                std::io::Error::last_os_error()
-            );
+            warn!("Setting seccomp filter on all threads at once failed with code {res}, falling back to setting it only on the main thread (hoping no other thread exists right now)");
+            let res = unsafe {
+                libc::prctl(
+                    libc::PR_SET_SECCOMP,
+                    libc::SECCOMP_MODE_FILTER,
+                    &seccomp_filter as *const _,
+                )
+            };
+            if res != 0 {
+                panic!(
+                    "prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) failed with error {}",
+                    std::io::Error::last_os_error()
+                );
+            }
         }
         info!(
             "Seccomp filter with {} instructions applied successfully",
