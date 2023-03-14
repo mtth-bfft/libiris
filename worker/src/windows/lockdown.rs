@@ -403,18 +403,19 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
     }
 }
 
-#[cfg(target_arch = "x86")]
+#[cfg(all(target_arch = "x86", target_pointer_width = "32"))]
 fn write_trampoline(location: *mut i8, target_function: *const fn()) {
     let jump_offset: i32 = unsafe {
-        (new_ptr as *const i8)
-            .offset_from(ptr_candidate.add(1 + 4) as *const i8)
+        (target_function as *const i8)
+            .offset_from(location.add(1 + 4) as *const i8) // JMP will be 5-byte-long, and a jump of 0 means the next instruction
             .try_into()
             .expect("hook too far away from original function")
     };
+    // x86 32-bit relative jump
     unsafe {
-        *(ptr_candidate as *mut u8) = 0xE9;
-    } // x86 32-bit relative jump
-    unsafe { *(unsafe { ptr_candidate.add(1) as *mut i32 }) = jump_offset };
+        *(location as *mut u8) = 0xE9;
+        *(location.add(1) as *mut i32) = jump_offset;
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
