@@ -5,7 +5,7 @@ use libseccomp::{
 use log::info;
 use std::io::{Read, Seek};
 
-const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 77] = [
+const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 83] = [
     "read",
     "write",
     "readv",
@@ -14,6 +14,7 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 77] = [
     "sendmsg",
     "tee",
     "fstat",
+    "fstat64",
     "lseek",
     "_llseek",
     "select",
@@ -64,6 +65,9 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 77] = [
     "nice",
     "pause",
     "clock_nanosleep",
+    "clock_gettime",
+    "clock_gettime64",
+    "clock_getres",
     "poll",
     "pipe",
     "mremap",
@@ -83,6 +87,8 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 77] = [
     "socketpair",
     "getsockopt",
     "futex",
+    "exit",
+    "exit_group",
 ];
 
 macro_rules! get_offset {
@@ -125,6 +131,39 @@ pub(crate) fn compute_seccomp_filter(pid: u64, audit_mode: bool) -> Result<Vec<u
         };
         filter.add_rule(ScmpAction::Allow, syscall)?;
     }
+
+    // Add special cas for mmap() and mprotect() but only non-executable memory
+    let denied_page_protection_flags = !(0x1u64 | 0x2 | 0x8 | 0x10 | 0x01000000 | 0x02000000);
+    match ScmpSyscall::from_name("mmap") {
+        Ok(s) => filter.add_rule_conditional(
+            ScmpAction::Allow,
+            s,
+            &[scmp_cmp!($arg2 & denied_page_protection_flags == 0)],
+        )?,
+        Err(_) => {
+            info!("Unable to allow non-executable mmap (probably not supported by the kernel)")
+        }
+    };
+    match ScmpSyscall::from_name("mmap2") {
+        Ok(s) => filter.add_rule_conditional(
+            ScmpAction::Allow,
+            s,
+            &[scmp_cmp!($arg2 & denied_page_protection_flags == 0)],
+        )?,
+        Err(_) => {
+            info!("Unable to allow non-executable mmap2 (probably not supported by the kernel)")
+        }
+    };
+    match ScmpSyscall::from_name("mprotect") {
+        Ok(s) => filter.add_rule_conditional(
+            ScmpAction::Allow,
+            s,
+            &[scmp_cmp!($arg2 & denied_page_protection_flags == 0)],
+        )?,
+        Err(_) => {
+            info!("Unable to allow non-executable mprotect (probably not supported by the kernel)")
+        }
+    };
 
     // Add special case for kill() on ourselves only (useful for e.g. raise())
     match ScmpSyscall::from_name("kill") {

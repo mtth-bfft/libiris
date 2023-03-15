@@ -310,14 +310,16 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 };
 
                 // Start as a Less Privileged AppContainer whenever possible
-                if let Err(e) = ptal.set(
-                    PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY,
-                    &lpac_policy as *const _ as *const _,
-                    std::mem::size_of_val(&lpac_policy),
-                ) {
-                    in_less_privileged_appcontainer = false;
-                    warn!("Less privileged AppContainers not supported on this system ({:?}), using AppContainers with ALL_APPLICATION_PACKAGES SID", e);
-                    continue;
+                if in_less_privileged_appcontainer {
+                    if let Err(e) = ptal.set(
+                        PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY,
+                        &lpac_policy as *const _ as *const _,
+                        std::mem::size_of_val(&lpac_policy),
+                    ) {
+                        in_less_privileged_appcontainer = false;
+                        warn!("Less privileged AppContainers not supported on this system ({:?}), using AppContainers with ALL_APPLICATION_PACKAGES SID", e);
+                        continue;
+                    }
                 }
 
                 appcontainer_name

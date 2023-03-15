@@ -1,8 +1,8 @@
 use crate::os::path::path_is_sane;
 use crate::policy::{Policy, PolicyVerdict};
 use libc::{
-    c_int, O_APPEND, O_CLOEXEC, O_CREAT, O_DIRECTORY, O_EXCL, O_NOFOLLOW, O_PATH, O_RDONLY, O_RDWR,
-    O_TRUNC, O_WRONLY,
+    c_int, O_APPEND, O_CLOEXEC, O_CREAT, O_DIRECTORY, O_EXCL, O_LARGEFILE, O_NOFOLLOW, O_PATH,
+    O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY,
 };
 
 const SUPPORTED_FILE_OPEN_FLAGS: c_int = O_RDONLY
@@ -14,7 +14,8 @@ const SUPPORTED_FILE_OPEN_FLAGS: c_int = O_RDONLY
     | O_DIRECTORY
     | O_APPEND
     | O_PATH
-    | O_CLOEXEC;
+    | O_CLOEXEC
+    | O_LARGEFILE;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PolicyRequest<'a> {

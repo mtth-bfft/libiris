@@ -5,85 +5,124 @@ variables:
   RUSTUP_HOME: .rustup
   CARGO_HOME: .cargo
 
-build_linux:
-  image: rust:latest
-  tags:
-    - linux
-    - shared
-  before_script:
-    - apt update && apt install -y libseccomp-dev libseccomp2 python3 python-is-python3
+.common_build:
   script:
     - rustup default stable
-    - cargo build --workspace --all-targets --all-features --verbose
+    - rustup target install $TARGET
+    - cargo build --workspace --target=$TARGET --all-features --verbose
     - cargo clippy --all-features --all-targets -- -D warnings -A clippy::nonminimal-bool -A clippy::too_many_arguments
     - cargo fmt -- --check
-    - mkdir -p artifacts-tests/workers/
-    - cargo build --tests --message-format=json | python tests/copy_artifacts.py artifacts-tests/
+    - mkdir -p test-binaries-$TARGET/workers/
+    - cargo build --tests --target=$TARGET
+    - cargo build --tests --target=$TARGET --message-format=json | python3 tests/copy_artifacts.py test-binaries-$TARGET/
     - cargo install cargo-license
     - cargo license --all-features --tsv
   artifacts:
     expire_in: 1h
-    name: tests-linux
+    name: test-binaries
     paths:
-      - artifacts-tests/
+      - test-binaries-$TARGET/
 
-build_windows:
+build_linux:
+  extends: .common_build
   tags:
-    - windows
+    - linux
     - selfhosted
     - builder
+  image: rust:latest
+  before_script:
+    - apt update
+    - apt install -y libseccomp-dev libseccomp2 python3 gcc-multilib
+    - dpkg --add-architecture i386
+    - apt update
+    - apt install -y libseccomp-dev:i386 libseccomp2:i386
+  parallel:
+    matrix:
+      - TARGET: i686-unknown-linux-gnu
+        ARCH: i686
+      - TARGET: x86_64-unknown-linux-gnu
+        ARCH: x86_64
+
+build_windows:
+  extends: .common_build
+  tags:
+    - windows
+    - shared-windows
+    - windows-1809
   variables:
     RUSTFLAGS: -D warnings -Ctarget-feature=+crt-static
   before_script:
-    - Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
-    - .\rustup-init.exe -y --default-toolchain stable-x86_64-pc-windows-msvc
+    - choco install -y python3
+    - Invoke-WebRequest -Uri https://win.rustup.rs/$ARCH -OutFile rustup-init.exe
+    - .\rustup-init.exe -y --default-toolchain stable-$TARGET
     - $env:Path=[System.Environment]::GetEnvironmentVariable("Path","Machine")+";"+[System.Environment]::GetEnvironmentVariable("Path","User")
-  script:
-    - cargo build --workspace --all-targets --all-features --verbose
-    - cargo clippy --all-features --all-targets -- -D warnings -A clippy::nonminimal-bool -A clippy::too_many_arguments
-    - cargo fmt -- --check
-    - mkdir -p artifacts-tests/workers/
-    - cargo build --tests --message-format=json | python tests/copy_artifacts.py artifacts-tests/
-  artifacts:
-    expire_in: 1h
-    name: tests-windows
-    paths:
-      - artifacts-tests/
+    - Get-Command python | Select -ExpandProperty Path | Copy-Item -Destination 'C:\Windows\System32\python3.exe'
+  parallel:
+    matrix:
+      - TARGET: i686-pc-windows-msvc
+        ARCH: i686
+      - TARGET: x86_64-pc-windows-msvc
+        ARCH: x86_64
 
-test_win10_latest_x64:
+test_win10_1507_x86_64:
   tags:
     - windows
     - selfhosted
     - win10
-    - amd64
-    - latest
+    - win10_1507
+    - x86_64
   needs:
     - job: build_windows
       artifacts: true
   script:
-    - tests/run.ps1 artifacts-tests/
+    - tests/run.ps1 test-binaries-x86_64-pc-windows-msvc/
 
-test_win7_x64:
+test_win7_x86_64:
   tags:
     - windows
     - selfhosted
     - win7
-    - amd64
+    - x86_64
   needs:
     - job: build_windows
       artifacts: true
   script:
-    - tests/run.ps1 artifacts-tests/
+    - tests/run.ps1 test-binaries-x86_64-pc-windows-msvc/
 
-test_linux:
-  image: debian:latest
+#test_win7_i686:
+#  tags:
+#    - windows
+#    - selfhosted
+#    - win7
+#    - i686
+#  needs:
+#    - job: build_windows
+#      artifacts: true
+#  script:
+#    - tests/run.ps1 test-binaries-i686-pc-windows-msvc/
+
+test_debian11_i686:
   tags:
     - linux
-    - shared
+    - debian11
+    - i686
   needs:
     - job: build_linux
       artifacts: true
   before_script:
-    - apt update && apt install -y libseccomp2
+    - (/sbin/ldconfig -p | grep -iq libseccomp) || (apt update && apt install -y libseccomp2)
   script:
-    - tests/run.sh artifacts-tests/
+    - tests/run.sh test-binaries-i686-unknown-linux-gnu/
+
+test_debian11_x86_64:
+  tags:
+    - linux
+    - debian11
+    - x86_64
+  needs:
+    - job: build_linux
+      artifacts: true
+  before_script:
+    - (/sbin/ldconfig -p | grep -iq libseccomp) || (apt update && apt install -y libseccomp2)
+  script:
+    - tests/run.sh test-binaries-x86_64-unknown-linux-gnu/

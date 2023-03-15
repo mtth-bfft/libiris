@@ -5,9 +5,10 @@ exit_code=0
 at_least_one=0
 for f in $1/*; do
     [ -f $f ] || continue;
+    echo
     echo "===== $f"
     at_least_one=1
-    $f || exit_code=$?
+    $f --nocapture || exit_code=$?
 done
 if [ "$at_least_one" -eq "0" ]; then
     echo No test found >&2

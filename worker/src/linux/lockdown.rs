@@ -3,12 +3,19 @@ use core::ptr::null;
 use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse, IPC_SECCOMP_CALL_SITE_PLACEHOLDER};
 use iris_policy::{CrossPlatformHandle, Handle};
 use libc::{c_char, c_int, O_PATH};
-use log::{debug, info};
+use log::{debug, info, warn};
 use std::borrow::BorrowMut;
 use std::convert::TryInto;
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
+
+#[cfg_attr(
+    all(target_arch = "x86", not(target_arch = "x86_64")),
+    path = "arch/i686/seccomp.rs"
+)]
+#[cfg_attr(target_arch = "x86_64", path = "arch/x86_64/seccomp.rs")]
+mod arch;
 
 const SYS_SECCOMP: i32 = 1;
 
@@ -26,14 +33,14 @@ fn get_ipc_pipe() -> MutexGuard<'static, IPCMessagePipe> {
     unsafe { (*IPC_PIPE_SINGLETON).lock().unwrap() }
 }
 
-fn get_fd_for_path_with_perms(path: &str, flags: c_int) -> Result<Handle, i64> {
+fn get_fd_for_path_with_perms(path: &str, flags: c_int) -> Result<Handle, isize> {
     let request = IPCRequest::OpenFile {
         path: path.to_owned(),
         flags,
     };
     match send_recv(&request, None) {
         (IPCResponse::SyscallResult(_), Some(fd)) => Ok(fd),
-        (IPCResponse::SyscallResult(code), None) if code < 0 => Err(code),
+        (IPCResponse::SyscallResult(code), None) if code < 0 => Err(code as isize),
         err => panic!("Unexpected response from broker to file request: {err:?}"),
     }
 }
@@ -67,7 +74,10 @@ pub(crate) fn lower_final_sandbox_privileges(ipc: IPCMessagePipe) {
         info!("No seccomp filter to load");
     } else {
         // TODO: use seccomp user notifications instead, when supported by the kernel + libseccomp
-        // Set our own SIGSYS handler
+        // First, set our own SIGSYS handler: as soon as the seccomp filter is loaded,
+        // we might get a SIGSYS even before the sigaction() function returns (e.g. if we get
+        // another signal delivered, and its handler uses a denied syscall), so we need to set
+        // everything up before enforcing seccomp.
         let mut empty_signal_set: libc::sigset_t = unsafe { std::mem::zeroed() };
         unsafe { libc::sigemptyset(&mut empty_signal_set as *mut _) };
         let new_sigaction = libc::sigaction {
@@ -106,7 +116,7 @@ pub(crate) fn lower_final_sandbox_privileges(ipc: IPCMessagePipe) {
         }
         if AUDIT_ONLY_MODE.load(Ordering::Relaxed) {
             let actual_call_site: usize =
-                (rerun_syscall as *const u8 as usize) + SYSCALL_ASM_OFFSET;
+                (rerun_syscall as *const u8 as usize) + arch::SYSCALL_ASM_OFFSET;
             debug!("Audit mode: allowing all system calls from call site {actual_call_site:#X}");
             // Replace the placeholder inserted by our broker, in a platform
             // endianness independent way
@@ -134,17 +144,28 @@ pub(crate) fn lower_final_sandbox_privileges(ipc: IPCMessagePipe) {
             filter: seccomp_filter.as_ptr() as *const _ as *mut _, // doesn't really need *mut
         };
         let res = unsafe {
-            libc::prctl(
-                libc::PR_SET_SECCOMP,
-                libc::SECCOMP_MODE_FILTER,
+            libc::syscall(
+                libc::SYS_seccomp,
+                libc::SECCOMP_SET_MODE_FILTER,
+                libc::SECCOMP_FILTER_FLAG_TSYNC,
                 &seccomp_filter as *const _,
             )
         };
         if res != 0 {
-            panic!(
-                "prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) failed with error {}",
-                std::io::Error::last_os_error()
-            );
+            warn!("Setting seccomp filter on all threads at once failed with code {res}, falling back to setting it only on the main thread (hoping no other thread exists right now)");
+            let res = unsafe {
+                libc::prctl(
+                    libc::PR_SET_SECCOMP,
+                    libc::SECCOMP_MODE_FILTER,
+                    &seccomp_filter as *const _,
+                )
+            };
+            if res != 0 {
+                panic!(
+                    "prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) failed with error {}",
+                    std::io::Error::last_os_error()
+                );
+            }
         }
         info!(
             "Seccomp filter with {} instructions applied successfully",
@@ -161,8 +182,8 @@ fn read_string_from_ptr(ptr: *const c_char) -> String {
     }
 }
 
-fn read_i64_from_ptr(ucontext: *mut libc::ucontext_t, registry: libc::c_int) -> i64 {
-    unsafe { (*ucontext).uc_mcontext.gregs[registry as usize] }
+fn read_isize_from_ptr(ucontext: *mut libc::ucontext_t, register: libc::c_int) -> isize {
+    (unsafe { (*ucontext).uc_mcontext.gregs[register as usize] }) as isize
 }
 
 pub(crate) extern "C" fn sigsys_handler(
@@ -183,26 +204,34 @@ pub(crate) extern "C" fn sigsys_handler(
     }
 
     let ucontext = ucontext as *mut libc::ucontext_t;
-    let syscall_nr = read_i64_from_ptr(ucontext, libc::REG_RAX);
-    let a0 = read_i64_from_ptr(ucontext, libc::REG_RDI);
-    let a1 = read_i64_from_ptr(ucontext, libc::REG_RSI);
-    let a2 = read_i64_from_ptr(ucontext, libc::REG_RDX);
-    let a3 = read_i64_from_ptr(ucontext, libc::REG_R10);
-    let a4 = read_i64_from_ptr(ucontext, libc::REG_R8);
-    let a5 = read_i64_from_ptr(ucontext, libc::REG_R9);
-    let ip = read_i64_from_ptr(ucontext, libc::REG_RIP);
+
+    let syscall_nr = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_NR);
+    // libc constants for syscalls are not isize, we need to cast to the right
+    // variable size for the upcoming switch-case on syscall_nr
+    #[cfg(target_pointer_width = "32")]
+    let syscall_nr = syscall_nr as i32;
+    #[cfg(target_pointer_width = "64")]
+    let syscall_nr = syscall_nr as i64;
+
+    let a0 = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_A0);
+    let a1 = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_A1);
+    let a2 = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_A2);
+    let a3 = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_A3);
+    let a4 = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_A4);
+    let a5 = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_A5);
+    let ip = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_IP);
     IN_SIGSYS_HANDLER.with(|mut b| {
         if *b {
             panic!(
-                "Seccomp signal handler triggered unauthorized syscall {syscall_nr}, this is fatal",
+                "Seccomp signal handler triggered unauthorized syscall {syscall_nr}, this is fatal"
             );
         }
         *b.borrow_mut() = &true;
     });
     // FIXME: make everything below architecture-dependent (read siginfo->arch)
     debug!(
-        "Intercepted syscall nr={} ({}, {}, {}, {}, {}, {}) at ip={ip:#X} with seccomp-trap",
-        syscall_nr, a0, a1, a2, a3, a4, a5
+        "Intercepted syscall nr={} ({:X}, {:X}, {:X}, {:X}, {:X}, {:X}) at ip={ip:#X} with seccomp-trap",
+        syscall_nr as usize, a0 as usize, a1 as usize, a2 as usize, a3 as usize, a4 as usize, a5 as usize
     );
 
     let response_code = match syscall_nr {
@@ -243,13 +272,14 @@ pub(crate) extern "C" fn sigsys_handler(
             handle_chdir(&path)
         }
         other_nb => {
-            let ip = read_i64_from_ptr(ucontext, libc::REG_RIP);
-            handle_syscall(other_nb, [a0, a1, a2, a3, a4, a5], ip)
+            let ip = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_IP);
+            handle_syscall(other_nb as isize, [a0, a1, a2, a3, a4, a5], ip)
         }
     };
     debug!("Syscall result: {}", response_code);
     unsafe {
-        (*ucontext).uc_mcontext.gregs[libc::REG_RAX as usize] = response_code;
+        (*ucontext).uc_mcontext.gregs[arch::SYSCALL_REGISTER_RET as usize] =
+            response_code.try_into().unwrap();
     }
     IN_SIGSYS_HANDLER.with(|mut b| {
         *b.borrow_mut() = &false;
@@ -269,7 +299,7 @@ fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Opt
     (resp, handle)
 }
 
-fn handle_openat(path: &str, flags: libc::c_int, _mode: libc::c_int) -> i64 {
+fn handle_openat(path: &str, flags: libc::c_int, _mode: libc::c_int) -> isize {
     // Resolve the path ourselves, brokers only accept nonambiguous absolute paths
     let path = if !path.starts_with('/') {
         let mut abspath = std::env::current_dir()
@@ -292,12 +322,12 @@ fn handle_openat(path: &str, flags: libc::c_int, _mode: libc::c_int) -> i64 {
         (IPCResponse::SyscallResult(_), Some(handle)) => {
             unsafe { handle.into_raw() }.try_into().unwrap()
         }
-        (IPCResponse::SyscallResult(code), None) => code,
+        (IPCResponse::SyscallResult(code), None) => code as isize,
         other => panic!("Unexpected response from broker to file request: {other:?}",),
     }
 }
 
-fn handle_access(path: &str, mode: libc::c_int) -> i64 {
+fn handle_access(path: &str, mode: libc::c_int) -> isize {
     debug!("Requesting access({}, {})", path, mode);
     match get_fd_for_path_with_perms(path, mode) {
         Ok(_) => 0,
@@ -305,7 +335,7 @@ fn handle_access(path: &str, mode: libc::c_int) -> i64 {
     }
 }
 
-fn handle_stat(path: &str, out_ptr: *mut libc::stat) -> i64 {
+fn handle_stat(path: &str, out_ptr: *mut libc::stat) -> isize {
     let fd = match get_fd_for_path_with_perms(path, O_PATH) {
         Ok(fd) => fd,
         Err(code) => return code,
@@ -316,12 +346,12 @@ fn handle_stat(path: &str, out_ptr: *mut libc::stat) -> i64 {
     let res = unsafe { libc::fstat(fd.as_raw() as i32, out_ptr) };
     if res != 0 {
         let err = unsafe { *(libc::__errno_location()) };
-        return (-err).into();
+        return (-err) as isize;
     }
     0
 }
 
-fn handle_chdir(path: &str) -> i64 {
+fn handle_chdir(path: &str) -> isize {
     let fd = match get_fd_for_path_with_perms(path, O_PATH) {
         Ok(fd) => fd,
         Err(code) => return code,
@@ -332,18 +362,27 @@ fn handle_chdir(path: &str) -> i64 {
     let res = unsafe { libc::fchdir(fd.as_raw() as i32) };
     if res != 0 {
         let err = unsafe { *(libc::__errno_location()) };
-        return (-err).into();
+        return (-err) as isize;
     }
     0
 }
 
-fn handle_syscall(nb: i64, args: [i64; 6], ip: i64) -> i64 {
-    let request = IPCRequest::Syscall { nb, args, ip };
+fn handle_syscall(nb: isize, args: [isize; 6], ip: isize) -> isize {
+    let request = IPCRequest::Syscall {
+        nb: nb as i64,
+        args: [
+            args[0] as i64,
+            args[1] as i64,
+            args[2] as i64,
+            args[3] as i64,
+            args[4] as i64,
+            args[5] as i64,
+        ],
+        ip: ip as i64,
+    };
     let response = match send_recv(&request, None) {
-        (IPCResponse::SyscallResult(_), Some(handle)) => {
-            unsafe { handle.into_raw() }.try_into().unwrap()
-        }
-        (IPCResponse::SyscallResult(code), None) => code,
+        (IPCResponse::SyscallResult(_), Some(handle)) => (unsafe { handle.into_raw() }) as isize,
+        (IPCResponse::SyscallResult(code), None) => code as isize,
         other => panic!("Unexpected response from broker to syscall request: {other:?}",),
     };
 
@@ -352,7 +391,7 @@ fn handle_syscall(nb: i64, args: [i64; 6], ip: i64) -> i64 {
     // but the program will (probably) still continue running as intended. Some system
     // calls change semantics depending on where they're called from (e.g. sigreturn,
     // fork, etc.) but hopefully they are already handled separately.
-    if AUDIT_ONLY_MODE.load(Ordering::Relaxed) && response == -(libc::ENOSYS as i64) {
+    if AUDIT_ONLY_MODE.load(Ordering::Relaxed) && response == -(libc::ENOSYS as isize) {
         // Note: we can't use libc::syscall here, otherwise code in the audited application
         // could use it, be allow-listed, and the audit mode would completely miss these syscalls.
         unsafe { rerun_syscall(nb, args[0], args[1], args[2], args[3], args[4], args[5]) }
@@ -361,51 +400,14 @@ fn handle_syscall(nb: i64, args: [i64; 6], ip: i64) -> i64 {
     }
 }
 
-// Offset in bytes from the beginning of rerun_syscall() to the actual syscall site
-#[cfg(target_arch = "x86_64")]
-const SYSCALL_ASM_OFFSET: usize = 91;
-
-#[cfg(target_arch = "x86_64")]
-core::arch::global_asm!(
-    r#"
-.globl rerun_syscall
-rerun_syscall:
-    sub    rsp,0x58
-    mov    QWORD PTR [rsp],r9
-    mov    r10,r8
-    mov    r8,QWORD PTR [rsp]
-    mov    QWORD PTR [rsp+0x8],rcx
-    mov    rax,rdx
-    mov    rdx,QWORD PTR [rsp+0x8]
-    mov    QWORD PTR [rsp+0x10],rax
-    mov    rax,rsi
-    mov    rsi,QWORD PTR [rsp+0x10]
-    mov    QWORD PTR [rsp+0x18],rax
-    mov    rax,rdi
-    mov    rdi,QWORD PTR [rsp+0x18]
-    mov    r9,QWORD PTR [rsp+0x60]
-    mov    QWORD PTR [rsp+0x28],rax
-    mov    QWORD PTR [rsp+0x30],rdi
-    mov    QWORD PTR [rsp+0x38],rsi
-    mov    QWORD PTR [rsp+0x40],rdx
-    mov    QWORD PTR [rsp+0x48],r10
-    mov    QWORD PTR [rsp+0x50],r8
-    syscall
-    mov    QWORD PTR [rsp+0x20],rax
-    mov    rax,QWORD PTR [rsp+0x20]
-    add    rsp,0x58
-    ret
-"#
-);
-
 extern "C" {
     fn rerun_syscall(
-        nb: i64,
-        arg0: i64,
-        arg1: i64,
-        arg2: i64,
-        arg3: i64,
-        arg4: i64,
-        arg5: i64,
-    ) -> i64;
+        nb: isize,
+        arg0: isize,
+        arg1: isize,
+        arg2: isize,
+        arg3: isize,
+        arg4: isize,
+        arg5: isize,
+    ) -> isize;
 }

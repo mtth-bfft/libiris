@@ -7,7 +7,7 @@ fn main() {
     common_test_setup();
     lower_final_sandbox_privileges_asap();
     info!("Filter loaded, about to run unsupported syscall");
-    let res = unsafe { libc::syscall(999, 1u64, 2u64, 3u64, 4u64, 5u64, 6u64) };
+    let res = unsafe { libc::syscall(999, 1usize, 2usize, 3usize, 4usize, 5usize, 6usize) };
     assert_eq!(res, -1, "unsupported syscall should have failed");
     let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
     assert_eq!(
