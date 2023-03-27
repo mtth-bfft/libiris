@@ -47,16 +47,15 @@ build_windows:
   extends: .common_build
   tags:
     - windows
-    - shared-windows
-    - windows-1809
+    - selfhosted
+    - builder
   variables:
     RUSTFLAGS: -D warnings -Ctarget-feature=+crt-static
   before_script:
-    - choco install -y python3
+    - if (!(Get-Command python)) { choco install -y --no-progress python3 }
     - Invoke-WebRequest -Uri https://win.rustup.rs/$ARCH -OutFile rustup-init.exe
     - .\rustup-init.exe -y --default-toolchain stable-$TARGET
     - $env:Path=[System.Environment]::GetEnvironmentVariable("Path","Machine")+";"+[System.Environment]::GetEnvironmentVariable("Path","User")
-    - Get-Command python | Select -ExpandProperty Path | Copy-Item -Destination 'C:\Windows\System32\python3.exe'
   parallel:
     matrix:
       - TARGET: i686-pc-windows-msvc
