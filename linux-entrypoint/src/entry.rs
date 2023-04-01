@@ -1,3 +1,4 @@
+use crate::capabilities::drop_capabilities;
 use crate::error::set_debug_fd;
 use core::ffi::{c_void, CStr};
 use libc::c_int;
@@ -150,6 +151,10 @@ pub extern "C" fn clone_entrypoint(args: *mut c_void) -> c_int {
             log_nonfatal!("mount(/proc) failed with errno {}\n", errno());
         }
     }
+
+    // Drop any capability we might hold (due to the user being privileged, or due to
+    // the fact that we created a user namespace and hold all capabilities in it)
+    drop_capabilities();
 
     // Cleanup leftover file descriptors from our parent or from code injected into our process
     let fds_path = unsafe { CStr::from_ptr(b"/proc/self/fd/\0".as_ptr() as *const _) };
