@@ -8,6 +8,7 @@ use libc::c_int;
 use linux_entrypoint::{clone_entrypoint, EntrypointParameters};
 use log::debug;
 use std::convert::{TryFrom, TryInto};
+use std::ffi::CString;
 use std::io::Error;
 
 const DEFAULT_CLONE_STACK_SIZE: usize = 1024 * 1024;
@@ -27,21 +28,14 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             return Err(BrokerError::MissingCommandLine);
         }
 
-        // Allocate a stack for the process' first thread to use
-        let mut stack = vec![0; DEFAULT_CLONE_STACK_SIZE];
-        let stack_end_ptr = stack.as_mut_ptr().wrapping_add(stack.len()) as *mut c_void;
-
-        // Unshare as many namespaces as possible
-        // (this might not be possible due to insufficient privilege level,
-        // and/or kernel support for unprivileged or even privileged user namespaces)
-        let clone_args = 0; // FIXME: add a retry-loop for libc::CLONE_NEWUSER | libc::CLONE_NEWCGROUP | libc::CLONE_NEWIPC | libc::CLONE_NEWNET | libc::CLONE_NEWNS | libc::CLONE_NEWPID | libc::CLONE_NEWUTS;
-
-        // Set up a pipe that will get CLOEXEC-ed if execve() succeeds, and otherwise be used to send us the errno
+        // Set up a pipe that will get CLOEXEC-ed if execve() succeeds, and otherwise be used
+        // to send us back the errno
         let (parent_pipe, mut child_pipe) = unsafe {
             let mut clone_error_pipes: Vec<c_int> = vec![-1, -1];
             let res = libc::pipe(clone_error_pipes.as_mut_ptr());
             if res < 0 {
-                // It's safe to return here, if pipe() returned an error it did not give us file descriptors so there is no leak
+                // It's safe to return here, if pipe() returned an error it did not give us
+                // any file descriptor so there is no leak
                 return Err(BrokerError::InternalOsOperationFailed {
                     description: "pipe() failed".to_owned(),
                     os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
@@ -73,7 +67,16 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             .iter()
             .map(|n| n.as_raw().try_into().unwrap())
             .collect();
+        let uid = unsafe { libc::getuid() };
+        let gid = unsafe { libc::getuid() };
+        let uid_map = CString::new(format!("{uid} {uid} 1\n")).unwrap();
+        let gid_map = CString::new(format!("{gid} {gid} 1\n")).unwrap();
         let entrypoint_params = EntrypointParameters {
+            debug_fd: Some(libc::STDERR_FILENO), // TODO: add a debugging parameter
+            uid_map: uid_map.as_ptr(),
+            uid_map_len: uid_map.as_bytes().len(),
+            gid_map: gid_map.as_ptr(),
+            gid_map_len: gid_map.as_bytes().len(),
             exe: process_config.executable_path.as_ptr(),
             argv: argv.as_ptr(),
             envp: envp.as_ptr(),
@@ -90,31 +93,28 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 .stderr
                 .map(|h| c_int::try_from(h.as_raw()).unwrap()),
         };
-        let entrypoint_params = Box::leak(Box::new(entrypoint_params));
+        let params = Box::leak(Box::new(entrypoint_params));
 
-        let pid = unsafe {
-            libc::clone(
-                clone_entrypoint,
-                stack_end_ptr,
-                clone_args,
-                entrypoint_params as *const _ as *mut c_void,
-            )
-        };
+        // Unshare as many namespaces as possible (this might not be possible due to insufficient
+        // privilege level and/or kernel support).
+        // Note: PID namespace needs to be created during clone(): using unshare()
+        // later would only unshare for non-existent future child processes and not to the
+        // worker process itself.
+        let (pid, stack, clone_flags) = try_clone(params, libc::CLONE_NEWUSER | libc::CLONE_NEWPID)
+            .or_else(|_| try_clone(params, libc::CLONE_NEWPID))
+            .or_else(|_| try_clone(params, 0))?;
+
+        if (clone_flags & libc::CLONE_NEWUSER) != 0 {
+            debug!("User namespace created");
+        }
+        if (clone_flags & libc::CLONE_NEWPID) != 0 {
+            debug!("PID namespace created");
+        }
 
         // Drop the structure in the parent so it doesn't leak. This is safe since we
         // created the box a few lines above and we control it.
-        unsafe { Box::from_raw(entrypoint_params as *mut EntrypointParameters) };
+        unsafe { Box::from_raw(params as *mut EntrypointParameters) };
         drop(child_pipe);
-
-        let pid: u32 = match pid.try_into() {
-            Ok(n) => n,
-            Err(_) => {
-                return Err(BrokerError::InternalOsOperationFailed {
-                    description: "clone()".to_owned(),
-                    os_code: Error::last_os_error().raw_os_error().unwrap_or(0) as u64,
-                })
-            }
-        };
 
         let mut execve_errno = [0u8; 4];
         let res = unsafe {
@@ -142,4 +142,36 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
     fn get_pid(&self) -> u64 {
         self.pid.into()
     }
+}
+
+fn try_clone(
+    params: *const EntrypointParameters,
+    clone_flags: i32,
+) -> Result<(u32, Vec<u8>, i32), BrokerError> {
+    // Allocate a stack for the process' first thread to use
+    let mut stack = vec![0; DEFAULT_CLONE_STACK_SIZE];
+    let stack_end_ptr = stack.as_mut_ptr().wrapping_add(stack.len()) as *mut c_void;
+
+    let clone_res = unsafe {
+        libc::clone(
+            clone_entrypoint,
+            stack_end_ptr,
+            clone_flags,
+            params as *const _ as *mut c_void,
+        )
+    };
+    let clone_errno = Error::last_os_error().raw_os_error().unwrap_or(0);
+
+    let pid = match clone_res.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            debug!("clone({clone_flags:#X}) failed with code {clone_errno}");
+            return Err(BrokerError::InternalOsOperationFailed {
+                description: "clone() failed".to_owned(),
+                os_code: clone_errno as u64,
+            });
+        }
+    };
+
+    Ok((pid, stack, clone_flags))
 }
