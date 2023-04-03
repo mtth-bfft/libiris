@@ -179,3 +179,6 @@ Introduced in Linux 2.6.24 (2008-01)
 
 ## Seccomp
 
+System call filtering is highly dependent on whether libraries used by the program have been designed to run in sandboxes: if their code expects a system call to never return an error (sometimes very reasonably, because the associated kernel code cannot fail), they might behave unexpectedly or crash, potentially later on, in ways hard to debug. An ubiquitous example is the C library, which depends on e.g. the futex system call, making it impossible to restrict, even if it is otherwise not required and it has allowed sandbox escapes in the past (see CVE-2021-3153).
+
+Moreover, some system calls perform multiplexing over complex parameters (e.g. `ioctl` can perform dozens of types of different actions), and even behave differently depending on memory structures passed by pointers (not in system call registers directly), making restricting these system calls impossible in seccomp.
