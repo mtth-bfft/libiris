@@ -32,10 +32,10 @@ build_linux:
   image: rust:latest
   before_script:
     - apt update
-    - apt install -y libseccomp-dev libseccomp2 python3 python-is-python3 gcc-multilib
+    - apt install -y libseccomp-dev libseccomp2 libcap2 libcap-dev python3 python-is-python3 gcc-multilib
     - dpkg --add-architecture i386
     - apt update
-    - apt install -y libseccomp-dev:i386 libseccomp2:i386
+    - apt install -y libseccomp-dev:i386 libseccomp2:i386 libcap-dev:i386 libcap2:i386
   parallel:
     matrix:
       - TARGET: i686-unknown-linux-gnu
