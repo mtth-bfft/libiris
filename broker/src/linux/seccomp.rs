@@ -5,7 +5,7 @@ use libseccomp::{
 use log::info;
 use std::io::{Read, Seek};
 
-const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 83] = [
+const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 84] = [
     "read",
     "write",
     "readv",
@@ -15,6 +15,7 @@ const SYSCALLS_ALLOWED_BY_DEFAULT: [&str; 83] = [
     "tee",
     "fstat",
     "fstat64",
+    "newfstatat",
     "lseek",
     "_llseek",
     "select",
