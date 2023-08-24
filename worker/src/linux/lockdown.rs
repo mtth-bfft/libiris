@@ -219,7 +219,6 @@ pub(crate) extern "C" fn sigsys_handler(
     let a3 = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_A3);
     let a4 = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_A4);
     let a5 = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_A5);
-    let ip = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_IP);
     IN_SIGSYS_HANDLER.with(|mut b| {
         if *b {
             panic!(
@@ -229,11 +228,6 @@ pub(crate) extern "C" fn sigsys_handler(
         *b.borrow_mut() = &true;
     });
     // FIXME: make everything below architecture-dependent (read siginfo->arch)
-    debug!(
-        "Intercepted syscall nr={} ({:X}, {:X}, {:X}, {:X}, {:X}, {:X}) at ip={ip:#X} with seccomp-trap",
-        syscall_nr as usize, a0 as usize, a1 as usize, a2 as usize, a3 as usize, a4 as usize, a5 as usize
-    );
-
     let response_code = match syscall_nr {
         // TODO: handle legacy syscall tkill(), needs proxying to parent to check it belongs to the worker
         libc::SYS_access => {
@@ -276,7 +270,6 @@ pub(crate) extern "C" fn sigsys_handler(
             handle_syscall(other_nb as isize, [a0, a1, a2, a3, a4, a5], ip)
         }
     };
-    debug!("Syscall result: {}", response_code);
     unsafe {
         (*ucontext).uc_mcontext.gregs[arch::SYSCALL_REGISTER_RET as usize] =
             response_code.try_into().unwrap();
@@ -288,14 +281,12 @@ pub(crate) extern "C" fn sigsys_handler(
 
 fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Option<Handle>) {
     let mut pipe = get_ipc_pipe();
-    debug!("Sending IPC request {:?}", &request);
     pipe.send(&request, handle)
         .expect("unable to send IPC request to broker");
     let (resp, handle) = pipe
         .recv_with_handle()
         .expect("unable to receive IPC response from broker");
     let resp = resp.expect("broker closed our IPC pipe while expecting its response");
-    debug!("Received IPC response {:?}", &resp);
     (resp, handle)
 }
 
