@@ -411,10 +411,14 @@ fn write_trampoline(location: *mut i8, target_function: *const fn()) {
             .try_into()
             .expect("hook too far away from original function")
     };
+    let mut patch = vec![];
     // x86 32-bit relative jump
+    patch.push(0xE9);
+    patch.extend_from_slice(&jump_offset.to_le_bytes());
+    // Applying the patch is safe as long as this functions is only called with a writable location
+    // where a JMP patch is actually wanted.
     unsafe {
-        *(location as *mut u8) = 0xE9;
-        *(location.add(1) as *mut i32) = jump_offset;
+        std::ptr::copy_nonoverlapping(patch.as_ptr(), location as *mut _, patch.len());
     }
 }
 
@@ -422,13 +426,21 @@ fn write_trampoline(location: *mut i8, target_function: *const fn()) {
 fn write_trampoline(location: *mut i8, target_function: *const fn()) {
     let target_high = ((target_function as u64) >> 32) as u32;
     let target_low = (target_function as u64) as u32;
+    // Note: we use memcpy instead of patching bytes using raw pointers to avoid memory write alignment issues
+    let mut patch = vec![];
+    // x64 PUSH with 32-bit immediate
+    patch.push(0x68);
+    patch.extend_from_slice(&target_low.to_le_bytes());
+    // x64 MOV DWORD PTR [RSP+4], 32-bit immediate
+    patch.extend_from_slice(&[0xC7, 0x44, 0x24, 0x04]);
+    patch.extend_from_slice(&target_high.to_le_bytes());
+    // x64 RET
+    patch.push(0xC3);
+    // Applying the patch is safe as long as this functions is only called with a writable location
+    // where a JMP patch is actually wanted.
     unsafe {
-        *(location as *mut u8) = 0x68;
-    } // x64 PUSH 32-bit immediate
-    unsafe { *(location.add(1) as *mut u32) = target_low };
-    unsafe { *(location.add(5) as *mut u32) = 0x042444C7 }; // x64 MOV DWORD PTR [RSP+4], 32-bit immediate
-    unsafe { *(location.add(9) as *mut u32) = target_high };
-    unsafe { *(location.add(13) as *mut u8) = 0xC3 }; // x64 RET
+        std::ptr::copy_nonoverlapping(patch.as_ptr(), location as *mut _, patch.len());
+    }
 }
 
 fn hotpatch_u32(new_value: u32, location: *mut u32) {
