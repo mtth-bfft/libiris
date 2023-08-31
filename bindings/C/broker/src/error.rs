@@ -20,9 +20,10 @@ pub enum IrisStatus {
     BrokerMissingCommandLine = 2002,
     BrokerInternalOsOperationFailed = 2003,
     ProcessExitedDuringInitialization = 2004,
+    WorkerCommunicationError = 2005,
+    UnexpectedWorkerMessage = 2006,
     // 0x3000 : IpcError
     IpcUnexpectedHandleWithPayload = 3001,
-    IpcTooManyHandlesWithPayload = 3002,
     IpcInvalidProcessID = 3003,
     IpcUnableToOpenProcessOnTheOtherEnd = 3004,
     IpcPayloadTooBigToTransmit = 3005,
@@ -31,7 +32,7 @@ pub enum IrisStatus {
     IpcInternalSerializationError = 3008,
     IpcInternalDeserializationError = 3009,
     IpcInternalOsOperationFailed = 3010,
-    IpcUnexpectedMessageInThisContext = 3011,
+    IpcHandleOperationFailed = 3011,
 }
 
 impl From<PolicyError> for IrisStatus {
@@ -60,7 +61,8 @@ impl From<BrokerError> for IrisStatus {
             }
             BrokerError::MissingCommandLine => IrisStatus::BrokerMissingCommandLine,
             BrokerError::CannotBuildPolicyForWorker(e) => IrisStatus::from(e),
-            BrokerError::WorkerCommunicationError(e) => IrisStatus::from(e),
+            BrokerError::WorkerCommunicationError => IrisStatus::WorkerCommunicationError,
+            BrokerError::UnexpectedWorkerMessage => IrisStatus::UnexpectedWorkerMessage,
             BrokerError::InternalOsOperationFailed { .. } => {
                 IrisStatus::BrokerInternalOsOperationFailed
             }
@@ -71,13 +73,12 @@ impl From<BrokerError> for IrisStatus {
     }
 }
 
-impl From<IpcError> for IrisStatus {
+impl From<IpcError<'_>> for IrisStatus {
     fn from(err: IpcError) -> Self {
         match err {
             IpcError::UnexpectedHandleWithPayload { .. } => {
                 IrisStatus::IpcUnexpectedHandleWithPayload
             }
-            IpcError::TooManyHandlesWithPayload { .. } => IrisStatus::IpcTooManyHandlesWithPayload,
             IpcError::InvalidProcessID { .. } => IrisStatus::IpcInvalidProcessID,
             IpcError::UnableToOpenProcessOnTheOtherEnd { .. } => {
                 IrisStatus::IpcUnableToOpenProcessOnTheOtherEnd
@@ -94,9 +95,7 @@ impl From<IpcError> for IrisStatus {
                 IrisStatus::IpcInternalDeserializationError
             }
             IpcError::InternalOsOperationFailed { .. } => IrisStatus::IpcInternalOsOperationFailed,
-            IpcError::UnexpectedMessageInThisContext { .. } => {
-                IrisStatus::IpcUnexpectedMessageInThisContext
-            }
+            IpcError::HandleOperationFailed(_) => IrisStatus::IpcHandleOperationFailed,
         }
     }
 }

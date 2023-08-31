@@ -12,15 +12,22 @@ pub trait CrossPlatformMessagePipe {
     where
         Self: std::marker::Sized;
 
-    fn new() -> Result<(Self, Self), IpcError>
+    fn new() -> Result<(Self, Self), IpcError<'static>>
     where
         Self: std::marker::Sized;
 
-    fn recv(&mut self) -> Result<Vec<u8>, IpcError>;
+    fn recv<'a>(&mut self, buffer: &'a mut [u8]) -> Result<Option<&'a mut [u8]>, IpcError<'a>>;
 
-    fn recv_with_handle(&mut self) -> Result<(Vec<u8>, Option<Handle>), IpcError>;
+    fn recv_with_handle<'a>(
+        &mut self,
+        buffer: &'a mut [u8],
+    ) -> Result<Option<(&'a mut [u8], Option<Handle>)>, IpcError<'a>>;
 
-    fn set_remote_process(&mut self, remote_pid: u64) -> Result<(), IpcError>;
+    fn set_remote_process(&mut self, remote_pid: u64) -> Result<(), IpcError<'static>>;
 
-    fn send(&mut self, message: &[u8], handle: Option<&Handle>) -> Result<(), IpcError>;
+    fn send<'a>(
+        &mut self,
+        message: &'a [u8],
+        handle: Option<&'a Handle>,
+    ) -> Result<(), IpcError<'a>>;
 }

@@ -1,11 +1,11 @@
+use iris_policy::PolicyError;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IpcError {
+pub enum IpcError<'a> {
     UnexpectedHandleWithPayload {
-        payload: Vec<u8>,
+        payload: &'a [u8],
     },
-    TooManyHandlesWithPayload {
-        payload: Vec<u8>,
-    },
+    HandleOperationFailed(PolicyError),
     InvalidProcessID {
         pid: u64,
     },
@@ -14,27 +14,24 @@ pub enum IpcError {
         os_code: u64,
     },
     PayloadTooBigToTransmit {
-        truncated_payload: Vec<u8>,
+        truncated_payload: &'a [u8],
     },
     PayloadTooBigToSerialize {
-        payload: String,
+        payload: &'a str,
     },
     PayloadTooBigToDeserialize {
-        payload: Vec<u8>,
+        payload: &'a [u8],
     },
     InternalSerializationError {
-        payload: String,
-        description: String,
+        payload: &'a str,
+        description: &'a str,
     },
     InternalDeserializationError {
-        payload: Vec<u8>,
-        description: String,
+        payload: &'a [u8],
+        description: &'a str,
     },
     InternalOsOperationFailed {
         os_code: u64,
-        description: String,
-    },
-    UnexpectedMessageInThisContext {
-        received_type: String,
+        description: &'a str,
     },
 }

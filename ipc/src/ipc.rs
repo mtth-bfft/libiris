@@ -1,15 +1,8 @@
 use crate::error::IpcError;
 use crate::messagepipe::CrossPlatformMessagePipe;
 use crate::os::messagepipe::OSMessagePipe;
-use bincode::{ErrorKind, Options};
-use core::fmt::Debug;
 use iris_policy::Handle;
-use serde::{de::DeserializeOwned, Serialize};
-
-// Maximum message size that can be serialized and deserialized over an
-// IPC channel. Larger messages should use other (more efficient)
-// strategies to send/receive data, like shared memory sections.
-pub(crate) const IPC_MESSAGE_MAX_SIZE: u32 = 1024 * 1024;
+use serde::{Deserialize, Serialize};
 
 pub struct IPCMessagePipe {
     pipe: OSMessagePipe,
@@ -20,83 +13,42 @@ impl IPCMessagePipe {
         Self { pipe }
     }
 
-    pub fn send<T: Serialize + Debug>(
+    pub fn send<'a, T: Serialize>(
         &mut self,
-        msg: &T,
-        handle: Option<&Handle>,
-    ) -> Result<(), IpcError> {
-        let bincode_config = bincode::DefaultOptions::new()
-            .with_limit(IPC_MESSAGE_MAX_SIZE.into())
-            .with_native_endian()
-            .with_fixint_encoding()
-            .reject_trailing_bytes();
-        let bytes = match bincode_config.serialize(&msg).map_err(|e| *e) {
-            Ok(v) => v,
-            Err(ErrorKind::SizeLimit) => {
-                return Err(IpcError::PayloadTooBigToSerialize {
-                    payload: format!("{msg:?}"),
-                })
-            }
-            Err(e) => {
-                return Err(IpcError::InternalSerializationError {
-                    payload: format!("{msg:?}"),
-                    description: e.to_string(),
-                })
-            }
-        };
-        self.pipe.send(&bytes, handle)?;
+        msg: &'a T,
+        handle: Option<&'a Handle>,
+        buffer: &'a mut [u8],
+    ) -> Result<(), IpcError<'a>> {
+        let slice = postcard::to_slice(msg, buffer).expect("serialization error");
+        self.pipe.send(slice, handle)?;
         Ok(())
     }
 
-    pub fn recv<T: DeserializeOwned>(&mut self) -> Result<Option<T>, IpcError> {
-        let bincode_config = bincode::DefaultOptions::new()
-            .with_limit(IPC_MESSAGE_MAX_SIZE.into())
-            .with_native_endian()
-            .with_fixint_encoding()
-            .reject_trailing_bytes();
-        let bytes = self.pipe.recv()?;
-        if bytes.is_empty() {
-            return Ok(None);
-        }
-        let msg = match bincode_config.deserialize(&bytes).map_err(|e| *e) {
-            Ok(r) => r,
-            Err(ErrorKind::SizeLimit) => {
-                return Err(IpcError::PayloadTooBigToDeserialize { payload: bytes })
-            }
-            Err(e) => {
-                return Err(IpcError::InternalDeserializationError {
-                    payload: bytes,
-                    description: e.to_string(),
-                })
-            }
+    pub fn recv<'de, T>(&mut self, buffer: &'de mut [u8]) -> Result<Option<T>, IpcError<'de>>
+    where
+        T: Deserialize<'de>,
+    {
+        let buffer = match self.pipe.recv(buffer)? {
+            Some(buf) => buf,
+            None => return Ok(None),
         };
+        let msg: T = postcard::from_bytes(buffer).unwrap();
         Ok(Some(msg))
     }
 
-    pub fn recv_with_handle<T: DeserializeOwned>(
+    pub fn recv_with_handle<'de, T>(
         &mut self,
-    ) -> Result<(Option<T>, Option<Handle>), IpcError> {
-        let bincode_config = bincode::DefaultOptions::new()
-            .with_limit(IPC_MESSAGE_MAX_SIZE.into())
-            .with_native_endian()
-            .with_fixint_encoding()
-            .reject_trailing_bytes();
-        let (bytes, handle) = self.pipe.recv_with_handle()?;
-        if bytes.is_empty() {
-            return Ok((None, handle));
+        buffer: &'de mut [u8],
+    ) -> Result<Option<(T, Option<Handle>)>, IpcError<'de>>
+    where
+        T: Deserialize<'de>,
+    {
+        match self.pipe.recv_with_handle(buffer)? {
+            None => Ok(None),
+            Some((bytes, handle)) => {
+                let msg: T = postcard::from_bytes(&*bytes).unwrap();
+                Ok(Some((msg, handle)))
+            }
         }
-        let msg = match bincode_config.deserialize(&bytes).map_err(|e| *e) {
-            Ok(r) => r,
-            Err(ErrorKind::SizeLimit) => {
-                return Err(IpcError::PayloadTooBigToDeserialize { payload: bytes })
-            }
-            Err(e) => {
-                return Err(IpcError::InternalDeserializationError {
-                    payload: bytes,
-                    description: e.to_string(),
-                })
-            }
-        };
-        Ok((Some(msg), handle))
     }
 }

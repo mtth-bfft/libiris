@@ -4,7 +4,7 @@
 use core::ffi::c_void;
 use core::ptr::{null, null_mut};
 use core::sync::atomic::compiler_fence;
-use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse};
+use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse, IPC_MESSAGE_MAX_SIZE};
 use iris_policy::{CrossPlatformHandle, Handle};
 use log::{debug, info};
 use std::convert::TryInto;
@@ -723,12 +723,13 @@ extern "system" fn hook_ntcreatekey(
 fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Option<Handle>) {
     let mut pipe = get_ipc_pipe();
     debug!("Sending IPC request {:?} (handle: {:?})", &request, &handle);
-    pipe.send(&request, handle)
+    let mut buf = [0u8; IPC_MESSAGE_MAX_SIZE];
+    pipe.send(&request, handle, &mut buf)
         .expect("unable to send IPC request to broker");
     let (resp, handle) = pipe
-        .recv_with_handle()
-        .expect("unable to receive IPC response from broker");
-    let resp = resp.expect("broker closed our IPC pipe while expecting its response");
+        .recv_with_handle(&mut buf)
+        .expect("unable to receive IPC response from broker")
+        .expect("broker closed our IPC pipe while expecting its response");
     debug!("Received IPC response {:?} (handle: {:?})", &resp, &handle);
     (resp, handle)
 }
