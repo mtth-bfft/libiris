@@ -113,7 +113,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
 
         // Drop the structure in the parent so it doesn't leak. This is safe since we
         // created the box a few lines above and we control it.
-        unsafe { Box::from_raw(params as *mut EntrypointParameters) };
+        drop(unsafe { Box::from_raw(params as *mut EntrypointParameters) });
         drop(child_pipe);
 
         let mut execve_errno = [0u8; 4];
