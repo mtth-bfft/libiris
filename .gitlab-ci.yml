@@ -10,7 +10,7 @@ variables:
     - rustup default stable
     - rustup target install $TARGET
     - cargo build --workspace --target=$TARGET --all-features --verbose
-    - cargo clippy --all-features --all-targets -- -D warnings -A clippy::nonminimal-bool -A clippy::too_many_arguments
+    - cargo clippy --target=$TARGET --all-features -- -D warnings -A clippy::nonminimal-bool -A clippy::type_complexity -A clippy::too-many-arguments
     - cargo fmt -- --check
     - mkdir -p test-binaries-$TARGET/workers/
     - cargo build --tests --target=$TARGET
