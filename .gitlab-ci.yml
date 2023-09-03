@@ -9,14 +9,14 @@ variables:
   script:
     - rustup default stable
     - rustup target install $TARGET
-    - cargo build --workspace --target=$TARGET --all-features --verbose
+    - cargo build --target=$TARGET --workspace --all-features --verbose
     - cargo clippy --target=$TARGET --all-features -- -D warnings -A clippy::nonminimal-bool -A clippy::type_complexity -A clippy::too-many-arguments
     - cargo fmt -- --check
     - mkdir -p test-binaries-$TARGET/workers/
-    - cargo build --tests --target=$TARGET
-    - cargo build --tests --target=$TARGET --message-format=json | python tests/copy_artifacts.py test-binaries-$TARGET/
-    - cargo install cargo-license
-    - cargo license --all-features --tsv
+    - cargo build --target=$TARGET --tests
+    - cargo build --target=$TARGET --tests --message-format=json | python tests/copy_artifacts.py test-binaries-$TARGET/
+    - cargo install cargo-license --target=$TARGET
+    - cargo license --filter-platform=$TARGET --all-features --tsv
   artifacts:
     expire_in: 1h
     name: test-binaries
