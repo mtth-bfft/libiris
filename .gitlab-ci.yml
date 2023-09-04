@@ -27,8 +27,7 @@ build_linux:
   extends: .common_build
   tags:
     - linux
-    - selfhosted
-    - builder
+    - docker
   image: rust:latest
   before_script:
     - apt update
