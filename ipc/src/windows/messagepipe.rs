@@ -1,5 +1,4 @@
 use crate::error::IpcError;
-use crate::ipc::IPC_MESSAGE_MAX_SIZE;
 use crate::messagepipe::CrossPlatformMessagePipe;
 use core::ptr::null_mut;
 use iris_policy::{CrossPlatformHandle, Handle};
@@ -23,8 +22,8 @@ use winapi::um::winnt::{
     PROCESS_DUP_HANDLE,
 };
 
-const PIPE_BUFFER_SIZE: u32 = (std::mem::size_of::<u64>() as u32) + IPC_MESSAGE_MAX_SIZE;
-const PIPE_FOOTER_SIZE: usize = std::mem::size_of::<u64>();
+const PIPE_BUFFER_SIZE: u32 = 64 * 1024;
+const PIPE_FOOTER_SIZE: u32 = std::mem::size_of::<u64>() as u32;
 
 pub struct OSMessagePipe {
     pipe_handle: Handle,
@@ -43,7 +42,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
         }
     }
 
-    fn new() -> Result<(Self, Self), IpcError> {
+    fn new() -> Result<(Self, Self), IpcError<'static>> {
         let mut pipe_id = 0;
         loop {
             pipe_id += 1;
@@ -68,7 +67,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                         continue;
                     }
                     return Err(IpcError::InternalOsOperationFailed {
-                        description: "CreateNamedPipe() failed".to_owned(),
+                        description: "CreateNamedPipe() failed",
                         os_code: err.into(),
                     });
                 }
@@ -89,7 +88,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     // No handle was returned, it is safe to just exit the unsafe block
                     // Continuing will also destroy handle1 created just above
                     return Err(IpcError::InternalOsOperationFailed {
-                        description: format!("CreateFile({name_nul:?}) failed"),
+                        description: "CreateFile() failed",
                         os_code: GetLastError().into(),
                     });
                 }
@@ -100,7 +99,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 let err = unsafe { GetLastError() };
                 if err != ERROR_PIPE_CONNECTED {
                     return Err(IpcError::InternalOsOperationFailed {
-                        description: format!("ConnectNamedPipe({name_nul:?}) failed"),
+                        description: "ConnectNamedPipe() failed",
                         os_code: err.into(),
                     });
                 }
@@ -117,7 +116,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
             };
             if res == 0 {
                 return Err(IpcError::InternalOsOperationFailed {
-                    description: format!("SetNamedPipeHandleState({name_nul:?}) failed"),
+                    description: "SetNamedPipeHandleState() failed",
                     os_code: unsafe { GetLastError() }.into(),
                 });
             }
@@ -125,72 +124,70 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
         }
     }
 
-    fn recv(&mut self) -> Result<Vec<u8>, IpcError> {
-        let mut buf = vec![0u8; PIPE_BUFFER_SIZE.try_into().unwrap()];
+    fn recv<'a>(&mut self, buffer: &'a mut [u8]) -> Result<Option<&'a mut [u8]>, IpcError<'a>> {
         let mut bytes_read: DWORD = 0;
         let res = unsafe {
             ReadFile(
                 self.pipe_handle.as_raw() as HANDLE,
-                buf.as_mut_ptr() as *mut _,
-                buf.len().try_into().unwrap(),
+                buffer.as_mut_ptr() as *mut _,
+                buffer.len() as u32,
                 &mut bytes_read as *mut _,
                 null_mut(),
             )
         };
-        let bytes_read: usize = bytes_read.try_into().unwrap_or(0);
         if res == 0 || bytes_read < PIPE_FOOTER_SIZE {
             let err = unsafe { GetLastError() };
             if res == 0 && err == ERROR_BROKEN_PIPE {
-                buf.truncate(0);
-                return Ok(buf); // read of length 0 <=> end of file
+                return Ok(None); // read of length 0 <=> end of file
             }
             return Err(IpcError::InternalOsOperationFailed {
-                description: "ReadFile() failed".to_owned(),
+                description: "ReadFile() failed",
                 os_code: err.into(),
             });
         }
-        buf.truncate(bytes_read - PIPE_FOOTER_SIZE);
-        Ok(buf)
+        Ok(Some(
+            &mut buffer[0..(bytes_read - PIPE_FOOTER_SIZE) as usize],
+        ))
     }
 
-    fn recv_with_handle(&mut self) -> Result<(Vec<u8>, Option<Handle>), IpcError> {
-        let mut buf = vec![0u8; PIPE_BUFFER_SIZE.try_into().unwrap()];
+    fn recv_with_handle<'a>(
+        &mut self,
+        buffer: &'a mut [u8],
+    ) -> Result<Option<(&'a mut [u8], Option<Handle>)>, IpcError<'a>> {
         let mut bytes_read: DWORD = 0;
-        let handle = unsafe {
+        unsafe {
             let res = ReadFile(
                 self.pipe_handle.as_raw() as HANDLE,
-                buf.as_mut_ptr() as *mut _,
-                buf.len().try_into().unwrap(),
+                buffer.as_mut_ptr() as *mut _,
+                buffer.len() as u32,
                 &mut bytes_read as *mut _,
                 null_mut(),
             );
-            let bytes_read = bytes_read as usize;
             if res == 0 || bytes_read < PIPE_FOOTER_SIZE {
                 let err = GetLastError();
                 if res == 0 && err == ERROR_BROKEN_PIPE {
-                    buf.truncate(0);
-                    return Ok((buf, None)); // read of length 0 <=> end of file
+                    return Ok(None); // read of length 0 <=> end of file
                 }
                 return Err(IpcError::InternalOsOperationFailed {
-                    description: "ReadFile() failed".to_owned(),
+                    description: "ReadFile() failed",
                     os_code: err.into(),
                 });
             }
+            let payload_size = (bytes_read - PIPE_FOOTER_SIZE) as usize;
+            let read_size = bytes_read as usize;
             let handle = match u64::from_be_bytes(
-                buf[bytes_read - PIPE_FOOTER_SIZE..bytes_read]
+                buffer[payload_size..read_size]
                     .try_into()
-                    .unwrap(),
+                    .unwrap_or([0u8; 8]),
             ) {
-                n if n > 0 => Some(Handle::new(n).unwrap()),
-                _ => None,
+                n if n > 0 => Some(Handle::new(n).map_err(IpcError::HandleOperationFailed)?),
+                _n => None,
             };
-            buf.truncate(bytes_read - PIPE_FOOTER_SIZE);
-            handle
-        };
-        Ok((buf, handle))
+            Ok(Some((&mut buffer[..payload_size], handle)))
+        }
     }
 
-    fn set_remote_process(&mut self, remote_pid: u64) -> Result<(), IpcError> {
+    fn set_remote_process(&mut self, remote_pid: u64) -> Result<(), IpcError<'static>> {
         let remote_pid: u32 = match remote_pid.try_into() {
             Ok(n) => n,
             Err(_) => return Err(IpcError::InvalidProcessID { pid: remote_pid }),
@@ -209,7 +206,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
         Ok(())
     }
 
-    fn send(&mut self, message: &[u8], handle: Option<&Handle>) -> Result<(), IpcError> {
+    fn send<'a>(&mut self, message: &'a [u8], handle: Option<&Handle>) -> Result<(), IpcError<'a>> {
         let remote_handle = match handle {
             None => 0,
             Some(handle_to_send) => {
@@ -232,7 +229,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 };
                 if res == 0 {
                     return Err(IpcError::InternalOsOperationFailed {
-                        description: "DuplicateHandle() failed".to_owned(),
+                        description: "DuplicateHandle() failed",
                         os_code: unsafe { GetLastError() }.into(),
                     });
                 }
@@ -254,7 +251,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
         };
         if res == 0 {
             return Err(IpcError::InternalOsOperationFailed {
-                description: "WriteFile() failed".to_owned(),
+                description: "WriteFile() failed",
                 os_code: unsafe { GetLastError() }.into(),
             });
         }

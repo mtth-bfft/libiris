@@ -9,39 +9,47 @@ variables:
   script:
     - rustup default stable
     - rustup target install $TARGET
-    - cargo build --workspace --target=$TARGET --all-features --verbose
-    - cargo clippy --all-features --all-targets -- -D warnings -A clippy::nonminimal-bool -A clippy::too_many_arguments
+    - cargo build --target=$TARGET --workspace --all-features --verbose
+    - cargo clippy --target=$TARGET --all-features -- -D warnings -A clippy::nonminimal-bool -A clippy::type_complexity -A clippy::too-many-arguments
     - cargo fmt -- --check
-    - mkdir -p test-binaries-$TARGET/workers/
-    - cargo build --tests --target=$TARGET
-    - cargo build --tests --target=$TARGET --message-format=json | python tests/copy_artifacts.py test-binaries-$TARGET/
-    - cargo install cargo-license
-    - cargo license --all-features --tsv
+    - mkdir -p test-binaries-$TARGET-$OSVER/workers/
+    - cargo build --target=$TARGET --tests
+    - cargo build --target=$TARGET --tests --message-format=json | python tests/copy_artifacts.py test-binaries-$TARGET-$OSVER/
+    - cargo install cargo-license --target=$TARGET
+    - cargo license --filter-platform=$TARGET --all-features --tsv
   artifacts:
     expire_in: 1h
     name: test-binaries
     paths:
-      - test-binaries-$TARGET/
+      - test-binaries-$TARGET-$OSVER/
 
-build_linux:
+.debian_build:
   extends: .common_build
   tags:
     - linux
-    - selfhosted
-    - builder
-  image: rust:latest
+    - docker
+  variables:
+    TARGET: $ARCH-unknown-linux-gnu
   before_script:
-    - apt update
-    - apt install -y libseccomp-dev libseccomp2 libcap2 libcap-dev python3 python-is-python3 gcc-multilib
     - dpkg --add-architecture i386
     - apt update
+    - apt install -y libseccomp-dev libseccomp2 libcap2 libcap-dev python3 python-is-python3 gcc-multilib
     - apt install -y libseccomp-dev:i386 libseccomp2:i386 libcap-dev:i386 libcap2:i386
   parallel:
     matrix:
-      - TARGET: i686-unknown-linux-gnu
-        ARCH: i686
-      - TARGET: x86_64-unknown-linux-gnu
-        ARCH: x86_64
+      - ARCH: [i686, x86_64]
+
+build_debian11:
+  extends: .debian_build
+  image: rust:bullseye
+  variables:
+    OSVER: debian11
+
+build_debian12:
+  extends: .debian_build
+  image: rust:bookworm
+  variables:
+    OSVER: debian12
 
 build_windows:
   extends: .common_build
@@ -51,6 +59,8 @@ build_windows:
     - builder
   variables:
     RUSTFLAGS: -D warnings -Ctarget-feature=+crt-static
+    TARGET: $ARCH-pc-windows-msvc
+    OSVER: win10
   before_script:
     - if (!(Get-Command python)) { choco install -y --no-progress python3 }
     - Invoke-WebRequest -Uri https://win.rustup.rs/$ARCH -OutFile rustup-init.exe
@@ -58,70 +68,54 @@ build_windows:
     - $env:Path=[System.Environment]::GetEnvironmentVariable("Path","Machine")+";"+[System.Environment]::GetEnvironmentVariable("Path","User")
   parallel:
     matrix:
-      - TARGET: i686-pc-windows-msvc
-        ARCH: i686
-      - TARGET: x86_64-pc-windows-msvc
-        ARCH: x86_64
+      - ARCH: [i686, x86_64]
 
 test_win10_1507_x86_64:
   tags:
-    - windows
-    - selfhosted
-    - win10
     - win10_1507
-    - x86_64
+    - x64
   needs:
     - job: build_windows
       artifacts: true
   script:
-    - tests/run.ps1 test-binaries-x86_64-pc-windows-msvc/
+    - tests/run.ps1 test-binaries-x86_64-pc-windows-msvc-win10/
 
-test_win7_x86_64:
+test_win7_x64:
   tags:
-    - windows
-    - selfhosted
     - win7
-    - x86_64
+    - x64
   needs:
     - job: build_windows
       artifacts: true
   script:
-    - tests/run.ps1 test-binaries-x86_64-pc-windows-msvc/
-
-#test_win7_i686:
-#  tags:
-#    - windows
-#    - selfhosted
-#    - win7
-#    - i686
-#  needs:
-#    - job: build_windows
-#      artifacts: true
-#  script:
-#    - tests/run.ps1 test-binaries-i686-pc-windows-msvc/
+    - tests/run.ps1 test-binaries-x86_64-pc-windows-msvc-win10/
 
 test_debian11_i686:
   tags:
-    - linux
     - debian11
     - i686
   needs:
-    - job: build_linux
+    - job: build_debian11
       artifacts: true
-  before_script:
-    - (/sbin/ldconfig -p | grep -iq libseccomp) || (apt update && apt install -y libseccomp2)
   script:
-    - tests/run.sh test-binaries-i686-unknown-linux-gnu/
+    - tests/run.sh test-binaries-i686-unknown-linux-gnu-debian11/
 
-test_debian11_x86_64:
+test_debian11_x64:
   tags:
-    - linux
     - debian11
-    - x86_64
+    - x64
   needs:
-    - job: build_linux
+    - job: build_debian11
       artifacts: true
-  before_script:
-    - (/sbin/ldconfig -p | grep -iq libseccomp) || (apt update && apt install -y libseccomp2)
   script:
-    - tests/run.sh test-binaries-x86_64-unknown-linux-gnu/
+    - tests/run.sh test-binaries-x86_64-unknown-linux-gnu-debian11/
+
+test_debian12_x64:
+  tags:
+    - debian12
+    - x64
+  needs:
+    - job: build_debian12
+      artifacts: true
+  script:
+    - tests/run.sh test-binaries-x86_64-unknown-linux-gnu-debian12/

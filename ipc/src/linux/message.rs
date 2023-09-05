@@ -1,7 +1,7 @@
 use iris_policy::Policy;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
 pub enum IPCRequest {
     // Initial message sent by workers if they load a helper library (e.g. on Linux)
     // and they are ready to enforce their final sandboxing policy permanently
@@ -12,7 +12,7 @@ pub enum IPCRequest {
     Syscall { nb: i64, args: [i64; 6], ip: i64 },
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
 pub enum IPCResponse {
     InitializationResponse {
         policy_applied: Box<Policy<'static>>,

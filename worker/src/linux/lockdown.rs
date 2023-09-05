@@ -1,6 +1,9 @@
 use core::ffi::c_void;
 use core::ptr::null;
-use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse, IPC_SECCOMP_CALL_SITE_PLACEHOLDER};
+use iris_ipc::{
+    IPCMessagePipe, IPCRequest, IPCResponse, IPC_MESSAGE_MAX_SIZE,
+    IPC_SECCOMP_CALL_SITE_PLACEHOLDER,
+};
 use iris_policy::{CrossPlatformHandle, Handle};
 use libc::{c_char, c_int, O_PATH};
 use log::{debug, info, warn};
@@ -52,18 +55,22 @@ pub(crate) fn lower_final_sandbox_privileges(ipc: IPCMessagePipe) {
         IPC_PIPE_SINGLETON = Box::leak(Box::new(Mutex::new(ipc))) as *const _;
     }
 
+    let mut buf = [0u8; IPC_MESSAGE_MAX_SIZE];
     get_ipc_pipe()
-        .send(&IPCRequest::InitializationRequest, None)
+        .send(&IPCRequest::InitializationRequest, None, &mut buf)
         .expect("unable to send IPC message to broker");
-    let resp = get_ipc_pipe()
-        .recv()
+    let resp: Option<IPCResponse> = get_ipc_pipe()
+        .recv(&mut buf)
         .expect("unable to read worker policy from broker");
     let (policy, mut seccomp_filter) = match resp {
         Some(IPCResponse::InitializationResponse {
             policy_applied,
             seccomp_filter_to_apply,
         }) => (policy_applied, seccomp_filter_to_apply),
-        other => panic!("unexpected initial response received from broker: {other:?}"),
+        other => panic!(
+            "expected worker policy but got {:?} from broker, we probably did something wrong?",
+            other
+        ),
     };
 
     if policy.is_audit_only() {
@@ -280,14 +287,13 @@ pub(crate) extern "C" fn sigsys_handler(
 }
 
 fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Option<Handle>) {
+    let mut buf = [0u8; IPC_MESSAGE_MAX_SIZE];
     let mut pipe = get_ipc_pipe();
-    pipe.send(&request, handle)
+    pipe.send(&request, handle, &mut buf)
         .expect("unable to send IPC request to broker");
-    let (resp, handle) = pipe
-        .recv_with_handle()
-        .expect("unable to receive IPC response from broker");
-    let resp = resp.expect("broker closed our IPC pipe while expecting its response");
-    (resp, handle)
+    pipe.recv_with_handle(&mut buf)
+        .expect("unable to receive IPC response from broker")
+        .expect("broker closed our IPC pipe while expecting its response")
 }
 
 fn handle_openat(path: &str, flags: libc::c_int, _mode: libc::c_int) -> isize {

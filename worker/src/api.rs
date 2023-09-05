@@ -1,5 +1,5 @@
 use crate::lockdown;
-use iris_ipc::{CrossPlatformMessagePipe, IPCMessagePipe, MessagePipe, IPC_HANDLE_ENV_NAME};
+use iris_ipc::{CrossPlatformMessagePipe, IPCMessagePipe, OSMessagePipe, IPC_HANDLE_ENV_NAME};
 use iris_policy::{CrossPlatformHandle, Handle};
 use log::info;
 
@@ -15,7 +15,7 @@ pub fn lower_final_sandbox_privileges_asap() {
     // This unsafe block takes possession of the handle, which is safe since we are the only ones aware
     // of this environment variable, and we erase it as soon as it is used.
     let handle = unsafe { Handle::new(handle).expect("invalid IPC handle environment variable") };
-    let pipe = MessagePipe::from_handle(handle);
+    let pipe = OSMessagePipe::from_handle(handle);
     let ipc = IPCMessagePipe::new(pipe);
 
     lockdown::lower_final_sandbox_privileges(ipc);

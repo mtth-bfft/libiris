@@ -3,7 +3,6 @@
 use common::common_test_setup;
 use iris_worker::lower_final_sandbox_privileges_asap;
 use log::info;
-use std::convert::TryInto;
 use std::ffi::CString;
 
 #[cfg(unix)]
@@ -24,7 +23,7 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
                 res >= 0,
                 "open({path}, flags={flags}) should have worked, failed with errno {err}"
             );
-            let res = unsafe { libc::close(res.try_into().expect("invalid file descriptor")) };
+            let res = unsafe { libc::close(res as libc::c_int) };
             assert_eq!(res, 0, "unable to close file descriptor");
         } else {
             assert!(
@@ -68,7 +67,7 @@ fn run_checks(path: &str, policy_readable: bool, policy_writable: bool) {
             );
         }
         if res >= 0 {
-            let fd: c_int = res.try_into().expect("invalid file descriptor returned");
+            let fd = res as c_int;
             check_fd(fd, flags);
             let res = unsafe { libc::close(fd) };
             assert_eq!(res, 0, "unable to close file descriptor");

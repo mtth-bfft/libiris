@@ -4,8 +4,8 @@ use crate::os::process::OSSandboxedProcess;
 use crate::process::CrossPlatformSandboxedProcess;
 use crate::ProcessConfig;
 use iris_ipc::{
-    CrossPlatformMessagePipe, IPCMessagePipe, IPCRequest, IPCResponse, IpcError, MessagePipe,
-    IPC_HANDLE_ENV_NAME,
+    CrossPlatformMessagePipe, IPCMessagePipe, IPCRequest, IPCResponse, OSMessagePipe,
+    IPC_HANDLE_ENV_NAME, IPC_MESSAGE_MAX_SIZE,
 };
 use iris_policy::{CrossPlatformHandle, Policy};
 use log::{debug, warn};
@@ -18,7 +18,9 @@ pub struct Worker {
 
 impl Worker {
     pub fn new(process_config: &ProcessConfig, policy: &Policy) -> Result<Self, BrokerError> {
-        let (mut broker_pipe, worker_pipe) = MessagePipe::new()?;
+        let mut buf = [0u8; IPC_MESSAGE_MAX_SIZE];
+        let (mut broker_pipe, worker_pipe) =
+            OSMessagePipe::new().map_err(|_| BrokerError::WorkerCommunicationError)?;
         let mut worker_pipe_handle = worker_pipe.into_handle();
         worker_pipe_handle.set_inheritable(true)?;
         let mut policy = policy.clone();
@@ -43,7 +45,9 @@ impl Worker {
         process_config.set_environment_variable(ipc_handle_var)?;
         let process = OSSandboxedProcess::new(&policy, &process_config)?;
         let worker_pid = process.get_pid();
-        broker_pipe.set_remote_process(worker_pid)?;
+        broker_pipe
+            .set_remote_process(worker_pid)
+            .map_err(|_| BrokerError::WorkerCommunicationError)?;
         let mut broker_pipe = IPCMessagePipe::new(broker_pipe); // upgrade to a serializing/deserializing pipe
 
         // Free resources kept open before passing it to the 'static manager thread
@@ -52,44 +56,40 @@ impl Worker {
         // when the worker dies and the counterpart handle to the IPC pipe is closed.
         drop(worker_pipe_handle);
 
-        // Wait for the initial message from worker, when it has loaded its helper library
-        // FIXME: there is at least one case where the worker can die, become a zombie, and
-        // leave us hanging in this recvmsg()
-        match broker_pipe.recv() {
+        match broker_pipe.recv(&mut buf) {
             Ok(Some(IPCRequest::InitializationRequest)) => (),
-            Ok(Some(m)) => {
-                return Err(BrokerError::WorkerCommunicationError(
-                    IpcError::UnexpectedMessageInThisContext {
-                        received_type: format!("{m:?}"),
-                    },
-                ))
+            Ok(Some(_)) => {
+                return Err(BrokerError::UnexpectedWorkerMessage);
             }
             Ok(None) => return Err(BrokerError::ProcessExitedDuringInitialization),
-            Err(e) => return Err(BrokerError::WorkerCommunicationError(e)),
+            Err(_) => return Err(BrokerError::WorkerCommunicationError),
         };
         debug!("Child process is initializing its sandboxing helper library");
         let resp = Self::compute_initialization_response(&runtime_policy, worker_pid);
-        if let Err(e) = broker_pipe.send(&resp, None) {
-            return Err(BrokerError::WorkerCommunicationError(e));
-        }
+        broker_pipe
+            .send(&resp, None, &mut buf)
+            .map_err(|_| BrokerError::WorkerCommunicationError)?;
 
         // TODO: bind manager thread lifetime to the worker lifetime (cleanup in drop?)
         std::thread::spawn(move || loop {
-            let request = match broker_pipe.recv() {
+            let request: IPCRequest = match broker_pipe.recv(&mut buf) {
                 Ok(Some(m)) => m,
                 Ok(None) => {
                     debug!("Manager thread exiting cleanly, worker closed its IPC socket");
                     break;
                 }
-                Err(e) => {
-                    warn!("Manager thread exiting: error when receiving IPC: {:?}", e);
+                other => {
+                    warn!(
+                        "Manager thread exiting because of unexpected message from IPC: {:?}",
+                        other
+                    );
                     break;
                 }
             };
             debug!("Received request: {:?}", &request);
             let (resp, handle) = handle_os_specific_request(request, &runtime_policy);
             debug!("Sending response: {:?} (handle={:?})", &resp, &handle);
-            if let Err(e) = broker_pipe.send(&resp, handle.as_ref()) {
+            if let Err(e) = broker_pipe.send(&resp, handle.as_ref(), &mut buf) {
                 warn!("Broker thread exiting: error when sending IPC: {:?}", e);
                 break;
             }

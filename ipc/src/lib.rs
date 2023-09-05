@@ -15,7 +15,10 @@ mod os;
 pub use ipc::IPCMessagePipe;
 pub use messagepipe::CrossPlatformMessagePipe;
 pub use os::message::{IPCRequest, IPCResponse};
-pub use os::messagepipe::OSMessagePipe as MessagePipe;
+pub use os::messagepipe::OSMessagePipe;
+
+// Maximum number of bytes a serialized IPC message can take.
+pub const IPC_MESSAGE_MAX_SIZE: usize = 64 * 1024;
 
 // Name of the environment variable used to pass the IPC socket handle/file
 // descriptor number to child processes
