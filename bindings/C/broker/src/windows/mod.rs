@@ -44,7 +44,7 @@ impl From<&PolicyRequest<'_>> for IrisPolicyRequest {
                 // just copy to a raw heap buffer with the exact right length.
                 let ea = unsafe {
                     let layout = std::alloc::Layout::from_size_align(ea.len(), 16).unwrap();
-                    let ptr = std::alloc::alloc(layout) as *mut u8;
+                    let ptr = std::alloc::alloc(layout);
                     std::ptr::copy_nonoverlapping(ea.as_ptr(), ptr, ea.len());
                     ptr
                 };

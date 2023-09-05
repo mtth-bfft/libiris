@@ -188,11 +188,7 @@ fn hook_function(dll_name: &str, func_name: &str, new_ptr: *const fn()) {
                     .DataDirectory) as *const IMAGE_DATA_DIRECTORY
             }
         } else if arch == IMAGE_FILE_MACHINE_I386 {
-            unsafe {
-                &((*(pe_header as *const IMAGE_NT_HEADERS32))
-                    .OptionalHeader
-                    .DataDirectory) as *const IMAGE_DATA_DIRECTORY
-            }
+            unsafe { &((*pe_header).OptionalHeader.DataDirectory) as *const IMAGE_DATA_DIRECTORY }
         } else {
             panic!("DLL at {dos_header:?} uses unknown architecture ID {arch}");
         };
