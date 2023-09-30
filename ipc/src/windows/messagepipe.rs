@@ -1,7 +1,8 @@
 use crate::error::IpcError;
+use crate::handle::CrossPlatformHandle;
 use crate::messagepipe::CrossPlatformMessagePipe;
+use crate::os::handle::Handle;
 use core::ptr::null_mut;
-use iris_policy::{CrossPlatformHandle, Handle};
 use log::debug;
 use std::convert::TryInto;
 use std::ffi::CString;
@@ -180,7 +181,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     .try_into()
                     .unwrap_or([0u8; 8]),
             ) {
-                n if n > 0 => Some(Handle::new(n).map_err(IpcError::HandleOperationFailed)?),
+                n if n > 0 => Some(Handle::new(n).map_err(IpcError::from)?),
                 _n => None,
             };
             Ok(Some((&mut buffer[..payload_size], handle)))

@@ -1,5 +1,5 @@
 use iris_broker::BrokerError;
-use iris_ipc::IpcError;
+use iris_ipc::{HandleError, IpcError};
 use iris_policy::PolicyError;
 
 #[repr(u64)]
@@ -33,21 +33,25 @@ pub enum IrisStatus {
     IpcInternalDeserializationError = 3009,
     IpcInternalOsOperationFailed = 3010,
     IpcHandleOperationFailed = 3011,
+    IpcInvalidHandleValueReceived = 3012,
+    // 0x4000 : HandleError
+    HandleInvalidValue = 4001,
+    HandleInternalOsOperationFailed = 4002,
 }
 
 impl From<PolicyError> for IrisStatus {
     fn from(err: PolicyError) -> Self {
         match err {
             PolicyError::HandleNotInheritable { .. } => IrisStatus::PolicyHandleNotInheritable,
+            PolicyError::InvalidHandleValue { .. } => IrisStatus::PolicyInvalidHandle,
+            PolicyError::InternalOsOperationFailed { .. } => {
+                IrisStatus::PolicyHandleOsOperationFailed
+            }
             PolicyError::UnsupportedFilesystemPath { .. } => {
                 IrisStatus::PolicyUnsupportedFilesystemPath
             }
             PolicyError::UnsupportedRegistryPath { .. } => {
                 IrisStatus::PolicyUnsupportedRegistryPath
-            }
-            PolicyError::InvalidHandle { .. } => IrisStatus::PolicyInvalidHandle,
-            PolicyError::HandleOsOperationFailed { .. } => {
-                IrisStatus::PolicyHandleOsOperationFailed
             }
         }
     }
@@ -95,7 +99,20 @@ impl From<IpcError<'_>> for IrisStatus {
                 IrisStatus::IpcInternalDeserializationError
             }
             IpcError::InternalOsOperationFailed { .. } => IrisStatus::IpcInternalOsOperationFailed,
-            IpcError::HandleOperationFailed(_) => IrisStatus::IpcHandleOperationFailed,
+            IpcError::InvalidHandleValueReceived { .. } => {
+                IrisStatus::IpcInvalidHandleValueReceived
+            }
+        }
+    }
+}
+
+impl From<HandleError> for IrisStatus {
+    fn from(e: HandleError) -> Self {
+        match e {
+            HandleError::InvalidHandleValue { .. } => IrisStatus::HandleInvalidValue,
+            HandleError::InternalOsOperationFailed { .. } => {
+                IrisStatus::HandleInternalOsOperationFailed
+            }
         }
     }
 }

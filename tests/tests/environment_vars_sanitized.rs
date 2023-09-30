@@ -1,6 +1,7 @@
 use common::os::wait_for_worker_exit;
 use common::{common_test_setup, get_worker_abs_path};
-use iris_broker::{Policy, ProcessConfig, Worker};
+use iris_broker::{ProcessConfig, Worker};
+use iris_policy::Policy;
 
 #[test]
 fn environment_vars_sanitized() {

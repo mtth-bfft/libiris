@@ -1,5 +1,6 @@
 use common::common_test_setup;
-use iris_broker::{BrokerError, Policy, ProcessConfig, Worker};
+use iris_broker::{BrokerError, ProcessConfig, Worker};
+use iris_policy::Policy;
 use std::ffi::CString;
 
 #[test]

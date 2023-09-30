@@ -1,6 +1,8 @@
 use crate::lockdown;
-use iris_ipc::{CrossPlatformMessagePipe, IPCMessagePipe, OSMessagePipe, IPC_HANDLE_ENV_NAME};
-use iris_policy::{CrossPlatformHandle, Handle};
+use iris_broker::IPC_HANDLE_ENV_NAME;
+use iris_ipc::{
+    CrossPlatformHandle, CrossPlatformMessagePipe, Handle, IPCMessagePipe, OSMessagePipe,
+};
 use log::info;
 
 pub fn lower_final_sandbox_privileges_asap() {

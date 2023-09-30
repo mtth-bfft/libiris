@@ -1,5 +1,5 @@
 use crate::BrokerError;
-use iris_policy::Handle;
+use iris_ipc::Handle;
 use std::ffi::{CStr, CString};
 
 #[derive(Debug, Clone)]

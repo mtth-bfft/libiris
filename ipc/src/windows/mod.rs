@@ -1,2 +1,2 @@
-pub(crate) mod message;
+pub(crate) mod handle;
 pub(crate) mod messagepipe;

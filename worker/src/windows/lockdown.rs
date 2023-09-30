@@ -4,8 +4,8 @@
 use core::ffi::c_void;
 use core::ptr::{null, null_mut};
 use core::sync::atomic::compiler_fence;
-use iris_ipc::{IPCMessagePipe, IPCRequest, IPCResponse, IPC_MESSAGE_MAX_SIZE};
-use iris_policy::{CrossPlatformHandle, Handle};
+use iris_broker::{IPCRequest, IPCResponse, IPC_MESSAGE_MAX_SIZE};
+use iris_ipc::{CrossPlatformHandle, Handle, IPCMessagePipe};
 use log::{debug, info};
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
