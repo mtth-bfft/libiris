@@ -124,7 +124,7 @@ pub unsafe extern "C" fn iris_process_config_redirect_stdin(
     let new_stdin = if new_stdin == u64::MAX {
         None
     } else {
-        match Handle::new(new_stdin) {
+        match Handle::from_raw(new_stdin) {
             Ok(h) => Some(h),
             Err(e) => return IrisStatus::from(e),
         }
@@ -160,7 +160,7 @@ pub unsafe extern "C" fn iris_process_config_redirect_stdout(
     let new_stdout = if new_stdout == u64::MAX {
         None
     } else {
-        match Handle::new(new_stdout) {
+        match Handle::from_raw(new_stdout) {
             Ok(h) => Some(h),
             Err(e) => return IrisStatus::from(e),
         }
@@ -196,7 +196,7 @@ pub unsafe extern "C" fn iris_process_config_redirect_stderr(
     let new_stderr = if new_stderr == u64::MAX {
         None
     } else {
-        match Handle::new(new_stderr) {
+        match Handle::from_raw(new_stderr) {
             Ok(h) => Some(h),
             Err(e) => return IrisStatus::from(e),
         }

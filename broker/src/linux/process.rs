@@ -43,8 +43,8 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 });
             }
             (
-                Handle::new(clone_error_pipes[0].try_into().unwrap()).unwrap(),
-                Handle::new(clone_error_pipes[1].try_into().unwrap()).unwrap(),
+                Handle::from_raw(clone_error_pipes[0].try_into().unwrap()).unwrap(),
+                Handle::from_raw(clone_error_pipes[1].try_into().unwrap()).unwrap(),
             )
         };
         child_pipe.set_inheritable(false)?; // set the pipe as CLOEXEC so it gets closed on successful execve(), which we can detect

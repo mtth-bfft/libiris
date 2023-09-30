@@ -16,7 +16,8 @@ pub fn lower_final_sandbox_privileges_asap() {
         .expect("invalid IPC handle environment variable contents");
     // This unsafe block takes possession of the handle, which is safe since we are the only ones aware
     // of this environment variable, and we erase it as soon as it is used.
-    let handle = unsafe { Handle::new(handle).expect("invalid IPC handle environment variable") };
+    let handle =
+        unsafe { Handle::from_raw(handle).expect("invalid IPC handle environment variable") };
     let pipe = OSMessagePipe::from_handle(handle);
     let ipc = IPCMessagePipe::new(pipe);
 

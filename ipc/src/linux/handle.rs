@@ -12,7 +12,7 @@ pub struct Handle {
 }
 
 impl CrossPlatformHandle for Handle {
-    unsafe fn new(raw_handle: u64) -> Result<Self, HandleError> {
+    unsafe fn from_raw(raw_handle: u64) -> Result<Self, HandleError> {
         let fd: c_int = match raw_handle.try_into() {
             Ok(n) if n >= 0 => n,
             _ => {
@@ -98,7 +98,7 @@ impl Drop for Handle {
 
 impl FromRawFd for Handle {
     unsafe fn from_raw_fd(fd: i32) -> Self {
-        Handle::new(fd.try_into().unwrap()).unwrap()
+        Handle::from_raw(fd.try_into().unwrap()).unwrap()
     }
 }
 
@@ -120,7 +120,7 @@ pub fn set_unmanaged_handle_inheritable<T: AsRawFd>(
     // for the duration of the block, and we don't take ownership of it
     let fd = resource.as_raw_fd().try_into().unwrap();
     unsafe {
-        let mut handle = Handle::new(fd).unwrap();
+        let mut handle = Handle::from_raw(fd).unwrap();
         let res = handle.set_inheritable(allow_inherit);
         let _ = handle.into_raw(); // leak voluntarily
         res
@@ -140,7 +140,7 @@ impl Clone for Handle {
                     Error::last_os_error().raw_os_error().unwrap_or(0)
                 );
             }
-            Self::new(res.try_into().unwrap()).unwrap()
+            Self::from_raw(res.try_into().unwrap()).unwrap()
         }
     }
 }

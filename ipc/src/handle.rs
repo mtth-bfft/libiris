@@ -5,7 +5,7 @@ pub trait CrossPlatformHandle: core::fmt::Debug {
     /// Only call this function with raw_handle a valid file descriptor or handle,
     /// and do not use raw_handle after it is passed here. This method takes ownership
     /// of the handle and takes care of closing it when out of scope.
-    unsafe fn new(raw_handle: u64) -> Result<Self, HandleError>
+    unsafe fn from_raw(raw_handle: u64) -> Result<Self, HandleError>
     where
         Self: Sized;
 

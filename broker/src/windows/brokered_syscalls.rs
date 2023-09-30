@@ -173,7 +173,7 @@ fn handle_ntcreatefile(
             (
                 status,
                 io_status.Information,
-                Some(Handle::new(handle as u64).unwrap()),
+                Some(Handle::from_raw(handle as u64).unwrap()),
             )
         } else {
             (status, io_status.Information, None)
@@ -254,7 +254,7 @@ fn handle_ntcreatekey(
                 (
                     disposition,
                     status,
-                    Some(Handle::new(handle as u64).unwrap()),
+                    Some(Handle::from_raw(handle as u64).unwrap()),
                 )
             } else {
                 (0, status, None)
@@ -274,7 +274,7 @@ fn handle_ntcreatekey(
                 (
                     REG_OPENED_EXISTING_KEY,
                     status,
-                    Some(Handle::new(handle as u64).unwrap()),
+                    Some(Handle::from_raw(handle as u64).unwrap()),
                 )
             } else {
                 (0, status, None)

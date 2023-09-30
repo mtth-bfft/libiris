@@ -547,7 +547,7 @@ pub fn wait_for_worker_exit(worker: &Worker) -> Result<u64, String> {
                 GetLastError()
             ));
         }
-        Handle::new(res as u64).unwrap()
+        Handle::from_raw(res as u64).unwrap()
     };
     let mut exit_code: DWORD = STILL_ACTIVE;
     loop {

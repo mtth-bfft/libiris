@@ -72,7 +72,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                         os_code: err.into(),
                     });
                 }
-                Handle::new(res as u64).unwrap()
+                Handle::from_raw(res as u64).unwrap()
             };
             let handle2 = unsafe {
                 let res = CreateFileA(
@@ -93,7 +93,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                         os_code: GetLastError().into(),
                     });
                 }
-                Handle::new(res as u64).unwrap()
+                Handle::from_raw(res as u64).unwrap()
             };
             let res = unsafe { ConnectNamedPipe(handle1.as_raw() as HANDLE, null_mut()) };
             if res == 0 {
@@ -181,7 +181,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     .try_into()
                     .unwrap_or([0u8; 8]),
             ) {
-                n if n > 0 => Some(Handle::new(n).map_err(IpcError::from)?),
+                n if n > 0 => Some(Handle::from_raw(n).map_err(IpcError::from)?),
                 _n => None,
             };
             Ok(Some((&mut buffer[..payload_size], handle)))
@@ -202,7 +202,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     os_code: GetLastError().into(),
                 });
             }
-            Some(Handle::new(res as u64).unwrap())
+            Some(Handle::from_raw(res as u64).unwrap())
         };
         Ok(())
     }

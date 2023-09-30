@@ -19,7 +19,7 @@ pub struct Handle {
 }
 
 impl CrossPlatformHandle for Handle {
-    unsafe fn new(raw_handle: u64) -> Result<Self, HandleError> {
+    unsafe fn from_raw(raw_handle: u64) -> Result<Self, HandleError> {
         Ok(Handle {
             val: Some(raw_handle),
         })
@@ -94,7 +94,7 @@ impl Drop for Handle {
 
 impl FromRawHandle for Handle {
     unsafe fn from_raw_handle(handle: RawHandle) -> Self {
-        Handle::new(handle as u64).unwrap()
+        Handle::from_raw(handle as u64).unwrap()
     }
 }
 
@@ -115,7 +115,7 @@ pub fn set_unmanaged_handle_inheritable<T: AsRawHandle>(
     // This block is safe because the file descriptor held by `resource` lives at least
     // for the duration of the block, and we don't take ownership of it
     unsafe {
-        let mut handle = Handle::new(resource.as_raw_handle() as u64)?; // returning here is safe since the handle was not created thus won't be drop()ped
+        let mut handle = Handle::from_raw(resource.as_raw_handle() as u64)?; // returning here is safe since the handle was not created thus won't be drop()ped
         let res = handle.set_inheritable(allow_inherit);
         let _ = handle.into_raw(); // leak voluntarily
         res
@@ -143,7 +143,7 @@ impl Clone for Handle {
                     GetLastError()
                 );
             }
-            Self::new(res.try_into().unwrap()).unwrap()
+            Self::from_raw(res.try_into().unwrap()).unwrap()
         }
     }
 }

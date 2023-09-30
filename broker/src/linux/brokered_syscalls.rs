@@ -44,7 +44,7 @@ pub(crate) fn handle_open_file(
                 return (IPCResponse::SyscallResult(-err), None);
             }
         };
-        Handle::new(fd).unwrap()
+        Handle::from_raw(fd).unwrap()
     };
     (IPCResponse::SyscallResult(0), Some(handle))
 }

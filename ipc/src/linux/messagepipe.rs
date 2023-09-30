@@ -35,8 +35,8 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 });
             }
             (
-                Handle::new(socks[0] as u64).unwrap(),
-                Handle::new(socks[1] as u64).unwrap(),
+                Handle::from_raw(socks[0] as u64).unwrap(),
+                Handle::from_raw(socks[1] as u64).unwrap(),
             )
         };
         Ok((Self { fd: fd0 }, Self { fd: fd1 }))
@@ -141,7 +141,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     &mut aligned as *mut _ as *mut _,
                     std::mem::size_of_val(&aligned),
                 );
-                handle = match Handle::new(aligned as u64) {
+                handle = match Handle::from_raw(aligned as u64) {
                     Ok(h) => Ok(Some(h)),
                     Err(e) => Err(IpcError::from(e)),
                 };
