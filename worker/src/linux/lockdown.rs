@@ -1,10 +1,9 @@
 use core::ffi::c_void;
 use core::ptr::null;
-use iris_ipc::{
-    IPCMessagePipe, IPCRequest, IPCResponse, IPC_MESSAGE_MAX_SIZE,
-    IPC_SECCOMP_CALL_SITE_PLACEHOLDER,
+use iris_broker::{
+    IPCRequest, IPCResponse, IPC_MESSAGE_MAX_SIZE, IPC_SECCOMP_CALL_SITE_PLACEHOLDER,
 };
-use iris_policy::{CrossPlatformHandle, Handle};
+use iris_ipc::{CrossPlatformHandle, Handle, IPCMessagePipe};
 use libc::{c_char, c_int, O_PATH};
 use log::{debug, info, warn};
 use std::borrow::BorrowMut;

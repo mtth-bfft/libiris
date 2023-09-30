@@ -5,6 +5,7 @@ authors = ["Matthieu Buffet <matthieu@buffet.re>"]
 edition = "2021"
 
 [dependencies]
+serde = { version = "1.0.125", default-features = false, features = ["derive"] }
 iris-policy = { path = "../policy" }
 iris-ipc = { path = "../ipc" }
 log = "0.4.17"

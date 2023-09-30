@@ -1,13 +1,12 @@
 use crate::error::BrokerError;
 use crate::os::brokered_syscalls::handle_os_specific_request;
+use crate::os::messages::{IPCRequest, IPCResponse};
 use crate::os::process::OSSandboxedProcess;
 use crate::process::CrossPlatformSandboxedProcess;
 use crate::ProcessConfig;
-use iris_ipc::{
-    CrossPlatformMessagePipe, IPCMessagePipe, IPCRequest, IPCResponse, OSMessagePipe,
-    IPC_HANDLE_ENV_NAME, IPC_MESSAGE_MAX_SIZE,
-};
-use iris_policy::{CrossPlatformHandle, Policy};
+use crate::{IPC_HANDLE_ENV_NAME, IPC_MESSAGE_MAX_SIZE};
+use iris_ipc::{CrossPlatformHandle, CrossPlatformMessagePipe, IPCMessagePipe, OSMessagePipe};
+use iris_policy::Policy;
 use log::{debug, warn};
 use std::ffi::CString;
 

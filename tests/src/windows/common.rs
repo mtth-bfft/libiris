@@ -6,7 +6,7 @@
 
 use core::ptr::null_mut;
 use iris_broker::Worker;
-use iris_policy::{CrossPlatformHandle, Handle};
+use iris_ipc::{CrossPlatformHandle, Handle};
 use log::{debug, info, warn};
 use std::convert::TryInto;
 use std::ffi::CString;

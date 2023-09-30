@@ -3,7 +3,9 @@ use common::{
     check_worker_handles, cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file,
     read_tmp_file,
 };
-use iris_broker::{downcast_to_handle, CrossPlatformHandle, Policy, ProcessConfig, Worker};
+use iris_broker::{ProcessConfig, Worker};
+use iris_ipc::{downcast_to_handle, CrossPlatformHandle};
+use iris_policy::Policy;
 use std::fs::File;
 
 // Voluntarily set up resources (opened handles and file descriptors)

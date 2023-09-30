@@ -1,8 +1,9 @@
 use crate::error::IpcError;
+use crate::handle::CrossPlatformHandle;
 use crate::messagepipe::CrossPlatformMessagePipe;
 use crate::os::errno;
+use crate::os::handle::Handle;
 use core::ptr::null_mut;
-use iris_policy::{CrossPlatformHandle, Handle};
 use libc::{c_int, c_void};
 
 // This call is just a C arithmetic macro translated into rust, in practice it's safe (at least in this libc release)
@@ -119,7 +120,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
             }
             // Iterate on ancillary payloads, if any (we allocated just enough space for one
             // file descriptor, so we should never be able to receive more at a time, but
-            // iterate and check to match the documented way way of using this API)
+            // iterate and check to match the documented way of using this API)
             let mut handle = Ok(None);
             let mut cmsghdr = libc::CMSG_FIRSTHDR(&msg as *const libc::msghdr);
             while !cmsghdr.is_null() {
@@ -129,7 +130,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     // quit with an error in case it could cause a resource leak.
                     handle = Err(IpcError::InternalOsOperationFailed {
                         os_code: 0,
-                        description: "recvmsg() returned unknown ancillary data level and type",
+                        description: "recvmsg() returned unknown ancillary data level or type",
                     });
                     break;
                 }
@@ -142,7 +143,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 );
                 handle = match Handle::new(aligned as u64) {
                     Ok(h) => Ok(Some(h)),
-                    Err(e) => Err(IpcError::HandleOperationFailed(e)),
+                    Err(e) => Err(IpcError::from(e)),
                 };
                 cmsghdr = libc::CMSG_NXTHDR(&msg as *const libc::msghdr, cmsghdr);
             }

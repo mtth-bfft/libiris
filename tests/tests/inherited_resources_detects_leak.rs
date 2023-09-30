@@ -1,5 +1,7 @@
 use common::{check_worker_handles, common_test_setup, get_worker_abs_path, open_tmp_file};
-use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
+use iris_broker::{ProcessConfig, Worker};
+use iris_ipc::downcast_to_handle;
+use iris_policy::Policy;
 
 // Voluntarily set up resources (opened handles and file descriptors)
 // ready to be leaked into our children. This could be the result of

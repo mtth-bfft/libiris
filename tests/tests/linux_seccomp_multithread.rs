@@ -4,13 +4,17 @@ use common::os::wait_for_worker_exit;
 use common::{
     cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file, read_tmp_file,
 };
-use iris_broker::{downcast_to_handle, Policy, ProcessConfig, Worker};
+use iris_broker::{ProcessConfig, Worker};
+use iris_ipc::downcast_to_handle;
+use iris_policy::Policy;
 
 #[test]
 fn linux_seccomp_multithread() {
     common_test_setup();
     let worker_binary = get_worker_abs_path("linux_seccomp_multithread_worker");
+    println!(" TMP STDOUT:");
     let (tmpout, tmpoutpath) = open_tmp_file();
+    println!(" END OF TMP STDOUT");
     let tmpout = downcast_to_handle(tmpout);
     let mut proc_config = ProcessConfig::new(worker_binary.clone(), &[worker_binary]);
     proc_config

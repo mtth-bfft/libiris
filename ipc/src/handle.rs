@@ -1,16 +1,11 @@
-use crate::error::PolicyError;
-
-#[derive(Debug, Eq, PartialEq, Hash)]
-pub struct Handle {
-    pub(crate) val: Option<u64>,
-}
+use crate::error::HandleError;
 
 pub trait CrossPlatformHandle: core::fmt::Debug {
     /// # Safety
     /// Only call this function with raw_handle a valid file descriptor or handle,
     /// and do not use raw_handle after it is passed here. This method takes ownership
     /// of the handle and takes care of closing it when out of scope.
-    unsafe fn new(raw_handle: u64) -> Result<Self, PolicyError>
+    unsafe fn new(raw_handle: u64) -> Result<Self, HandleError>
     where
         Self: Sized;
 
@@ -23,7 +18,7 @@ pub trait CrossPlatformHandle: core::fmt::Debug {
     where
         Self: Sized;
 
-    fn set_inheritable(&mut self, allow_inherit: bool) -> Result<(), PolicyError>;
+    fn set_inheritable(&mut self, allow_inherit: bool) -> Result<(), HandleError>;
 
-    fn is_inheritable(&self) -> Result<bool, PolicyError>;
+    fn is_inheritable(&self) -> Result<bool, HandleError>;
 }

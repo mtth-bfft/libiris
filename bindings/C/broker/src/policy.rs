@@ -1,6 +1,7 @@
 use crate::{IrisStatus, IRIS_MAX_HANDLES_PER_POLICY};
 use core::ffi::{c_char, c_void, CStr};
-use iris_policy::{CrossPlatformHandle, Handle, Policy};
+use iris_ipc::{CrossPlatformHandle, Handle};
+use iris_policy::Policy;
 pub use iris_policy::{PolicyLogCallback, PolicyRequest, PolicyVerdict};
 use std::ffi::CString;
 

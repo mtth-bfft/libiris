@@ -1,6 +1,6 @@
 use crate::error::PolicyError;
-use crate::handle::{CrossPlatformHandle, Handle};
 use core::ptr::null_mut;
+use iris_ipc::{CrossPlatformHandle, Handle};
 use std::ffi::CStr;
 use winapi::shared::minwindef::DWORD;
 use winapi::shared::ntdef::HANDLE;
