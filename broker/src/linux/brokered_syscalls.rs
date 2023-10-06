@@ -1,6 +1,6 @@
-use crate::os::messages::{IPCRequest, IPCResponse};
 use iris_ipc::{CrossPlatformHandle, Handle};
 use iris_policy::{Policy, PolicyRequest, PolicyVerdict};
+use iris_worker::{IPCRequest, IPCResponse};
 use libc::c_int;
 use log::warn;
 use std::convert::TryInto;

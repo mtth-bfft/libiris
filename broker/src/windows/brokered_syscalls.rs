@@ -1,8 +1,8 @@
 use crate::os::get_proc_address::get_proc_address;
-use crate::os::messages::{IPCRequest, IPCResponse};
 use core::ptr::null_mut;
 use iris_ipc::{CrossPlatformHandle, Handle};
 use iris_policy::{Policy, PolicyRequest, PolicyVerdict};
+use iris_worker::{IPCRequest, IPCResponse};
 use log::error;
 use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::ntdef::{
