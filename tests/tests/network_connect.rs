@@ -1,8 +1,7 @@
 use common::os::wait_for_worker_exit;
 use common::{cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file};
 use iris_broker::{ProcessConfig, Worker};
-use iris_ipc::downcast_to_handle;
-use iris_policy::Policy;
+use iris_policy::{Policy, os::downcast_to_handle};
 use log::info;
 use std::ffi::CString;
 use std::net::SocketAddr;

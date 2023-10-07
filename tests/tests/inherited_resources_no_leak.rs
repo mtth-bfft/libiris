@@ -4,8 +4,7 @@ use common::{
     read_tmp_file,
 };
 use iris_broker::{ProcessConfig, Worker};
-use iris_ipc::{downcast_to_handle, CrossPlatformHandle};
-use iris_policy::Policy;
+use iris_policy::{Policy, CrossPlatformHandle, os::downcast_to_handle};
 use std::fs::File;
 
 // Voluntarily set up resources (opened handles and file descriptors)

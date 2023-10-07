@@ -1,9 +1,8 @@
 use crate::{IrisStatus, IRIS_MAX_HANDLES_PER_POLICY};
 use core::ffi::{c_char, c_void, CStr};
-use iris_ipc::{CrossPlatformHandle, Handle};
-use iris_policy::Policy;
-pub use iris_policy::{PolicyLogCallback, PolicyRequest, PolicyVerdict};
+use iris_policy::{CrossPlatformHandle, Policy, os::Handle};
 use std::ffi::CString;
+pub use iris_policy::{PolicyLogCallback, PolicyVerdict, os::PolicyRequest};
 
 #[cfg(target_os = "linux")]
 pub use crate::linux::IrisPolicyRequest;

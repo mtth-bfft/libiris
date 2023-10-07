@@ -1,7 +1,7 @@
 #[cfg(unix)]
 #[test]
 fn file_path_policy_decision() {
-    use iris_policy::{Policy, PolicyRequest, PolicyVerdict};
+    use iris_policy::{Policy, PolicyVerdict, os::PolicyRequest};
     use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 
     let mut policy = Policy::nothing_allowed();

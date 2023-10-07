@@ -8,6 +8,7 @@ edition = "2021"
 serde = { version = "1.0.125", default-features = false, features = ["derive"] }
 postcard = "1.0.6"
 log = "0.4.17"
+iris-policy = { path = "../policy" }
 
 [target.'cfg(target_os="linux")'.dependencies]
 libc = "0.2.94"

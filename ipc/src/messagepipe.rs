@@ -1,5 +1,5 @@
 use crate::error::IpcError;
-use crate::os::handle::Handle;
+use iris_policy::os::Handle;
 
 pub trait CrossPlatformMessagePipe {
     fn into_handle(self) -> Handle;

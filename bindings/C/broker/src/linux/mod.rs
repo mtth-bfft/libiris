@@ -1,5 +1,5 @@
 use core::ffi::{c_char, c_int};
-use iris_policy::PolicyRequest;
+use iris_policy::os::PolicyRequest;
 use std::ffi::CString;
 
 #[repr(C, u8)]

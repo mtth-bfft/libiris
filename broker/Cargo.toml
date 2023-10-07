@@ -8,7 +8,6 @@ edition = "2021"
 serde = { version = "1.0.125", default-features = false, features = ["derive"] }
 iris-policy = { path = "../policy" }
 iris-ipc = { path = "../ipc" }
-iris-worker = { path = "../worker" }
 log = "0.4.17"
 lazy_static = "1.4.0"
 

@@ -1,7 +1,7 @@
 use crate::error::IpcError;
 use crate::messagepipe::CrossPlatformMessagePipe;
 use crate::os::messagepipe::OSMessagePipe;
-use crate::Handle;
+use iris_policy::os::Handle;
 use serde::{Deserialize, Serialize};
 
 pub struct IPCMessagePipe {

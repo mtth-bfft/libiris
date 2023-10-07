@@ -8,7 +8,6 @@ edition = "2021"
 serde = { version = "1.0.125", features = ["derive"] }
 libc = "0.2.98"
 log = "0.4.17"
-iris-ipc = { path = "../ipc" }
 
 [target.'cfg(target_os="windows")'.dependencies]
 winapi = { version = "0.3.9", features = ["errhandlingapi", "handleapi"] }

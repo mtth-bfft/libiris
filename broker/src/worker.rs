@@ -3,9 +3,9 @@ use crate::os::brokered_syscalls::handle_os_specific_request;
 use crate::os::process::OSSandboxedProcess;
 use crate::process::CrossPlatformSandboxedProcess;
 use crate::ProcessConfig;
-use iris_ipc::{CrossPlatformHandle, CrossPlatformMessagePipe, IPCMessagePipe, OSMessagePipe};
-use iris_policy::Policy;
-use iris_worker::{IPCRequest, IPCResponse, IPC_HANDLE_ENV_NAME, IPC_MESSAGE_MAX_SIZE};
+use iris_ipc::{CrossPlatformMessagePipe, IPCMessagePipe, IPC_HANDLE_ENV_NAME, IPC_MESSAGE_MAX_SIZE};
+use iris_ipc::os::{OSMessagePipe, IPCRequest, IPCResponse};
+use iris_policy::{Policy, CrossPlatformHandle};
 use log::{debug, warn};
 use std::ffi::CString;
 

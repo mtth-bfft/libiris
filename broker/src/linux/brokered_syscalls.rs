@@ -1,6 +1,6 @@
-use iris_ipc::{CrossPlatformHandle, Handle};
-use iris_policy::{Policy, PolicyRequest, PolicyVerdict};
-use iris_worker::{IPCRequest, IPCResponse};
+use iris_policy::{CrossPlatformHandle, os::Handle};
+use iris_ipc::os::{IPCRequest, IPCResponse};
+use iris_policy::{Policy, PolicyVerdict, os::PolicyRequest};
 use libc::c_int;
 use log::warn;
 use std::convert::TryInto;

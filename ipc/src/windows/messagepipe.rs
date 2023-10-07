@@ -1,7 +1,6 @@
 use crate::error::IpcError;
-use crate::handle::CrossPlatformHandle;
 use crate::messagepipe::CrossPlatformMessagePipe;
-use crate::os::handle::Handle;
+use iris_policy::{CrossPlatformHandle, os::Handle};
 use core::ptr::null_mut;
 use log::debug;
 use std::convert::TryInto;

@@ -1,8 +1,7 @@
 use common::os::wait_for_worker_exit;
 use common::{common_test_setup, get_worker_abs_path, open_tmp_file};
 use iris_broker::{ProcessConfig, Worker};
-use iris_ipc::downcast_to_handle;
-use iris_policy::Policy;
+use iris_policy::{Policy, os::downcast_to_handle};
 
 // Test not run by default: it will hang forever, on purpose.
 // This is just to easily have a sandboxed process to run tests on.

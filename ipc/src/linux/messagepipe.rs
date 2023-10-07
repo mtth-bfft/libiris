@@ -1,9 +1,9 @@
 use crate::error::IpcError;
-use crate::handle::CrossPlatformHandle;
 use crate::messagepipe::CrossPlatformMessagePipe;
 use crate::os::errno;
-use crate::os::handle::Handle;
 use core::ptr::null_mut;
+use iris_policy::CrossPlatformHandle;
+use iris_policy::os::Handle;
 use libc::{c_int, c_void};
 
 // This call is just a C arithmetic macro translated into rust, in practice it's safe (at least in this libc release)

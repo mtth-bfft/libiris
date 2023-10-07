@@ -1,14 +1,4 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HandleError {
-    InvalidHandleValue {
-        raw_value: u64,
-    },
-    InternalOsOperationFailed {
-        description: &'static str,
-        raw_handle: u64,
-        os_code: u64,
-    },
-}
+use iris_policy::HandleError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpcError<'a> {
@@ -48,19 +38,17 @@ pub enum IpcError<'a> {
     },
 }
 
-impl From<HandleError> for IpcError<'_> {
+impl From<HandleError> for IpcError<'static> {
     fn from(e: HandleError) -> Self {
         match e {
-            HandleError::InvalidHandleValue { raw_value } => {
-                Self::InvalidHandleValueReceived { raw_value }
-            }
+            HandleError::InvalidHandleValue { raw_value } => Self::InvalidHandleValueReceived { raw_value },
             HandleError::InternalOsOperationFailed {
                 description,
                 os_code,
                 ..
             } => Self::InternalOsOperationFailed {
-                os_code,
                 description,
+                os_code,
             },
         }
     }

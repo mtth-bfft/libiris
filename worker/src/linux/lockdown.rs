@@ -1,8 +1,9 @@
-use crate::os::messages::{IPCRequest, IPCResponse};
-use crate::{IPC_MESSAGE_MAX_SIZE, IPC_SECCOMP_CALL_SITE_PLACEHOLDER};
+use iris_ipc::IPC_MESSAGE_MAX_SIZE;
+use iris_ipc::os::{IPCRequest, IPCResponse, IPC_SECCOMP_CALL_SITE_PLACEHOLDER};
 use core::ffi::c_void;
 use core::ptr::null;
-use iris_ipc::{CrossPlatformHandle, Handle, IPCMessagePipe};
+use iris_policy::{CrossPlatformHandle, os::Handle};
+use iris_ipc::IPCMessagePipe;
 use libc::{c_char, c_int, O_PATH};
 use log::{debug, info, warn};
 use std::borrow::BorrowMut;
