@@ -3,7 +3,9 @@
 mod error;
 mod ipc;
 mod messagepipe;
+mod stackbuffer;
 
+pub use stackbuffer::StackBuffer;
 pub use error::IpcError;
 pub use ipc::IPCMessagePipe;
 pub use messagepipe::CrossPlatformMessagePipe;
