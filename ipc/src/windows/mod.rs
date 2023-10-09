@@ -1,5 +1,5 @@
-pub(crate) mod messages;
-pub(crate) mod messagepipe;
+mod handle;
+mod channel;
 
-pub use messagepipe::OSMessagePipe;
-pub use messages::{IPCRequest, IPCResponse};
+pub use channel::IpcChannel;
+pub use handle::Handle;

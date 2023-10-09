@@ -1,4 +1,4 @@
-use iris_policy::os::set_unmanaged_handle_inheritable;
+use crate::os::set_unmanaged_handle_inheritable;
 use log::{debug, info};
 use simple_logger::SimpleLogger;
 use std::ffi::{CStr, CString};

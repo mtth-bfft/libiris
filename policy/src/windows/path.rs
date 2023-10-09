@@ -1,4 +1,5 @@
-use crate::{PolicyError, CrossPlatformHandle, os::Handle};
+use crate::error::PolicyError;
+use iris_ipc::{CrossPlatformHandle, os::Handle};
 use core::ptr::null_mut;
 use std::ffi::CStr;
 use winapi::shared::minwindef::DWORD;

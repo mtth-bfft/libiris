@@ -1,9 +1,8 @@
-use iris_ipc::IPC_MESSAGE_MAX_SIZE;
-use iris_ipc::os::{IPCRequest, IPCResponse, IPC_SECCOMP_CALL_SITE_PLACEHOLDER};
+use iris_ipc::{CrossPlatformIpcChannel, CrossPlatformHandle, IPC_MESSAGE_MAX_SIZE};
+use iris_ipc::os::{IpcChannel, Handle};
+use iris_ipc_messages::os::{IPCRequest, IPCResponse, IPC_SECCOMP_CALL_SITE_PLACEHOLDER};
 use core::ffi::c_void;
 use core::ptr::null;
-use iris_policy::{CrossPlatformHandle, os::Handle};
-use iris_ipc::IPCMessagePipe;
 use libc::{c_char, c_int, O_PATH};
 use log::{debug, info, warn};
 use std::borrow::BorrowMut;
@@ -30,47 +29,43 @@ thread_local! {
 // TODO: use a thread_local!{} pipe, and a global mutex-protected pipe to request new thread-specific ones
 // OR: create a global pool of threads which wait on a global lock-free queue
 // AND/OR: make the ipc pipe multiplexed by adding random transaction IDs
-static mut IPC_PIPE_SINGLETON: *const Mutex<IPCMessagePipe> = null();
-fn get_ipc_pipe() -> MutexGuard<'static, IPCMessagePipe> {
-    unsafe { (*IPC_PIPE_SINGLETON).lock().unwrap() }
+static mut IPC_CHANNEL_SINGLETON: *const Mutex<IpcChannel> = null();
+fn get_ipc_channel() -> MutexGuard<'static, IpcChannel> {
+    unsafe { (*IPC_CHANNEL_SINGLETON).lock().unwrap() }
 }
 
-fn get_fd_for_path_with_perms(path: &str, flags: c_int) -> Result<Handle, isize> {
+fn get_fd_for_path_with_perms(path: &str, flags: c_int, buf: &mut [u8; IPC_MESSAGE_MAX_SIZE]) -> Result<Handle, isize> {
     let request = IPCRequest::OpenFile {
-        path: path.to_owned(),
+        path: path,
         flags,
     };
-    match send_recv(&request, None) {
+    match send_recv(&request, None, buf) {
         (IPCResponse::SyscallResult(_), Some(fd)) => Ok(fd),
         (IPCResponse::SyscallResult(code), None) if code < 0 => Err(code as isize),
         err => panic!("Unexpected response from broker to file request: {err:?}"),
     }
 }
 
-pub(crate) fn lower_final_sandbox_privileges(ipc: IPCMessagePipe) {
+pub(crate) fn lower_final_sandbox_privileges(ipc: IpcChannel) {
     // Initialization of globals. This is safe as long as we are only called once
     unsafe {
         // Store the IPC pipe to handle all future syscall requests
-        IPC_PIPE_SINGLETON = Box::leak(Box::new(Mutex::new(ipc))) as *const _;
+        IPC_CHANNEL_SINGLETON = Box::leak(Box::new(Mutex::new(ipc))) as *const _;
     }
 
     let mut buf = [0u8; IPC_MESSAGE_MAX_SIZE];
-    get_ipc_pipe()
-        .send(&IPCRequest::InitializationRequest, None, &mut buf)
+    let mut ipc = get_ipc_channel();
+    ipc.send(&IPCRequest::InitializationRequest, None, &mut buf)
         .expect("unable to send IPC message to broker");
-    let resp: Option<IPCResponse> = get_ipc_pipe()
-        .recv(&mut buf)
-        .expect("unable to read worker policy from broker");
-    let (policy, mut seccomp_filter) = match resp {
-        Some(IPCResponse::InitializationResponse {
+    let (policy, seccomp_filter) = match ipc.recv(&mut buf) {
+        Ok(Some((IPCResponse::InitializationResponse {
             policy_applied,
             seccomp_filter_to_apply,
-        }) => (policy_applied, seccomp_filter_to_apply),
-        other => panic!(
-            "expected worker policy but got {:?} from broker, we probably did something wrong?",
-            other
-        ),
+        }, None))) => (policy_applied, seccomp_filter_to_apply),
+        Ok(None) => panic!("broker closed our IPC channel after receiving our initial message"),
+        other => panic!("receiving from broker after our initial message failed: {:?}", other),
     };
+    drop(ipc);
 
     if policy.is_audit_only() {
         AUDIT_ONLY_MODE.store(true, Ordering::Relaxed);
@@ -120,6 +115,7 @@ pub(crate) fn lower_final_sandbox_privileges(ipc: IPCMessagePipe) {
         {
             panic!("SIGSYS handler is already used by something else, cannot use seccomp-bpf");
         }
+        let mut seccomp_filter = seccomp_filter.to_owned();
         if AUDIT_ONLY_MODE.load(Ordering::Relaxed) {
             let actual_call_site: usize =
                 (rerun_syscall as *const u8 as usize) + arch::SYSCALL_ASM_OFFSET;
@@ -234,18 +230,19 @@ pub(crate) extern "C" fn sigsys_handler(
         *b.borrow_mut() = &true;
     });
     // FIXME: make everything below architecture-dependent (read siginfo->arch)
+    let mut buf = [0u8; IPC_MESSAGE_MAX_SIZE];
     let response_code = match syscall_nr {
         // TODO: handle legacy syscall tkill(), needs proxying to parent to check it belongs to the worker
         libc::SYS_access => {
             let (path, mode) = (read_string_from_ptr(a0 as *const c_char), a1 as i32);
-            handle_access(&path, mode)
+            handle_access(&path, mode, &mut buf)
         }
         libc::SYS_stat => {
             let (path, out_ptr) = (
                 read_string_from_ptr(a0 as *const c_char),
                 a1 as *mut libc::stat,
             );
-            handle_stat(&path, out_ptr)
+            handle_stat(&path, out_ptr, &mut buf)
         }
         libc::SYS_open => {
             let (path, flags, mode) = (
@@ -253,7 +250,7 @@ pub(crate) extern "C" fn sigsys_handler(
                 a1 as i32,
                 a2 as i32,
             );
-            handle_openat(&path, flags, mode)
+            handle_openat(&path, flags, mode, &mut buf)
         }
         libc::SYS_openat
             if a0 as i32 == libc::AT_FDCWD || unsafe { *(a1 as *const u8) } == b'/' =>
@@ -265,15 +262,15 @@ pub(crate) extern "C" fn sigsys_handler(
                 a2 as i32,
                 a3 as i32,
             );
-            handle_openat(&path, flags, mode)
+            handle_openat(&path, flags, mode, &mut buf)
         }
         libc::SYS_chdir => {
             let path = read_string_from_ptr(a0 as *const c_char);
-            handle_chdir(&path)
+            handle_chdir(&path, &mut buf)
         }
         other_nb => {
             let ip = read_isize_from_ptr(ucontext, arch::SYSCALL_REGISTER_IP);
-            handle_syscall(other_nb as isize, [a0, a1, a2, a3, a4, a5], ip)
+            handle_syscall(other_nb as isize, [a0, a1, a2, a3, a4, a5], ip, &mut buf)
         }
     };
     unsafe {
@@ -285,36 +282,36 @@ pub(crate) extern "C" fn sigsys_handler(
     });
 }
 
-fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Option<Handle>) {
-    let mut buf = [0u8; IPC_MESSAGE_MAX_SIZE];
-    let mut pipe = get_ipc_pipe();
-    pipe.send(&request, handle, &mut buf)
+fn send_recv<'a>(request: &IPCRequest, handle: Option<&Handle>, buf: &'a mut [u8; IPC_MESSAGE_MAX_SIZE]) -> (IPCResponse<'a>, Option<Handle>) {
+    let mut ipc = get_ipc_channel();
+    ipc.send(&request, handle, buf)
         .expect("unable to send IPC request to broker");
-    pipe.recv_with_handle(&mut buf)
+    ipc.recv(buf)
         .expect("unable to receive IPC response from broker")
         .expect("broker closed our IPC pipe while expecting its response")
 }
 
-fn handle_openat(path: &str, flags: libc::c_int, _mode: libc::c_int) -> isize {
+fn handle_openat<'a>(path: &str, flags: libc::c_int, _mode: libc::c_int, buf: &'a mut [u8; IPC_MESSAGE_MAX_SIZE]) -> isize {
     // Resolve the path ourselves, brokers only accept nonambiguous absolute paths
+    let mut abspath;
     let path = if !path.starts_with('/') {
-        let mut abspath = std::env::current_dir()
+        abspath = std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| String::new());
         if !abspath.ends_with('/') {
             abspath.push('/');
         }
         abspath.push_str(path);
-        abspath
+        &abspath
     } else {
-        path.to_owned()
+        path
     };
     debug!(
         "Requesting access to file path {:?} (flags={:#X})",
         &path, flags
     );
     let request = IPCRequest::OpenFile { path, flags };
-    match send_recv(&request, None) {
+    match send_recv(&request, None, buf) {
         (IPCResponse::SyscallResult(_), Some(handle)) => {
             unsafe { handle.into_raw() }.try_into().unwrap()
         }
@@ -323,16 +320,16 @@ fn handle_openat(path: &str, flags: libc::c_int, _mode: libc::c_int) -> isize {
     }
 }
 
-fn handle_access(path: &str, mode: libc::c_int) -> isize {
+fn handle_access(path: &str, mode: libc::c_int, buf: &mut [u8; IPC_MESSAGE_MAX_SIZE]) -> isize {
     debug!("Requesting access({}, {})", path, mode);
-    match get_fd_for_path_with_perms(path, mode) {
+    match get_fd_for_path_with_perms(path, mode, buf) {
         Ok(_) => 0,
         Err(e) => e,
     }
 }
 
-fn handle_stat(path: &str, out_ptr: *mut libc::stat) -> isize {
-    let fd = match get_fd_for_path_with_perms(path, O_PATH) {
+fn handle_stat(path: &str, out_ptr: *mut libc::stat, buf: &mut [u8; IPC_MESSAGE_MAX_SIZE]) -> isize {
+    let fd = match get_fd_for_path_with_perms(path, O_PATH, buf) {
         Ok(fd) => fd,
         Err(code) => return code,
     };
@@ -347,8 +344,8 @@ fn handle_stat(path: &str, out_ptr: *mut libc::stat) -> isize {
     0
 }
 
-fn handle_chdir(path: &str) -> isize {
-    let fd = match get_fd_for_path_with_perms(path, O_PATH) {
+fn handle_chdir(path: &str, buf: &mut [u8; IPC_MESSAGE_MAX_SIZE]) -> isize {
+    let fd = match get_fd_for_path_with_perms(path, O_PATH, buf) {
         Ok(fd) => fd,
         Err(code) => return code,
     };
@@ -363,7 +360,7 @@ fn handle_chdir(path: &str) -> isize {
     0
 }
 
-fn handle_syscall(nb: isize, args: [isize; 6], ip: isize) -> isize {
+fn handle_syscall(nb: isize, args: [isize; 6], ip: isize, buf: &mut [u8; IPC_MESSAGE_MAX_SIZE]) -> isize {
     let request = IPCRequest::Syscall {
         nb: nb as i64,
         args: [
@@ -376,7 +373,7 @@ fn handle_syscall(nb: isize, args: [isize; 6], ip: isize) -> isize {
         ],
         ip: ip as i64,
     };
-    let response = match send_recv(&request, None) {
+    let response = match send_recv(&request, None, buf) {
         (IPCResponse::SyscallResult(_), Some(handle)) => (unsafe { handle.into_raw() }) as isize,
         (IPCResponse::SyscallResult(code), None) => code as isize,
         other => panic!("Unexpected response from broker to syscall request: {other:?}",),

@@ -1,4 +1,4 @@
-use iris_ipc::os::IPC_SECCOMP_CALL_SITE_PLACEHOLDER;
+use iris_ipc_messages::os::IPC_SECCOMP_CALL_SITE_PLACEHOLDER;
 use libseccomp::{
     error::SeccompError, scmp_cmp, ScmpAction, ScmpArch, ScmpFilterContext, ScmpSyscall,
 };

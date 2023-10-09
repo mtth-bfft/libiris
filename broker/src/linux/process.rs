@@ -3,7 +3,7 @@ use crate::process::CrossPlatformSandboxedProcess;
 use crate::ProcessConfig;
 use core::ffi::c_void;
 use core::ptr::null;
-use iris_policy::{CrossPlatformHandle, os::Handle};
+use iris_ipc::{CrossPlatformHandle, os::Handle};
 use iris_policy::Policy;
 use libc::c_int;
 use linux_entrypoint::{clone_entrypoint, EntrypointParameters};

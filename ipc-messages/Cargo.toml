@@ -1,18 +1,15 @@
 [package]
-name = "iris-worker"
+name = "iris-ipc-messages"
 version = "0.1.0"
 authors = ["Matthieu Buffet <matthieu@buffet.re>"]
 edition = "2021"
 
 [dependencies]
 serde = { version = "1.0.125", default-features = false, features = ["derive"] }
-iris-ipc = { path = "../ipc" }
-iris-ipc-messages = { path = "../ipc-messages" }
 iris-policy = { path = "../policy" }
-log = "0.4.17"
 
 [target.'cfg(target_os="linux")'.dependencies]
 libc = "0.2.94"
 
 [target.'cfg(target_os="windows")'.dependencies]
-winapi = { version = "0.3.9", features = ["processthreadsapi", "errhandlingapi", "sysinfoapi", "winbase", "winerror", "userenv", "sddl", "synchapi", "memoryapi"] }
+winapi = { version = "0.3.9", features = [] }

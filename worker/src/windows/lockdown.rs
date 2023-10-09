@@ -4,9 +4,9 @@
 use core::ffi::c_void;
 use core::ptr::{null, null_mut};
 use core::sync::atomic::compiler_fence;
-use iris_ipc::{IPCMessagePipe, IPC_MESSAGE_MAX_SIZE};
-use iris_ipc::os::{IPCRequest, IPCResponse};
-use iris_policy::{CrossPlatformHandle, os::Handle};
+use iris_ipc::{CrossPlatformIpcChannel, CrossPlatformHandle, IPC_MESSAGE_MAX_SIZE};
+use iris_ipc::os::{IpcChannel, Handle};
+use iris_ipc_messages::os::{IPCRequest, IPCResponse};
 use log::{debug, info};
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
@@ -549,10 +549,9 @@ extern "system" fn hook_ntcreatefile(
         unsafe { *(*allocation_size).QuadPart() }
     };
     let ea = unsafe { std::slice::from_raw_parts(ea_buffer as *const u8, ea_length as usize) };
-    let ea = Vec::from(ea);
     let request = IPCRequest::NtCreateFile {
         desired_access,
-        path,
+        path: &path,
         allocation_size,
         file_attributes,
         share_access,
@@ -613,13 +612,13 @@ extern "system" fn hook_ntopenfile(
     let path = String::from_utf16_lossy(path);
     let request = IPCRequest::NtCreateFile {
         desired_access,
-        path,
+        path: &path,
         allocation_size: 0,
         file_attributes: 0,
         share_access,
         create_disposition: FILE_OPEN,
         create_options: open_options,
-        ea: Vec::new(),
+        ea: &[],
     };
     match send_recv(&request, None) {
         (IPCResponse::NtCreateFile { io_status, code }, handle) => {
@@ -687,9 +686,9 @@ extern "system" fn hook_ntcreatekey(
     };
     let request = IPCRequest::NtCreateKey {
         desired_access,
-        path,
+        path: &path,
         title_index,
-        class,
+        class: class.as_deref(),
         create_options,
         do_create: true,
     };
@@ -718,13 +717,13 @@ extern "system" fn hook_ntcreatekey(
 
 // TODO: merge with Linux
 fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Option<Handle>) {
-    let mut pipe = get_ipc_pipe();
+    let mut ipc = get_ipc_channel();
     debug!("Sending IPC request {:?} (handle: {:?})", &request, &handle);
     let mut buf = [0u8; IPC_MESSAGE_MAX_SIZE];
-    pipe.send(&request, handle, &mut buf)
+    ipc.send(&request, handle, &mut buf)
         .expect("unable to send IPC request to broker");
-    let (resp, handle) = pipe
-        .recv_with_handle(&mut buf)
+    let (resp, handle) = ipc
+        .recv(&mut buf)
         .expect("unable to receive IPC response from broker")
         .expect("broker closed our IPC pipe while expecting its response");
     debug!("Received IPC response {:?} (handle: {:?})", &resp, &handle);
@@ -734,16 +733,16 @@ fn send_recv(request: &IPCRequest, handle: Option<&Handle>) -> (IPCResponse, Opt
 // TODO: use a thread_local!{} pipe, and a global mutex-protected pipe to request new thread-specific ones
 // OR: create a global pool of threads which wait on a global lock-free queue
 // AND/OR: make the ipc pipe multiplexed by adding random transaction IDs
-static mut IPC_PIPE_SINGLETON: *const Mutex<IPCMessagePipe> = null();
-fn get_ipc_pipe() -> MutexGuard<'static, IPCMessagePipe> {
-    unsafe { (*IPC_PIPE_SINGLETON).lock().unwrap() }
+static mut IPC_CHANNEL_SINGLETON: *const Mutex<IpcChannel> = null();
+fn get_ipc_channel() -> MutexGuard<'static, IpcChannel> {
+    unsafe { (*IPC_CHANNEL_SINGLETON).lock().unwrap() }
 }
 
-pub(crate) fn lower_final_sandbox_privileges(ipc: IPCMessagePipe) {
+pub(crate) fn lower_final_sandbox_privileges(ipc: IpcChannel) {
     // Initialization of globals. This is safe as long as we are only called once
     unsafe {
         // Store the IPC pipe to handle all future syscall requests
-        IPC_PIPE_SINGLETON = Box::leak(Box::new(Mutex::new(ipc))) as *const _;
+        IPC_CHANNEL_SINGLETON = Box::leak(Box::new(Mutex::new(ipc))) as *const _;
     }
     let resp = send_recv(&IPCRequest::InitializationRequest, None);
     match resp {

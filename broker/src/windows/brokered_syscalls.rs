@@ -1,15 +1,15 @@
 use crate::os::get_proc_address::get_proc_address;
 use core::ptr::null_mut;
-use iris_policy::{Policy, PolicyVerdict, CrossPlatformHandle};
-use iris_policy::os::{Handle, PolicyRequest};
-use iris_ipc::os::{IPCRequest, IPCResponse};
-use log::error;
+use iris_policy::{Policy, PolicyVerdict, os::PolicyRequest};
+use iris_ipc::CrossPlatformHandle;
+use iris_ipc::os::Handle;
+use iris_ipc_messages::os::IPCResponse;
 use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::ntdef::{
     InitializeObjectAttributes, NTSTATUS, NT_SUCCESS, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE,
     PVOID, ULONG, UNICODE_STRING,
 };
-use winapi::shared::ntstatus::{STATUS_ACCESS_DENIED, STATUS_NOT_SUPPORTED};
+use winapi::shared::ntstatus::STATUS_ACCESS_DENIED;
 use winapi::um::winbase::FILE_FLAG_OPEN_REPARSE_POINT;
 use winapi::um::winnt::{
     SecurityIdentification, ACCESS_MASK, HANDLE, LARGE_INTEGER, LONGLONG, REG_OPENED_EXISTING_KEY,
@@ -54,55 +54,7 @@ type PNtOpenKey = unsafe extern "system" fn(
     object_attributes: *mut OBJECT_ATTRIBUTES,
 ) -> NTSTATUS;
 
-pub(crate) fn handle_os_specific_request(
-    request: IPCRequest,
-    policy: &Policy,
-) -> (IPCResponse, Option<Handle>) {
-    match request {
-        IPCRequest::NtCreateFile {
-            desired_access,
-            path,
-            allocation_size,
-            file_attributes,
-            share_access,
-            create_disposition,
-            create_options,
-            ea,
-        } => handle_ntcreatefile(
-            policy,
-            desired_access,
-            &path,
-            allocation_size,
-            file_attributes,
-            share_access,
-            create_disposition,
-            create_options,
-            &ea,
-        ),
-        IPCRequest::NtCreateKey {
-            desired_access,
-            path,
-            title_index,
-            class,
-            create_options,
-            do_create,
-        } => handle_ntcreatekey(
-            policy,
-            desired_access,
-            path,
-            title_index,
-            class,
-            create_options,
-            do_create,
-        ),
-        unknown => {
-            error!("Unexpected request from worker: {:?}", unknown);
-            (IPCResponse::SyscallResult(STATUS_NOT_SUPPORTED), None)
-        }
-    }
-}
-
-fn handle_ntcreatefile(
+pub(crate) fn proxied_ntcreatefile(
     policy: &Policy,
     desired_access: ACCESS_MASK,
     path: &str,
@@ -182,12 +134,12 @@ fn handle_ntcreatefile(
     (IPCResponse::NtCreateFile { io_status, code }, handle)
 }
 
-fn handle_ntcreatekey(
+pub(crate) fn proxied_ntcreatekey(
     policy: &Policy,
     desired_access: ACCESS_MASK,
-    path: String,
+    path: &str,
     title_index: ULONG,
-    class: Option<String>,
+    class: Option<&str>,
     create_options: ULONG,
     do_create: bool,
 ) -> (IPCResponse, Option<Handle>) {

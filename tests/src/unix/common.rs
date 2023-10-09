@@ -1,4 +1,6 @@
 use iris_broker::Worker;
+use iris_ipc::{CrossPlatformHandle, HandleError, os::Handle};
+use std::os::fd::{IntoRawFd, AsRawFd};
 
 pub fn check_worker_handles(worker: &Worker) {
     let mut sandbox_ipc_socket_found = false;
@@ -44,5 +46,25 @@ pub fn wait_for_worker_exit(worker: &Worker) -> Result<u64, String> {
         if libc::WIFSIGNALED(wstatus) {
             return Ok((128 + libc::WTERMSIG(wstatus)).try_into().unwrap());
         }
+    }
+}
+
+pub fn downcast_to_handle<T: IntoRawFd>(resource: T) -> Handle {
+    unsafe { Handle::from_raw(resource.into_raw_fd() as u64) }
+        .expect(&format!("could not downcast into Handle"))
+}
+
+pub fn set_unmanaged_handle_inheritable<T: AsRawFd>(
+    resource: &T,
+    allow_inherit: bool,
+) -> Result<(), HandleError> {
+    // This block is safe because the file descriptor held by `resource` lives at least
+    // for the duration of the block, and we don't take ownership of it
+    let fd = resource.as_raw_fd().try_into().unwrap();
+    unsafe {
+        let mut handle = Handle::from_raw(fd).unwrap();
+        let res = handle.set_inheritable(allow_inherit);
+        let _ = handle.into_raw(); // leak voluntarily
+        res
     }
 }

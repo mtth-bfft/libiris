@@ -1,17 +1,19 @@
+use crate::IPC_MESSAGE_MAX_SIZE;
 use crate::error::IpcError;
-use crate::messagepipe::CrossPlatformMessagePipe;
-use iris_policy::{CrossPlatformHandle, os::Handle};
+use crate::stackbuffer::StackBuffer;
+use crate::channel::{CrossPlatformIpcChannel, serialize, deserialize};
+use crate::{CrossPlatformHandle, os::Handle};
 use core::ptr::null_mut;
+use core::fmt::Write;
 use log::debug;
-use std::convert::TryInto;
-use std::ffi::CString;
+use core::convert::TryInto;
 use winapi::shared::minwindef::DWORD;
 use winapi::shared::winerror::{ERROR_ACCESS_DENIED, ERROR_BROKEN_PIPE, ERROR_PIPE_CONNECTED};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::{CreateFileA, ReadFile, WriteFile, OPEN_EXISTING};
 use winapi::um::handleapi::{DuplicateHandle, INVALID_HANDLE_VALUE};
 use winapi::um::namedpipeapi::{ConnectNamedPipe, SetNamedPipeHandleState};
-use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess};
+use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess, GetCurrentProcessId};
 use winapi::um::winbase::CreateNamedPipeA;
 use winapi::um::winbase::{
     FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX, PIPE_READMODE_MESSAGE,
@@ -21,41 +23,34 @@ use winapi::um::winnt::{
     DUPLICATE_SAME_ACCESS, FILE_READ_DATA, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, HANDLE,
     PROCESS_DUP_HANDLE,
 };
+use serde::{Serialize, Deserialize};
 
-const PIPE_BUFFER_SIZE: u32 = 64 * 1024;
-const PIPE_FOOTER_SIZE: u32 = std::mem::size_of::<u64>() as u32;
-
-pub struct OSMessagePipe {
+pub struct IpcChannel {
     pipe_handle: Handle,
     remote_process_handle: Option<Handle>,
 }
 
-impl CrossPlatformMessagePipe for OSMessagePipe {
-    fn into_handle(self) -> Handle {
-        self.pipe_handle
-    }
-
-    fn from_handle(handle: Handle) -> Self {
-        Self {
-            pipe_handle: handle,
-            remote_process_handle: None,
-        }
-    }
-
+impl CrossPlatformIpcChannel for IpcChannel {
     fn new() -> Result<(Self, Self), IpcError<'static>> {
+        let pid: DWORD = unsafe { GetCurrentProcessId() };
         let mut pipe_id = 0;
+        let mut pipe_path = StackBuffer::<100>::new();
         loop {
             pipe_id += 1;
-            let name = format!("\\\\.\\pipe\\ipc-{}-{}", std::process::id(), pipe_id);
-            let name_nul = CString::new(name).unwrap();
+            if let Err(_) = write!(&mut pipe_path, "\\\\.\\pipe\\ipc-{}-{}\x00", pid, pipe_id) {
+                return Err(IpcError::InternalOsOperationFailed {
+                    description: "unable to format pipe path",
+                    os_code: 0,
+                });
+            }
             let handle1 = unsafe {
                 let res = CreateNamedPipeA(
-                    name_nul.as_ptr(),
+                    pipe_path.as_bytes().as_ptr() as *const _,
                     PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
                     PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_REJECT_REMOTE_CLIENTS,
                     2,
-                    PIPE_BUFFER_SIZE,
-                    PIPE_BUFFER_SIZE,
+                    IPC_MESSAGE_MAX_SIZE as u32,
+                    IPC_MESSAGE_MAX_SIZE as u32,
                     0,
                     null_mut(),
                 );
@@ -75,7 +70,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
             };
             let handle2 = unsafe {
                 let res = CreateFileA(
-                    name_nul.as_ptr(),
+                    pipe_path.as_bytes().as_ptr() as *const _,
                     FILE_READ_DATA | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES,
                     0,
                     null_mut(),
@@ -85,8 +80,8 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 );
                 // FILE_WRITE_ATTRIBUTES is required to set the pipe mode to "messages" afterwards.
                 if res == INVALID_HANDLE_VALUE {
-                    // No handle was returned, it is safe to just exit the unsafe block
-                    // Continuing will also destroy handle1 created just above
+                    // No handle was returned, it is safe to just return
+                    // as it will also destroy handle1 created just above
                     return Err(IpcError::InternalOsOperationFailed {
                         description: "CreateFile() failed",
                         os_code: GetLastError().into(),
@@ -104,7 +99,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     });
                 }
             }
-            debug!("Using ipc pipe {}", name_nul.to_string_lossy());
+            debug!("Using ipc pipe {}", core::str::from_utf8(pipe_path.as_bytes()).unwrap_or("?"));
             let mut new_mode: DWORD = PIPE_READMODE_MESSAGE;
             let res = unsafe {
                 SetNamedPipeHandleState(
@@ -124,66 +119,14 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
         }
     }
 
-    fn recv<'a>(&mut self, buffer: &'a mut [u8]) -> Result<Option<&'a mut [u8]>, IpcError<'a>> {
-        let mut bytes_read: DWORD = 0;
-        let res = unsafe {
-            ReadFile(
-                self.pipe_handle.as_raw() as HANDLE,
-                buffer.as_mut_ptr() as *mut _,
-                buffer.len() as u32,
-                &mut bytes_read as *mut _,
-                null_mut(),
-            )
-        };
-        if res == 0 || bytes_read < PIPE_FOOTER_SIZE {
-            let err = unsafe { GetLastError() };
-            if res == 0 && err == ERROR_BROKEN_PIPE {
-                return Ok(None); // read of length 0 <=> end of file
-            }
-            return Err(IpcError::InternalOsOperationFailed {
-                description: "ReadFile() failed",
-                os_code: err.into(),
-            });
-        }
-        Ok(Some(
-            &mut buffer[0..(bytes_read - PIPE_FOOTER_SIZE) as usize],
-        ))
+    fn into_handle(self) -> Handle {
+        self.pipe_handle
     }
 
-    fn recv_with_handle<'a>(
-        &mut self,
-        buffer: &'a mut [u8],
-    ) -> Result<Option<(&'a mut [u8], Option<Handle>)>, IpcError<'a>> {
-        let mut bytes_read: DWORD = 0;
-        unsafe {
-            let res = ReadFile(
-                self.pipe_handle.as_raw() as HANDLE,
-                buffer.as_mut_ptr() as *mut _,
-                buffer.len() as u32,
-                &mut bytes_read as *mut _,
-                null_mut(),
-            );
-            if res == 0 || bytes_read < PIPE_FOOTER_SIZE {
-                let err = GetLastError();
-                if res == 0 && err == ERROR_BROKEN_PIPE {
-                    return Ok(None); // read of length 0 <=> end of file
-                }
-                return Err(IpcError::InternalOsOperationFailed {
-                    description: "ReadFile() failed",
-                    os_code: err.into(),
-                });
-            }
-            let payload_size = (bytes_read - PIPE_FOOTER_SIZE) as usize;
-            let read_size = bytes_read as usize;
-            let handle = match u64::from_be_bytes(
-                buffer[payload_size..read_size]
-                    .try_into()
-                    .unwrap_or([0u8; 8]),
-            ) {
-                n if n > 0 => Some(Handle::from_raw(n).map_err(IpcError::from)?),
-                _n => None,
-            };
-            Ok(Some((&mut buffer[..payload_size], handle)))
+    fn from_handle(handle: Handle) -> Self {
+        Self {
+            pipe_handle: handle,
+            remote_process_handle: None,
         }
     }
 
@@ -206,45 +149,44 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
         Ok(())
     }
 
-    fn send<'a>(&mut self, message: &'a [u8], handle: Option<&Handle>) -> Result<(), IpcError<'a>> {
-        let remote_handle = match handle {
-            None => 0,
-            Some(handle_to_send) => {
-                let remote_process_handle = self
-                    .remote_process_handle
-                    .as_ref()
-                    .expect("cannot send handles before set_remote_process() is called on pipe")
-                    .as_raw();
-                let mut remote_handle: HANDLE = null_mut();
-                let res = unsafe {
-                    DuplicateHandle(
-                        GetCurrentProcess(),
-                        handle_to_send.as_raw() as HANDLE,
-                        remote_process_handle as HANDLE,
-                        &mut remote_handle as *mut HANDLE,
-                        0,
-                        0,
-                        DUPLICATE_SAME_ACCESS,
-                    )
-                };
-                if res == 0 {
-                    return Err(IpcError::InternalOsOperationFailed {
-                        description: "DuplicateHandle() failed",
-                        os_code: unsafe { GetLastError() }.into(),
-                    });
-                }
-                remote_handle as u64
+    fn send<'a, T: Serialize>(&mut self, msg: &'a T, handle: Option<&'a Handle>, buffer: &'a mut [u8]) -> Result<(), IpcError<'a>> {
+        let remote_handle = if let Some(local_handle) = handle {
+            // TODO: see if GetNamedPipeClientProcessId() can't replace set_remote_process() altogether
+            let remote_process_handle = self
+                .remote_process_handle
+                .as_ref()
+                .expect("cannot send handles before set_remote_process() is called on pipe")
+                .as_raw();
+            let mut remote_handle: HANDLE = null_mut();
+            let res = unsafe {
+                DuplicateHandle(
+                    GetCurrentProcess(),
+                    local_handle.as_raw() as HANDLE,
+                    remote_process_handle as HANDLE,
+                    &mut remote_handle as *mut HANDLE,
+                    0,
+                    0,
+                    DUPLICATE_SAME_ACCESS,
+                )
+            };
+            if res == 0 {
+                return Err(IpcError::InternalOsOperationFailed {
+                    description: "DuplicateHandle() failed",
+                    os_code: unsafe { GetLastError() }.into(),
+                });
             }
+            Some(remote_handle as u64)
+        } else {
+            None
         };
-        let remote_handle = remote_handle.to_be_bytes();
-        let mut buf = Vec::from(message);
-        buf.extend_from_slice(&remote_handle);
+        let wrapped_msg = (msg, remote_handle);
+        let slice = serialize(&wrapped_msg, buffer)?;
         let mut bytes_written: DWORD = 0;
         let res = unsafe {
             WriteFile(
                 self.pipe_handle.as_raw() as HANDLE,
-                buf.as_ptr() as *const _,
-                buf.len() as u32,
+                slice.as_ptr() as *const _,
+                slice.len() as u32,
                 &mut bytes_written as *mut _,
                 null_mut(),
             )
@@ -256,5 +198,42 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
             });
         }
         Ok(())
+    }
+
+    fn recv<'de, T: Deserialize<'de>>(
+        &mut self,
+        buffer: &'de mut [u8],
+    ) -> Result<Option<(T, Option<Handle>)>, IpcError<'de>> {
+        let mut read_bytes: DWORD = 0;
+        let res = unsafe {
+            ReadFile(
+                self.pipe_handle.as_raw() as HANDLE,
+                buffer.as_mut_ptr() as *mut _,
+                buffer.len() as u32,
+                &mut read_bytes as *mut _,
+                null_mut(),
+            )
+        };
+        if res == 0 {
+            let err = unsafe { GetLastError() };
+            if err == ERROR_BROKEN_PIPE {
+                return Ok(None); // read of length 0 <=> end of file
+            }
+            return Err(IpcError::InternalOsOperationFailed {
+                description: "ReadFile() failed",
+                os_code: err.into(),
+            });
+        }
+        let (msg, raw_handle): (T, Option<u64>) = deserialize(&buffer[0..(read_bytes as usize)])?;
+        // FIXME: only workers should accept incoming handles. Otherwise a worker
+        // could send its broker "hey I just sent you handle X" and make the
+        // broker do something with one of its own handles, expecting it to be
+        // a new handle from its worker.
+        let handle = if let Some(raw_handle) = raw_handle {
+            Some(unsafe { Handle::from_raw(raw_handle) }.map_err(IpcError::from)?)
+        } else {
+            None
+        };
+        Ok(Some((msg, handle)))
     }
 }

@@ -1,9 +1,8 @@
 use crate::error::PolicyError;
-use crate::os::handle::Handle;
 use crate::os::path::{derive_all_file_paths_from_path, OS_PATH_SEPARATOR};
 use crate::strip_one_component;
 use crate::os::PolicyRequest;
-use crate::handle::CrossPlatformHandle;
+use iris_ipc::{CrossPlatformHandle, os::Handle};
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};

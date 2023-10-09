@@ -1,10 +1,8 @@
 // Common modules
 mod error;
-mod handle;
 mod policy;
 
-pub use error::{HandleError, PolicyError};
-pub use handle::CrossPlatformHandle;
+pub use error::PolicyError;
 pub use policy::{Policy, PolicyLogCallback, PolicyVerdict};
 
 // OS-specific modules

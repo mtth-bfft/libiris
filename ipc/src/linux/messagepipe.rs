@@ -172,7 +172,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
     ) -> Result<(), IpcError<'a>> {
         // This call is just a C arithmetic macro translated into rust, in practice it's safe (at least in this libc release)
         let cmsg_space = unsafe { libc::CMSG_SPACE(std::mem::size_of::<c_int>() as u32) } as usize;
-        let mut cbuf = vec![0u8; cmsg_space];
+        let mut cbuf = [0u8; cmsg_space];
         // All these calls are libc calls (which are either C arithmetic macros translated into rust, in practice safe for this libc release),
         // or pointer dereferencing which are safe as long as the libc macros get the arithmetic right and as long as we keep the
         // `msg` variable alive and its contents valid

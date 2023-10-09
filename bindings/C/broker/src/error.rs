@@ -1,6 +1,6 @@
 use iris_broker::BrokerError;
-use iris_ipc::IpcError;
-use iris_policy::{HandleError, PolicyError};
+use iris_ipc::{HandleError, IpcError};
+use iris_policy::PolicyError;
 
 #[repr(u64)]
 pub enum IrisStatus {

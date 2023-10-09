@@ -1,4 +1,14 @@
-use iris_policy::HandleError;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandleError {
+    InvalidHandleValue {
+        raw_value: u64,
+    },
+    InternalOsOperationFailed {
+        description: &'static str,
+        raw_handle: u64,
+        os_code: u64,
+    },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpcError<'a> {
@@ -23,7 +33,6 @@ pub enum IpcError<'a> {
     },
     InternalSerializationError {
         description: &'a str,
-        payload: &'a str,
     },
     InternalDeserializationError {
         description: &'a str,

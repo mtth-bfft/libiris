@@ -1,14 +1,16 @@
+#![no_std]
+
 // Common modules
 
+mod channel;
 mod error;
-mod ipc;
-mod messagepipe;
+mod handle;
 mod stackbuffer;
 
+pub use channel::CrossPlatformIpcChannel;
+pub use error::{HandleError, IpcError};
+pub use handle::CrossPlatformHandle;
 pub use stackbuffer::StackBuffer;
-pub use error::IpcError;
-pub use ipc::IPCMessagePipe;
-pub use messagepipe::CrossPlatformMessagePipe;
 
 // OS-specific modules
 

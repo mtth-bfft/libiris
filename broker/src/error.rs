@@ -1,4 +1,5 @@
-use iris_policy::{HandleError, PolicyError};
+use iris_ipc::HandleError;
+use iris_policy::PolicyError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrokerError {

@@ -1,14 +1,4 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HandleError {
-    InvalidHandleValue {
-        raw_value: u64,
-    },
-    InternalOsOperationFailed {
-        description: &'static str,
-        raw_handle: u64,
-        os_code: u64,
-    },
-}
+use iris_ipc::HandleError;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum PolicyError {

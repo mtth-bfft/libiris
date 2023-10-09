@@ -2,8 +2,6 @@ use crate::error::HandleError;
 use crate::handle::CrossPlatformHandle;
 use core::ptr::null_mut;
 use log::error;
-use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle};
-use std::os::windows::prelude::RawHandle;
 use winapi::shared::minwindef::DWORD;
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::handleapi::{
@@ -77,48 +75,21 @@ impl Drop for Handle {
         if let Some(handle) = self.val {
             let res = unsafe { CloseHandle(handle as *mut _) };
             if res < 0 {
-                let msg = format!(
+                let err = unsafe { GetLastError() };
+                error!(
                     "CloseHandle(handle={:?}) failed with error {}",
                     handle,
-                    unsafe { GetLastError() }
+                    err
                 );
                 if cfg!(debug_assertions) {
-                    panic!("{}", msg);
-                } else {
-                    error!("{}", msg);
+                    panic!(
+                        "CloseHandle(handle={:?}) failed with error {}",
+                        handle,
+                        err
+                    );
                 }
             }
         }
-    }
-}
-
-impl FromRawHandle for Handle {
-    unsafe fn from_raw_handle(handle: RawHandle) -> Self {
-        Handle::from_raw(handle as u64).unwrap()
-    }
-}
-
-impl IntoRawHandle for Handle {
-    fn into_raw_handle(self) -> RawHandle {
-        self.as_raw() as *mut _
-    }
-}
-
-pub fn downcast_to_handle<T: IntoRawHandle>(resource: T) -> Handle {
-    unsafe { Handle::from_raw_handle(resource.into_raw_handle()) }
-}
-
-pub fn set_unmanaged_handle_inheritable<T: AsRawHandle>(
-    resource: &T,
-    allow_inherit: bool,
-) -> Result<(), HandleError> {
-    // This block is safe because the file descriptor held by `resource` lives at least
-    // for the duration of the block, and we don't take ownership of it
-    unsafe {
-        let mut handle = Handle::from_raw(resource.as_raw_handle() as u64)?; // returning here is safe since the handle was not created thus won't be drop()ped
-        let res = handle.set_inheritable(allow_inherit);
-        let _ = handle.into_raw(); // leak voluntarily
-        res
     }
 }
 
