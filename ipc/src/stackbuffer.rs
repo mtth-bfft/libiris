@@ -6,14 +6,16 @@ pub struct StackBuffer<const SIZE: usize> {
     pub(crate) used_bytes: usize,
 }
 
-impl<const SIZE: usize> StackBuffer<SIZE> {
-    pub fn new() -> Self {
+impl<const SIZE: usize> Default for StackBuffer<SIZE> {
+    fn default() -> Self {
         Self {
             buf: [0u8; SIZE],
             used_bytes: 0,
         }
     }
+}
 
+impl<const SIZE: usize> StackBuffer<SIZE> {
     pub fn as_bytes(&self) -> &[u8] {
         &self.buf[0..self.used_bytes]
     }

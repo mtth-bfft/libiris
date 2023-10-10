@@ -1,6 +1,6 @@
 use iris_broker::Worker;
-use iris_ipc::{CrossPlatformHandle, HandleError, os::Handle};
-use std::os::fd::{IntoRawFd, AsRawFd};
+use iris_ipc::{os::Handle, CrossPlatformHandle, HandleError};
+use std::os::fd::{AsRawFd, IntoRawFd};
 
 pub fn check_worker_handles(worker: &Worker) {
     let mut sandbox_ipc_socket_found = false;
@@ -51,7 +51,7 @@ pub fn wait_for_worker_exit(worker: &Worker) -> Result<u64, String> {
 
 pub fn downcast_to_handle<T: IntoRawFd>(resource: T) -> Handle {
     unsafe { Handle::from_raw(resource.into_raw_fd() as u64) }
-        .expect(&format!("could not downcast into Handle"))
+        .unwrap_or_else(|_| panic!("could not downcast into Handle"))
 }
 
 pub fn set_unmanaged_handle_inheritable<T: AsRawFd>(

@@ -76,17 +76,9 @@ impl Drop for Handle {
             let res = unsafe { CloseHandle(handle as *mut _) };
             if res < 0 {
                 let err = unsafe { GetLastError() };
-                error!(
-                    "CloseHandle(handle={:?}) failed with error {}",
-                    handle,
-                    err
-                );
+                error!("CloseHandle(handle={:?}) failed with error {}", handle, err);
                 if cfg!(debug_assertions) {
-                    panic!(
-                        "CloseHandle(handle={:?}) failed with error {}",
-                        handle,
-                        err
-                    );
+                    panic!("CloseHandle(handle={:?}) failed with error {}", handle, err);
                 }
             }
         }

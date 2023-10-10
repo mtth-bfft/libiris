@@ -1,9 +1,11 @@
 use crate::error::BrokerError;
-use crate::os::process::OSSandboxedProcess;
 use crate::os::ipc_loop::start_ipc_loop;
+use crate::os::process::OSSandboxedProcess;
 use crate::process::CrossPlatformSandboxedProcess;
 use crate::ProcessConfig;
-use iris_ipc::{CrossPlatformIpcChannel, CrossPlatformHandle, IpcError, IPC_HANDLE_ENV_NAME, os::IpcChannel};
+use iris_ipc::{
+    os::IpcChannel, CrossPlatformHandle, CrossPlatformIpcChannel, IpcError, IPC_HANDLE_ENV_NAME,
+};
 use iris_policy::Policy;
 use std::ffi::CString;
 
@@ -14,17 +16,19 @@ pub struct Worker {
 
 impl Worker {
     pub fn new(process_config: &ProcessConfig, policy: &Policy) -> Result<Self, BrokerError> {
-        let (mut broker_channel, worker_channel) = IpcChannel::new()
-            .map_err(|e| match e {
-                IpcError::InternalOsOperationFailed { description, os_code } => BrokerError::InternalOsOperationFailed {
-                    description: description.to_owned(),
-                    os_code,
-                },
-                _ => BrokerError::InternalOsOperationFailed {
-                    description: "unknown OS operation failed, cannot create an IPC channel".to_owned(),
-                    os_code: 0,
-                },
-            })?;
+        let (mut broker_channel, worker_channel) = IpcChannel::new().map_err(|e| match e {
+            IpcError::InternalOsOperationFailed {
+                description,
+                os_code,
+            } => BrokerError::InternalOsOperationFailed {
+                description: description.to_owned(),
+                os_code,
+            },
+            _ => BrokerError::InternalOsOperationFailed {
+                description: "unknown OS operation failed, cannot create an IPC channel".to_owned(),
+                os_code: 0,
+            },
+        })?;
         let mut worker_channel_handle = worker_channel.into_handle();
         worker_channel_handle.set_inheritable(true)?;
         let mut policy = policy.clone();
@@ -52,12 +56,17 @@ impl Worker {
         broker_channel
             .set_remote_process(worker_pid)
             .map_err(|e| match e {
-                IpcError::InternalOsOperationFailed { description, os_code } => BrokerError::InternalOsOperationFailed {
+                IpcError::InternalOsOperationFailed {
+                    description,
+                    os_code,
+                } => BrokerError::InternalOsOperationFailed {
                     description: description.to_owned(),
                     os_code,
                 },
                 _ => BrokerError::InternalOsOperationFailed {
-                    description: "unknown OS operation failed, IPC channel does not accept worker PID".to_owned(),
+                    description:
+                        "unknown OS operation failed, IPC channel does not accept worker PID"
+                            .to_owned(),
                     os_code: 0,
                 },
             })?;

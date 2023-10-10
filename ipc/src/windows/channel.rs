@@ -1,19 +1,20 @@
-use crate::IPC_MESSAGE_MAX_SIZE;
+use crate::channel::{deserialize, serialize, CrossPlatformIpcChannel};
 use crate::error::IpcError;
 use crate::stackbuffer::StackBuffer;
-use crate::channel::{CrossPlatformIpcChannel, serialize, deserialize};
-use crate::{CrossPlatformHandle, os::Handle};
-use core::ptr::null_mut;
-use core::fmt::Write;
-use log::debug;
+use crate::IPC_MESSAGE_MAX_SIZE;
+use crate::{os::Handle, CrossPlatformHandle};
 use core::convert::TryInto;
+use core::fmt::Write;
+use core::ptr::null_mut;
+use log::debug;
+use serde::{Deserialize, Serialize};
 use winapi::shared::minwindef::DWORD;
 use winapi::shared::winerror::{ERROR_ACCESS_DENIED, ERROR_BROKEN_PIPE, ERROR_PIPE_CONNECTED};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::{CreateFileA, ReadFile, WriteFile, OPEN_EXISTING};
 use winapi::um::handleapi::{DuplicateHandle, INVALID_HANDLE_VALUE};
 use winapi::um::namedpipeapi::{ConnectNamedPipe, SetNamedPipeHandleState};
-use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess, GetCurrentProcessId};
+use winapi::um::processthreadsapi::{GetCurrentProcess, GetCurrentProcessId, OpenProcess};
 use winapi::um::winbase::CreateNamedPipeA;
 use winapi::um::winbase::{
     FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX, PIPE_READMODE_MESSAGE,
@@ -23,7 +24,6 @@ use winapi::um::winnt::{
     DUPLICATE_SAME_ACCESS, FILE_READ_DATA, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, HANDLE,
     PROCESS_DUP_HANDLE,
 };
-use serde::{Serialize, Deserialize};
 
 pub struct IpcChannel {
     pipe_handle: Handle,
@@ -34,10 +34,10 @@ impl CrossPlatformIpcChannel for IpcChannel {
     fn new() -> Result<(Self, Self), IpcError<'static>> {
         let pid: DWORD = unsafe { GetCurrentProcessId() };
         let mut pipe_id = 0;
-        let mut pipe_path = StackBuffer::<100>::new();
+        let mut pipe_path = StackBuffer::<100>::default();
         loop {
             pipe_id += 1;
-            if let Err(_) = write!(&mut pipe_path, "\\\\.\\pipe\\ipc-{}-{}\x00", pid, pipe_id) {
+            if write!(&mut pipe_path, "\\\\.\\pipe\\ipc-{}-{}\x00", pid, pipe_id).is_err() {
                 return Err(IpcError::InternalOsOperationFailed {
                     description: "unable to format pipe path",
                     os_code: 0,
@@ -99,7 +99,10 @@ impl CrossPlatformIpcChannel for IpcChannel {
                     });
                 }
             }
-            debug!("Using ipc pipe {}", core::str::from_utf8(pipe_path.as_bytes()).unwrap_or("?"));
+            debug!(
+                "Using ipc pipe {}",
+                core::str::from_utf8(pipe_path.as_bytes()).unwrap_or("?")
+            );
             let mut new_mode: DWORD = PIPE_READMODE_MESSAGE;
             let res = unsafe {
                 SetNamedPipeHandleState(
@@ -149,7 +152,12 @@ impl CrossPlatformIpcChannel for IpcChannel {
         Ok(())
     }
 
-    fn send<'a, T: Serialize>(&mut self, msg: &'a T, handle: Option<&'a Handle>, buffer: &'a mut [u8]) -> Result<(), IpcError<'a>> {
+    fn send<'a, T: Serialize>(
+        &mut self,
+        msg: &'a T,
+        handle: Option<&'a Handle>,
+        buffer: &'a mut [u8],
+    ) -> Result<(), IpcError<'a>> {
         let remote_handle = if let Some(local_handle) = handle {
             // TODO: see if GetNamedPipeClientProcessId() can't replace set_remote_process() altogether
             let remote_process_handle = self

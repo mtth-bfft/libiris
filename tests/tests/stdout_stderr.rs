@@ -1,7 +1,7 @@
 use common::os::wait_for_worker_exit;
 use common::{
-    cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file, read_tmp_file,
-    os::downcast_to_handle
+    cleanup_tmp_file, common_test_setup, get_worker_abs_path, open_tmp_file,
+    os::downcast_to_handle, read_tmp_file,
 };
 use iris_broker::{ProcessConfig, Worker};
 use iris_policy::Policy;

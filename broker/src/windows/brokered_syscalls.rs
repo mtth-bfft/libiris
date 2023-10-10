@@ -1,9 +1,9 @@
 use crate::os::get_proc_address::get_proc_address;
 use core::ptr::null_mut;
-use iris_policy::{Policy, PolicyVerdict, os::PolicyRequest};
-use iris_ipc::CrossPlatformHandle;
 use iris_ipc::os::Handle;
+use iris_ipc::CrossPlatformHandle;
 use iris_ipc_messages::os::IPCResponse;
+use iris_policy::{os::PolicyRequest, Policy, PolicyVerdict};
 use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::ntdef::{
     InitializeObjectAttributes, NTSTATUS, NT_SUCCESS, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE,
@@ -144,7 +144,7 @@ pub(crate) fn proxied_ntcreatekey(
     do_create: bool,
 ) -> (IPCResponse, Option<Handle>) {
     let req = PolicyRequest::RegKeyOpen {
-        path: &path,
+        path,
         desired_access,
         create_options,
         do_create,
@@ -159,7 +159,7 @@ pub(crate) fn proxied_ntcreatekey(
         MaximumLength: unicode_bytes as u16,
         Buffer: unicode_name.as_mut_ptr(),
     };
-    let mut class_unicode = if let Some(ref s) = class {
+    let mut class_unicode = if let Some(s) = class {
         s.encode_utf16().chain(std::iter::once(0)).collect()
     } else {
         vec![0]

@@ -6,7 +6,7 @@
 
 use core::ptr::null_mut;
 use iris_broker::Worker;
-use iris_ipc::{CrossPlatformHandle, HandleError, os::Handle};
+use iris_ipc::{os::Handle, CrossPlatformHandle, HandleError};
 use log::{debug, info, warn};
 use std::convert::TryInto;
 use std::ffi::CString;
@@ -575,9 +575,8 @@ pub fn wait_for_worker_exit(worker: &Worker) -> Result<u64, String> {
 }
 
 pub fn downcast_to_handle<T: IntoRawHandle>(resource: T) -> Handle {
-    unsafe {
-        Handle::from_raw(resource.into_raw_handle() as u64)
-    }.expect("unable to downcast to handle")
+    unsafe { Handle::from_raw(resource.into_raw_handle() as u64) }
+        .expect("unable to downcast to handle")
 }
 
 pub fn set_unmanaged_handle_inheritable<T: AsRawHandle>(

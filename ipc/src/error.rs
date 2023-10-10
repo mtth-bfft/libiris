@@ -50,7 +50,9 @@ pub enum IpcError<'a> {
 impl From<HandleError> for IpcError<'static> {
     fn from(e: HandleError) -> Self {
         match e {
-            HandleError::InvalidHandleValue { raw_value } => Self::InvalidHandleValueReceived { raw_value },
+            HandleError::InvalidHandleValue { raw_value } => {
+                Self::InvalidHandleValueReceived { raw_value }
+            }
             HandleError::InternalOsOperationFailed {
                 description,
                 os_code,

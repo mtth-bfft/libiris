@@ -2,7 +2,7 @@ use crate::IrisStatus;
 use core::ffi::{c_char, c_void, CStr};
 use core::ptr::null_mut;
 use iris_broker::ProcessConfig;
-use iris_ipc::{CrossPlatformHandle, os::Handle};
+use iris_ipc::{os::Handle, CrossPlatformHandle};
 use std::ffi::CString;
 
 pub type IrisProcessConfigHandle = *mut c_void;

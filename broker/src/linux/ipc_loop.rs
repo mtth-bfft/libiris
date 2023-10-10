@@ -1,11 +1,15 @@
-use log::{debug, error, warn};
+use crate::os::brokered_syscalls::{proxied_open_file, proxied_syscall};
 use crate::BrokerError;
-use iris_ipc::{CrossPlatformIpcChannel, IPC_MESSAGE_MAX_SIZE, os::IpcChannel};
+use iris_ipc::{os::IpcChannel, CrossPlatformIpcChannel, IPC_MESSAGE_MAX_SIZE};
 use iris_ipc_messages::os::{IPCRequest, IPCResponse};
 use iris_policy::Policy;
-use crate::os::brokered_syscalls::{proxied_open_file, proxied_syscall};
+use log::{debug, error, warn};
 
-pub(crate) fn start_ipc_loop(mut channel: IpcChannel, policy: Policy<'static>, worker_pid: u64) -> Result<(), BrokerError> {
+pub(crate) fn start_ipc_loop(
+    mut channel: IpcChannel,
+    policy: Policy<'static>,
+    worker_pid: u64,
+) -> Result<(), BrokerError> {
     let mut buf = [0u8; IPC_MESSAGE_MAX_SIZE];
     match channel.recv(&mut buf) {
         Ok(Some((IPCRequest::InitializationRequest, None))) => (),
@@ -38,36 +42,34 @@ pub(crate) fn start_ipc_loop(mut channel: IpcChannel, policy: Policy<'static>, w
 
     std::thread::Builder::new()
         .name(format!("iris-{}-broker", worker_pid))
-        .spawn(move || {
-            loop {
-                let request: IPCRequest = match channel.recv(&mut buf) {
-                    Ok(Some((m, None))) => m,
-                    Ok(None) => {
-                        debug!("Manager thread exiting cleanly, worker closed its IPC socket");
-                        break;
-                    }
-                    other => {
-                        warn!(
-                            "Manager thread exiting because of unexpected message from IPC: {:?}",
-                            other
-                        );
-                        break;
-                    }
-                };
-                debug!("Received request: {:?}", &request);
-                let (resp, handle) = match request {
-                    IPCRequest::OpenFile { path, flags } => proxied_open_file(&policy, path, flags),
-                    IPCRequest::Syscall { nb, args, ip } => proxied_syscall(&policy, nb, args, ip),
-                    unknown => {
-                        error!("Unexpected request from worker: {:?}", unknown);
-                        (IPCResponse::SyscallResult(-(libc::EINVAL as i64)), None)
-                    }
-                };
-                debug!("Sending response: {:?} (handle={:?})", &resp, &handle);
-                if let Err(e) = channel.send(&resp, handle.as_ref(), &mut buf) {
-                    warn!("Broker thread exiting: error when sending IPC: {:?}", e);
+        .spawn(move || loop {
+            let request: IPCRequest = match channel.recv(&mut buf) {
+                Ok(Some((m, None))) => m,
+                Ok(None) => {
+                    debug!("Manager thread exiting cleanly, worker closed its IPC socket");
                     break;
                 }
+                other => {
+                    warn!(
+                        "Manager thread exiting because of unexpected message from IPC: {:?}",
+                        other
+                    );
+                    break;
+                }
+            };
+            debug!("Received request: {:?}", &request);
+            let (resp, handle) = match request {
+                IPCRequest::OpenFile { path, flags } => proxied_open_file(&policy, path, flags),
+                IPCRequest::Syscall { nb, args, ip } => proxied_syscall(&policy, nb, args, ip),
+                unknown => {
+                    error!("Unexpected request from worker: {:?}", unknown);
+                    (IPCResponse::SyscallResult(-(libc::EINVAL as i64)), None)
+                }
+            };
+            debug!("Sending response: {:?} (handle={:?})", &resp, &handle);
+            if let Err(e) = channel.send(&resp, handle.as_ref(), &mut buf) {
+                warn!("Broker thread exiting: error when sending IPC: {:?}", e);
+                break;
             }
         })
         .map_err(|e| BrokerError::InternalOsOperationFailed {

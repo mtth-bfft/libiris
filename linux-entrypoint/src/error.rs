@@ -23,7 +23,7 @@ macro_rules! log_fatal {
         if let Some(debug_fd) = unsafe { crate::error::DEBUG_FD } {
             use core::fmt::Write;
             let line = core::line!() as i32;
-            let mut buf = iris_ipc::StackBuffer::<200>::new();
+            let mut buf = iris_ipc::StackBuffer::<200>::default();
             let _ = write!(&mut buf, "Error in clone() entrypoint at line {}: ", line);
             let s = if let Err(_) = write!(&mut buf, $($stuff),+) {
                 "unable to format error message"
@@ -44,7 +44,7 @@ macro_rules! log_nonfatal {
         if let Some(debug_fd) = unsafe { crate::error::DEBUG_FD } {
             use core::fmt::Write;
             let line = core::line!() as i32;
-            let mut buf = iris_ipc::StackBuffer::<200>::new();
+            let mut buf = iris_ipc::StackBuffer::<200>::default();
             let _ = write!(&mut buf, "Warning in clone() entrypoint at line {}: ", line);
             let s = if let Err(_) = write!(&mut buf, $($stuff),+) {
                 "unable to format error message"

@@ -1,3 +1,4 @@
+#![allow(clippy::large_enum_variant)]
 use iris_policy::Policy;
 use serde::{Deserialize, Serialize};
 use winapi::shared::basetsd::ULONG_PTR;

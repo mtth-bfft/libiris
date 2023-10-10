@@ -1,8 +1,8 @@
-use iris_ipc::{CrossPlatformIpcChannel, CrossPlatformHandle, IPC_MESSAGE_MAX_SIZE};
-use iris_ipc::os::{IpcChannel, Handle};
-use iris_ipc_messages::os::{IPCRequest, IPCResponse, IPC_SECCOMP_CALL_SITE_PLACEHOLDER};
 use core::ffi::c_void;
 use core::ptr::null;
+use iris_ipc::os::{Handle, IpcChannel};
+use iris_ipc::{CrossPlatformHandle, CrossPlatformIpcChannel, IPC_MESSAGE_MAX_SIZE};
+use iris_ipc_messages::os::{IPCRequest, IPCResponse, IPC_SECCOMP_CALL_SITE_PLACEHOLDER};
 use libc::{c_char, c_int, O_PATH};
 use log::{debug, info, warn};
 use std::borrow::BorrowMut;
@@ -34,11 +34,12 @@ fn get_ipc_channel() -> MutexGuard<'static, IpcChannel> {
     unsafe { (*IPC_CHANNEL_SINGLETON).lock().unwrap() }
 }
 
-fn get_fd_for_path_with_perms(path: &str, flags: c_int, buf: &mut [u8; IPC_MESSAGE_MAX_SIZE]) -> Result<Handle, isize> {
-    let request = IPCRequest::OpenFile {
-        path: path,
-        flags,
-    };
+fn get_fd_for_path_with_perms(
+    path: &str,
+    flags: c_int,
+    buf: &mut [u8; IPC_MESSAGE_MAX_SIZE],
+) -> Result<Handle, isize> {
+    let request = IPCRequest::OpenFile { path, flags };
     match send_recv(&request, None, buf) {
         (IPCResponse::SyscallResult(_), Some(fd)) => Ok(fd),
         (IPCResponse::SyscallResult(code), None) if code < 0 => Err(code as isize),
@@ -58,12 +59,18 @@ pub(crate) fn lower_final_sandbox_privileges(ipc: IpcChannel) {
     ipc.send(&IPCRequest::InitializationRequest, None, &mut buf)
         .expect("unable to send IPC message to broker");
     let (policy, seccomp_filter) = match ipc.recv(&mut buf) {
-        Ok(Some((IPCResponse::InitializationResponse {
-            policy_applied,
-            seccomp_filter_to_apply,
-        }, None))) => (policy_applied, seccomp_filter_to_apply),
+        Ok(Some((
+            IPCResponse::InitializationResponse {
+                policy_applied,
+                seccomp_filter_to_apply,
+            },
+            None,
+        ))) => (policy_applied, seccomp_filter_to_apply),
         Ok(None) => panic!("broker closed our IPC channel after receiving our initial message"),
-        other => panic!("receiving from broker after our initial message failed: {:?}", other),
+        other => panic!(
+            "receiving from broker after our initial message failed: {:?}",
+            other
+        ),
     };
     drop(ipc);
 
@@ -282,7 +289,11 @@ pub(crate) extern "C" fn sigsys_handler(
     });
 }
 
-fn send_recv<'a>(request: &IPCRequest, handle: Option<&Handle>, buf: &'a mut [u8; IPC_MESSAGE_MAX_SIZE]) -> (IPCResponse<'a>, Option<Handle>) {
+fn send_recv<'a>(
+    request: &IPCRequest,
+    handle: Option<&Handle>,
+    buf: &'a mut [u8; IPC_MESSAGE_MAX_SIZE],
+) -> (IPCResponse<'a>, Option<Handle>) {
     let mut ipc = get_ipc_channel();
     ipc.send(&request, handle, buf)
         .expect("unable to send IPC request to broker");
@@ -291,7 +302,12 @@ fn send_recv<'a>(request: &IPCRequest, handle: Option<&Handle>, buf: &'a mut [u8
         .expect("broker closed our IPC pipe while expecting its response")
 }
 
-fn handle_openat<'a>(path: &str, flags: libc::c_int, _mode: libc::c_int, buf: &'a mut [u8; IPC_MESSAGE_MAX_SIZE]) -> isize {
+fn handle_openat(
+    path: &str,
+    flags: libc::c_int,
+    _mode: libc::c_int,
+    buf: &mut [u8; IPC_MESSAGE_MAX_SIZE],
+) -> isize {
     // Resolve the path ourselves, brokers only accept nonambiguous absolute paths
     let mut abspath;
     let path = if !path.starts_with('/') {
@@ -328,7 +344,11 @@ fn handle_access(path: &str, mode: libc::c_int, buf: &mut [u8; IPC_MESSAGE_MAX_S
     }
 }
 
-fn handle_stat(path: &str, out_ptr: *mut libc::stat, buf: &mut [u8; IPC_MESSAGE_MAX_SIZE]) -> isize {
+fn handle_stat(
+    path: &str,
+    out_ptr: *mut libc::stat,
+    buf: &mut [u8; IPC_MESSAGE_MAX_SIZE],
+) -> isize {
     let fd = match get_fd_for_path_with_perms(path, O_PATH, buf) {
         Ok(fd) => fd,
         Err(code) => return code,
@@ -360,7 +380,12 @@ fn handle_chdir(path: &str, buf: &mut [u8; IPC_MESSAGE_MAX_SIZE]) -> isize {
     0
 }
 
-fn handle_syscall(nb: isize, args: [isize; 6], ip: isize, buf: &mut [u8; IPC_MESSAGE_MAX_SIZE]) -> isize {
+fn handle_syscall(
+    nb: isize,
+    args: [isize; 6],
+    ip: isize,
+    buf: &mut [u8; IPC_MESSAGE_MAX_SIZE],
+) -> isize {
     let request = IPCRequest::Syscall {
         nb: nb as i64,
         args: [

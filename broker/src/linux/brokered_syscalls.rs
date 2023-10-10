@@ -1,6 +1,6 @@
-use iris_ipc::{CrossPlatformHandle, os::Handle};
+use iris_ipc::{os::Handle, CrossPlatformHandle};
 use iris_ipc_messages::os::IPCResponse;
-use iris_policy::{Policy, PolicyVerdict, os::PolicyRequest};
+use iris_policy::{os::PolicyRequest, Policy, PolicyVerdict};
 use libc::c_int;
 use std::convert::TryInto;
 use std::ffi::CString;
@@ -10,7 +10,7 @@ pub(crate) fn proxied_open_file<'a>(
     path: &str,
     flags: c_int,
 ) -> (IPCResponse<'a>, Option<Handle>) {
-    let req = PolicyRequest::FileOpen { path: &path, flags };
+    let req = PolicyRequest::FileOpen { path, flags };
     if policy.evaluate_request(&req) != PolicyVerdict::Granted {
         return (IPCResponse::SyscallResult((-libc::EACCES).into()), None);
     }

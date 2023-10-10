@@ -1,4 +1,7 @@
-use common::{check_worker_handles, common_test_setup, get_worker_abs_path, open_tmp_file, os::downcast_to_handle};
+use common::{
+    check_worker_handles, common_test_setup, get_worker_abs_path, open_tmp_file,
+    os::downcast_to_handle,
+};
 use iris_broker::{ProcessConfig, Worker};
 use iris_policy::Policy;
 

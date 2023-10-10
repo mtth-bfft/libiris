@@ -1,10 +1,10 @@
-use crate::channel::{CrossPlatformIpcChannel, serialize, deserialize};
+use crate::channel::{deserialize, serialize, CrossPlatformIpcChannel};
 use crate::error::IpcError;
+use crate::os::{errno, Handle};
 use crate::CrossPlatformHandle;
 use core::ptr::null_mut;
-use crate::os::{Handle, errno};
 use libc::{c_int, c_void};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 // This call is just a C arithmetic macro translated into rust, in practice it's safe (at least in this libc release)
 const CMSG_SIZE: usize = unsafe { libc::CMSG_SPACE(core::mem::size_of::<c_int>() as u32) } as usize;
@@ -83,17 +83,17 @@ impl CrossPlatformIpcChannel for IpcChannel {
                 core::ptr::copy_nonoverlapping(
                     &clevel as *const c_int,
                     &mut (*cmsghdr).cmsg_level as *mut c_int,
-                    1
+                    1,
                 );
                 core::ptr::copy_nonoverlapping(
                     &ctype as *const c_int,
                     &mut (*cmsghdr).cmsg_type as *mut c_int,
-                    1
+                    1,
                 );
                 core::ptr::copy_nonoverlapping(
                     &clen as *const usize,
                     &mut (*cmsghdr).cmsg_len as *mut libc::size_t,
-                    1
+                    1,
                 );
                 core::ptr::copy_nonoverlapping(
                     &fd as *const c_int,
@@ -144,7 +144,8 @@ impl CrossPlatformIpcChannel for IpcChannel {
                 &mut msg as *mut libc::msghdr,
                 libc::MSG_NOSIGNAL | libc::MSG_CMSG_CLOEXEC | libc::MSG_WAITALL,
             );
-            if res < 0 { // if recvmsg() failed altogether, we can return without leaking a fd
+            if res < 0 {
+                // if recvmsg() failed altogether, we can return without leaking a fd
                 return Err(IpcError::InternalOsOperationFailed {
                     os_code: errno() as u64,
                     description: "recvmsg() failed",
@@ -184,13 +185,14 @@ impl CrossPlatformIpcChannel for IpcChannel {
                 );
                 match Handle::from_raw(fd as u64) {
                     Ok(h) => {
-                        if handle.is_ok() { // don't overwrite a prior error
+                        if handle.is_ok() {
+                            // don't overwrite a prior error
                             handle = Ok(Some(h));
                         }
-                    },
+                    }
                     Err(e) => {
                         handle = Err(IpcError::from(e));
-                    },
+                    }
                 };
                 cmsghdr = libc::CMSG_NXTHDR(&msg as *const libc::msghdr, cmsghdr);
             }

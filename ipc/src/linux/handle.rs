@@ -1,9 +1,9 @@
 use crate::error::HandleError;
 use crate::handle::CrossPlatformHandle;
+use crate::os::errno;
+use core::convert::TryInto;
 use libc::{c_int, fcntl, FD_CLOEXEC, F_GETFD, F_SETFD};
 use log::error;
-use core::convert::TryInto;
-use crate::os::errno;
 
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub struct Handle {
@@ -96,11 +96,7 @@ impl Clone for Handle {
             let res = libc::dup(fd);
             if res < 0 {
                 // TODO: publish a try_clone() method instead, so we can avoid all panics
-                panic!(
-                    "dup() failed on file descriptor {}: error {}",
-                    fd,
-                    errno()
-                );
+                panic!("dup() failed on file descriptor {}: error {}", fd, errno());
             }
             Self::from_raw(res.try_into().unwrap()).unwrap()
         }
