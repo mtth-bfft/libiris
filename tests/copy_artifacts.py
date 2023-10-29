@@ -17,3 +17,5 @@ for line in sys.stdin:
         shutil.copy(obj['executable'], target_dir)
     elif 'bin' in obj.get('target', {}).get('kind', []):
         shutil.copy(obj['executable'], target_dir / 'workers')
+    elif 'cdylib' in obj.get('target', {}).get('kind', []):
+        shutil.copy(obj['executable'], target_dir / 'workers')
