@@ -1,8 +1,8 @@
 use crate::{IrisStatus, IRIS_MAX_HANDLES_PER_POLICY};
 use core::ffi::{c_char, c_void, CStr};
-use iris_ipc::{CrossPlatformHandle, Handle};
+use iris_ipc::{os::Handle, CrossPlatformHandle};
 use iris_policy::Policy;
-pub use iris_policy::{PolicyLogCallback, PolicyRequest, PolicyVerdict};
+pub use iris_policy::{os::PolicyRequest, PolicyLogCallback, PolicyVerdict};
 use std::ffi::CString;
 
 #[cfg(target_os = "linux")]
@@ -67,7 +67,7 @@ pub unsafe extern "C" fn iris_policy_allow_inherit_handle(
     if policy.is_null() {
         return IrisStatus::InvalidArguments;
     }
-    let handle = match Handle::new(handle) {
+    let handle = match Handle::from_raw(handle) {
         Ok(h) => h,
         Err(e) => return IrisStatus::from(e),
     };

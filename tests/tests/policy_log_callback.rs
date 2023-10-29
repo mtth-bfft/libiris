@@ -1,9 +1,8 @@
-use common::{
-    common_test_setup, get_worker_abs_path, open_tmp_file, os::wait_for_worker_exit, read_tmp_file,
-};
+use common::os::{downcast_to_handle, wait_for_worker_exit};
+use common::{common_test_setup, get_worker_abs_path, open_tmp_file, read_tmp_file};
 use iris_broker::{ProcessConfig, Worker};
-use iris_ipc::downcast_to_handle;
-use iris_policy::{Policy, PolicyRequest, PolicyVerdict};
+use iris_policy::os::PolicyRequest;
+use iris_policy::{Policy, PolicyVerdict};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 

@@ -1,5 +1,5 @@
 use core::ffi::c_char;
-use iris_policy::PolicyRequest;
+use iris_policy::os::PolicyRequest;
 use std::ffi::CString;
 use winapi::shared::ntdef::ULONG;
 use winapi::um::winnt::ACCESS_MASK;

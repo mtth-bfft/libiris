@@ -33,7 +33,6 @@ pub enum IpcError<'a> {
     },
     InternalSerializationError {
         description: &'a str,
-        payload: &'a str,
     },
     InternalDeserializationError {
         description: &'a str,
@@ -48,7 +47,7 @@ pub enum IpcError<'a> {
     },
 }
 
-impl From<HandleError> for IpcError<'_> {
+impl From<HandleError> for IpcError<'static> {
     fn from(e: HandleError) -> Self {
         match e {
             HandleError::InvalidHandleValue { raw_value } => {
@@ -59,8 +58,8 @@ impl From<HandleError> for IpcError<'_> {
                 os_code,
                 ..
             } => Self::InternalOsOperationFailed {
-                os_code,
                 description,
+                os_code,
             },
         }
     }

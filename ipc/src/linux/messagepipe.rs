@@ -1,9 +1,9 @@
 use crate::error::IpcError;
-use crate::handle::CrossPlatformHandle;
 use crate::messagepipe::CrossPlatformMessagePipe;
 use crate::os::errno;
-use crate::os::handle::Handle;
 use core::ptr::null_mut;
+use iris_policy::CrossPlatformHandle;
+use iris_policy::os::Handle;
 use libc::{c_int, c_void};
 
 // This call is just a C arithmetic macro translated into rust, in practice it's safe (at least in this libc release)
@@ -35,8 +35,8 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                 });
             }
             (
-                Handle::new(socks[0] as u64).unwrap(),
-                Handle::new(socks[1] as u64).unwrap(),
+                Handle::from_raw(socks[0] as u64).unwrap(),
+                Handle::from_raw(socks[1] as u64).unwrap(),
             )
         };
         Ok((Self { fd: fd0 }, Self { fd: fd1 }))
@@ -141,7 +141,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
                     &mut aligned as *mut _ as *mut _,
                     std::mem::size_of_val(&aligned),
                 );
-                handle = match Handle::new(aligned as u64) {
+                handle = match Handle::from_raw(aligned as u64) {
                     Ok(h) => Ok(Some(h)),
                     Err(e) => Err(IpcError::from(e)),
                 };
@@ -172,7 +172,7 @@ impl CrossPlatformMessagePipe for OSMessagePipe {
     ) -> Result<(), IpcError<'a>> {
         // This call is just a C arithmetic macro translated into rust, in practice it's safe (at least in this libc release)
         let cmsg_space = unsafe { libc::CMSG_SPACE(std::mem::size_of::<c_int>() as u32) } as usize;
-        let mut cbuf = vec![0u8; cmsg_space];
+        let mut cbuf = [0u8; cmsg_space];
         // All these calls are libc calls (which are either C arithmetic macros translated into rust, in practice safe for this libc release),
         // or pointer dereferencing which are safe as long as the libc macros get the arithmetic right and as long as we keep the
         // `msg` variable alive and its contents valid

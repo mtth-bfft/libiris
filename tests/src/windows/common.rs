@@ -6,12 +6,13 @@
 
 use core::ptr::null_mut;
 use iris_broker::Worker;
-use iris_ipc::{CrossPlatformHandle, Handle};
+use iris_ipc::{os::Handle, CrossPlatformHandle, HandleError};
 use log::{debug, info, warn};
 use std::convert::TryInto;
 use std::ffi::CString;
 use std::fs::File;
 use std::os::windows::io::AsRawHandle;
+use std::os::windows::prelude::IntoRawHandle;
 use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{BYTE, DWORD};
 use winapi::shared::ntdef::{HANDLE, NTSTATUS, PULONG, PVOID, PWSTR, ULONG, USHORT, WCHAR};
@@ -547,7 +548,7 @@ pub fn wait_for_worker_exit(worker: &Worker) -> Result<u64, String> {
                 GetLastError()
             ));
         }
-        Handle::new(res as u64).unwrap()
+        Handle::from_raw(res as u64).unwrap()
     };
     let mut exit_code: DWORD = STILL_ACTIVE;
     loop {
@@ -570,5 +571,24 @@ pub fn wait_for_worker_exit(worker: &Worker) -> Result<u64, String> {
                 unsafe { GetLastError() }
             ));
         }
+    }
+}
+
+pub fn downcast_to_handle<T: IntoRawHandle>(resource: T) -> Handle {
+    unsafe { Handle::from_raw(resource.into_raw_handle() as u64) }
+        .expect("unable to downcast to handle")
+}
+
+pub fn set_unmanaged_handle_inheritable<T: AsRawHandle>(
+    resource: &T,
+    allow_inherit: bool,
+) -> Result<(), HandleError> {
+    // This block is safe because the file descriptor held by `resource` lives at least
+    // for the duration of the block, and we don't take ownership of it
+    unsafe {
+        let mut handle = Handle::from_raw(resource.as_raw_handle() as u64)?; // returning here is safe since the handle was not created thus won't be drop()ped
+        let res = handle.set_inheritable(allow_inherit);
+        let _ = handle.into_raw(); // leak voluntarily
+        res
     }
 }

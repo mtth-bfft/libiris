@@ -1,6 +1,6 @@
 use crate::error::PolicyError;
 use core::ptr::null_mut;
-use iris_ipc::{CrossPlatformHandle, Handle};
+use iris_ipc::{os::Handle, CrossPlatformHandle};
 use std::ffi::CStr;
 use winapi::shared::minwindef::DWORD;
 use winapi::shared::ntdef::HANDLE;
@@ -100,7 +100,7 @@ fn get_current_user_sid() -> String {
                 GetLastError()
             );
         }
-        Handle::new(handle as u64).unwrap()
+        Handle::from_raw(handle as u64).unwrap()
     };
     let buf = unsafe {
         let mut buf_size: DWORD = 0;

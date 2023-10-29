@@ -4,7 +4,7 @@ use core::ffi::{c_void, CStr};
 use libc::c_int;
 
 // Hostname set in the sandbox when UTS namespaces can be used.
-const UTS_HOSTNAME: &[u8; 7] = b"sandbox";
+const UTS_HOSTNAME: &[u8; 8] = b"sandbox\x00";
 
 pub struct EntrypointParameters {
     pub debug_fd: Option<c_int>,

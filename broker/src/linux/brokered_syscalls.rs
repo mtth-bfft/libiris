@@ -1,31 +1,16 @@
-use crate::os::messages::{IPCRequest, IPCResponse};
-use iris_ipc::{CrossPlatformHandle, Handle};
-use iris_policy::{Policy, PolicyRequest, PolicyVerdict};
+use iris_ipc::{os::Handle, CrossPlatformHandle};
+use iris_ipc_messages::os::IPCResponse;
+use iris_policy::{os::PolicyRequest, Policy, PolicyVerdict};
 use libc::c_int;
-use log::warn;
 use std::convert::TryInto;
 use std::ffi::CString;
 
-pub(crate) fn handle_os_specific_request(
-    request: IPCRequest,
+pub(crate) fn proxied_open_file<'a>(
     policy: &Policy,
-) -> (IPCResponse, Option<Handle>) {
-    match request {
-        IPCRequest::OpenFile { path, flags } => handle_open_file(policy, path, flags),
-        IPCRequest::Syscall { nb, args, ip } => handle_syscall(policy, nb, args, ip),
-        unknown => {
-            warn!("Unexpected request from worker: {:?}", unknown);
-            (IPCResponse::SyscallResult(-(libc::EINVAL as i64)), None)
-        }
-    }
-}
-
-pub(crate) fn handle_open_file(
-    policy: &Policy,
-    path: String,
+    path: &str,
     flags: c_int,
-) -> (IPCResponse, Option<Handle>) {
-    let req = PolicyRequest::FileOpen { path: &path, flags };
+) -> (IPCResponse<'a>, Option<Handle>) {
+    let req = PolicyRequest::FileOpen { path, flags };
     if policy.evaluate_request(&req) != PolicyVerdict::Granted {
         return (IPCResponse::SyscallResult((-libc::EACCES).into()), None);
     }
@@ -44,17 +29,17 @@ pub(crate) fn handle_open_file(
                 return (IPCResponse::SyscallResult(-err), None);
             }
         };
-        Handle::new(fd).unwrap()
+        Handle::from_raw(fd).unwrap()
     };
     (IPCResponse::SyscallResult(0), Some(handle))
 }
 
-pub(crate) fn handle_syscall(
+pub(crate) fn proxied_syscall<'a>(
     policy: &Policy,
     nb: i64,
     args: [i64; 6],
     ip: i64,
-) -> (IPCResponse, Option<Handle>) {
+) -> (IPCResponse<'a>, Option<Handle>) {
     let req = PolicyRequest::Syscall { nb, args, ip };
     policy.evaluate_request(&req);
     (IPCResponse::SyscallResult(-(libc::ENOSYS as i64)), None)

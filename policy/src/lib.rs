@@ -9,9 +9,7 @@ pub use policy::{Policy, PolicyLogCallback, PolicyVerdict};
 
 #[cfg_attr(target_os = "linux", path = "linux/mod.rs")]
 #[cfg_attr(target_os = "windows", path = "windows/mod.rs")]
-mod os;
-
-pub use os::policy::PolicyRequest;
+pub mod os;
 
 // Common utils
 

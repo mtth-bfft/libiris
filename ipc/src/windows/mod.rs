@@ -1,2 +1,5 @@
-pub(crate) mod handle;
-pub(crate) mod messagepipe;
+mod channel;
+mod handle;
+
+pub use channel::IpcChannel;
+pub use handle::Handle;

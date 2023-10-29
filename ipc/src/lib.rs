@@ -1,21 +1,26 @@
+#![no_std]
+
 // Common modules
 
+mod channel;
 mod error;
 mod handle;
-mod ipc;
-mod messagepipe;
+mod stackbuffer;
 
+pub use channel::CrossPlatformIpcChannel;
 pub use error::{HandleError, IpcError};
 pub use handle::CrossPlatformHandle;
-pub use ipc::IPCMessagePipe;
-pub use messagepipe::CrossPlatformMessagePipe;
+pub use stackbuffer::StackBuffer;
 
 // OS-specific modules
 
 #[cfg_attr(target_os = "linux", path = "linux/mod.rs")]
 #[cfg_attr(target_os = "windows", path = "windows/mod.rs")]
-mod os;
+pub mod os;
 
-pub use os::handle::Handle;
-pub use os::handle::{downcast_to_handle, set_unmanaged_handle_inheritable};
-pub use os::messagepipe::OSMessagePipe;
+// Name of the environment variable used to pass the IPC socket handle/file
+// descriptor number to child processes
+pub const IPC_HANDLE_ENV_NAME: &str = "SANDBOX_IPC_HANDLE";
+
+// Maximum number of bytes a serialized IPC message can take.
+pub const IPC_MESSAGE_MAX_SIZE: usize = 64 * 1024;

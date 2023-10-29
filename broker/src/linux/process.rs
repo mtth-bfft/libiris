@@ -3,7 +3,7 @@ use crate::process::CrossPlatformSandboxedProcess;
 use crate::ProcessConfig;
 use core::ffi::c_void;
 use core::ptr::null;
-use iris_ipc::{CrossPlatformHandle, Handle};
+use iris_ipc::{os::Handle, CrossPlatformHandle};
 use iris_policy::Policy;
 use libc::c_int;
 use linux_entrypoint::{clone_entrypoint, EntrypointParameters};
@@ -43,8 +43,8 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
                 });
             }
             (
-                Handle::new(clone_error_pipes[0].try_into().unwrap()).unwrap(),
-                Handle::new(clone_error_pipes[1].try_into().unwrap()).unwrap(),
+                Handle::from_raw(clone_error_pipes[0].try_into().unwrap()).unwrap(),
+                Handle::from_raw(clone_error_pipes[1].try_into().unwrap()).unwrap(),
             )
         };
         child_pipe.set_inheritable(false)?; // set the pipe as CLOEXEC so it gets closed on successful execve(), which we can detect

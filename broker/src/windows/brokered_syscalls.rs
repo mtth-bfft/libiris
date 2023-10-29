@@ -1,15 +1,15 @@
 use crate::os::get_proc_address::get_proc_address;
-use crate::os::messages::{IPCRequest, IPCResponse};
 use core::ptr::null_mut;
-use iris_ipc::{CrossPlatformHandle, Handle};
-use iris_policy::{Policy, PolicyRequest, PolicyVerdict};
-use log::error;
+use iris_ipc::os::Handle;
+use iris_ipc::CrossPlatformHandle;
+use iris_ipc_messages::os::IPCResponse;
+use iris_policy::{os::PolicyRequest, Policy, PolicyVerdict};
 use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::ntdef::{
     InitializeObjectAttributes, NTSTATUS, NT_SUCCESS, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE,
     PVOID, ULONG, UNICODE_STRING,
 };
-use winapi::shared::ntstatus::{STATUS_ACCESS_DENIED, STATUS_NOT_SUPPORTED};
+use winapi::shared::ntstatus::STATUS_ACCESS_DENIED;
 use winapi::um::winbase::FILE_FLAG_OPEN_REPARSE_POINT;
 use winapi::um::winnt::{
     SecurityIdentification, ACCESS_MASK, HANDLE, LARGE_INTEGER, LONGLONG, REG_OPENED_EXISTING_KEY,
@@ -54,55 +54,7 @@ type PNtOpenKey = unsafe extern "system" fn(
     object_attributes: *mut OBJECT_ATTRIBUTES,
 ) -> NTSTATUS;
 
-pub(crate) fn handle_os_specific_request(
-    request: IPCRequest,
-    policy: &Policy,
-) -> (IPCResponse, Option<Handle>) {
-    match request {
-        IPCRequest::NtCreateFile {
-            desired_access,
-            path,
-            allocation_size,
-            file_attributes,
-            share_access,
-            create_disposition,
-            create_options,
-            ea,
-        } => handle_ntcreatefile(
-            policy,
-            desired_access,
-            &path,
-            allocation_size,
-            file_attributes,
-            share_access,
-            create_disposition,
-            create_options,
-            &ea,
-        ),
-        IPCRequest::NtCreateKey {
-            desired_access,
-            path,
-            title_index,
-            class,
-            create_options,
-            do_create,
-        } => handle_ntcreatekey(
-            policy,
-            desired_access,
-            path,
-            title_index,
-            class,
-            create_options,
-            do_create,
-        ),
-        unknown => {
-            error!("Unexpected request from worker: {:?}", unknown);
-            (IPCResponse::SyscallResult(STATUS_NOT_SUPPORTED), None)
-        }
-    }
-}
-
-fn handle_ntcreatefile(
+pub(crate) fn proxied_ntcreatefile(
     policy: &Policy,
     desired_access: ACCESS_MASK,
     path: &str,
@@ -173,7 +125,7 @@ fn handle_ntcreatefile(
             (
                 status,
                 io_status.Information,
-                Some(Handle::new(handle as u64).unwrap()),
+                Some(Handle::from_raw(handle as u64).unwrap()),
             )
         } else {
             (status, io_status.Information, None)
@@ -182,17 +134,17 @@ fn handle_ntcreatefile(
     (IPCResponse::NtCreateFile { io_status, code }, handle)
 }
 
-fn handle_ntcreatekey(
+pub(crate) fn proxied_ntcreatekey(
     policy: &Policy,
     desired_access: ACCESS_MASK,
-    path: String,
+    path: &str,
     title_index: ULONG,
-    class: Option<String>,
+    class: Option<&str>,
     create_options: ULONG,
     do_create: bool,
 ) -> (IPCResponse, Option<Handle>) {
     let req = PolicyRequest::RegKeyOpen {
-        path: &path,
+        path,
         desired_access,
         create_options,
         do_create,
@@ -207,7 +159,7 @@ fn handle_ntcreatekey(
         MaximumLength: unicode_bytes as u16,
         Buffer: unicode_name.as_mut_ptr(),
     };
-    let mut class_unicode = if let Some(ref s) = class {
+    let mut class_unicode = if let Some(s) = class {
         s.encode_utf16().chain(std::iter::once(0)).collect()
     } else {
         vec![0]
@@ -254,7 +206,7 @@ fn handle_ntcreatekey(
                 (
                     disposition,
                     status,
-                    Some(Handle::new(handle as u64).unwrap()),
+                    Some(Handle::from_raw(handle as u64).unwrap()),
                 )
             } else {
                 (0, status, None)
@@ -274,7 +226,7 @@ fn handle_ntcreatekey(
                 (
                     REG_OPENED_EXISTING_KEY,
                     status,
-                    Some(Handle::new(handle as u64).unwrap()),
+                    Some(Handle::from_raw(handle as u64).unwrap()),
                 )
             } else {
                 (0, status, None)
