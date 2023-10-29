@@ -1,6 +1,11 @@
 use iris_ipc::HandleError;
 use iris_policy::PolicyError;
 
+#[cfg(target_os = "windows")]
+pub(crate) fn get_last_error() -> u32 {
+    unsafe { winapi::um::errhandlingapi::GetLastError() }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrokerError {
     ConflictingEnvironmentVariable { name: String },
