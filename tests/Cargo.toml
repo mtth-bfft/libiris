@@ -9,6 +9,7 @@ iris-broker = { path = "../broker" }
 iris-worker = { path = "../worker" }
 iris-policy = { path = "../policy" }
 iris-ipc = { path = "../ipc" }
+dummy-library = { path = "./dummy-library" }
 log = "0.4.17"
 simple_logger = "2.3.0"
 libc = "0.2"

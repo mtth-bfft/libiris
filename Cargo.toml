@@ -10,6 +10,7 @@ members = [
     "linux-entrypoint",
     "bindings/C/broker",
     "bindings/C/worker",
+    "tests/dummy-library",
 ]
 
 [profile.release]
