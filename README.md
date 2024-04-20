@@ -24,7 +24,7 @@ This repository contains:
 
 You will need:
 - a stable Rust toolchain;
-- on Linux, libseccomp, libcap, and their development package (e.g. `apt install libcap2 libcap-dev libseccomp libseccomp-dev` if you are running Debian);
+- on Linux, libseccomp, libcap, and their development package (e.g. `apt install libcap2 libcap-dev libseccomp2 libseccomp-dev` if you are running Debian);
 - this repository.
 
 Then a simple `cargo build` should be all it takes (otherwise, open an issue).
