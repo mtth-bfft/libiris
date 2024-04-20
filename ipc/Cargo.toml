@@ -3,6 +3,7 @@ name = "iris-ipc"
 version = "0.5.0"
 authors = ["Matthieu Buffet <matthieu@buffet.re>"]
 edition = "2021"
+publish = false
 
 [dependencies]
 serde = { version = "1.0.125", default-features = false, features = ["derive"] }

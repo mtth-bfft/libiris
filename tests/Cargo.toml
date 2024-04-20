@@ -3,6 +3,7 @@ name = "iris-integration-tests"
 version = "0.1.0"
 authors = ["Matthieu Buffet <matthieu@buffet.re>"]
 edition = "2021"
+publish = false
 
 [dependencies]
 iris-broker = { path = "../broker" }
