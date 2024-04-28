@@ -69,7 +69,7 @@ impl CrossPlatformSandboxedProcess for OSSandboxedProcess {
             .map(|n| n.as_raw().try_into().unwrap())
             .collect();
         let uid = unsafe { libc::getuid() };
-        let gid = unsafe { libc::getuid() };
+        let gid = unsafe { libc::getgid() };
         let uid_map = CString::new(format!("{uid} {uid} 1\n")).unwrap();
         let gid_map = CString::new(format!("{gid} {gid} 1\n")).unwrap();
         let entrypoint_params = EntrypointParameters {
