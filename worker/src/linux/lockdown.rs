@@ -23,7 +23,7 @@ const SYS_SECCOMP: i32 = 1;
 static AUDIT_ONLY_MODE: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
-    static IN_SIGSYS_HANDLER: bool = false;
+    static IN_SIGSYS_HANDLER: bool = const { false };
 }
 
 // TODO: use a thread_local!{} pipe, and a global mutex-protected pipe to request new thread-specific ones

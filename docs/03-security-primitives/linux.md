@@ -179,6 +179,25 @@ Introduced in Linux 2.6.24 (2008-01)
 
 ## Seccomp
 
-System call filtering is highly dependent on whether libraries used by the program have been designed to run in sandboxes: if their code expects a system call to never return an error (sometimes very reasonably, because the associated kernel code cannot fail), they might behave unexpectedly or crash, potentially later on, in ways hard to debug. An ubiquitous example is the C library, which depends on e.g. the futex system call, making it impossible to restrict, even if it is otherwise not required and it has allowed sandbox escapes in the past (see CVE-2021-3153).
+System call can be allowed or denied in the kernel for an entire process, using one or more seccomp filter(s). It is actually a per-thread setting, but allowing more system calls in one thread and not another would not make much sense since threads can control each other's execution within a process.
 
-Moreover, some system calls perform multiplexing over complex parameters (e.g. `ioctl` can perform dozens of types of different actions), and even behave differently depending on memory structures passed by pointers (not in system call registers directly), making restricting these system calls impossible in seccomp.
+On i686 kernels, system calls can be made through:
+- the older `int $0x80` instruction, which calls into the kernel directly from application code;
+- since Linux 2.5, the kernel loads an ELF called a vDSO (Virtual Dynamic Shared Object) and passes pointers to it in a `AT_SYSINFO_EHDR` entry in the auxiliary vector passed to the program's `main()`. The vDSO does not exist on disk, but can be seen in `/proc/<pid>/maps` as two consecutive readable and executable pages marked `[vdso]`. The vDSO exports a `__kernel_vsyscall` function, which indirectly triggers a system call through the most appropriate instruction for the current CPU (`int $0x80`, `sysenter`, or `syscall`).
+
+On x86-64 kernels, system calls can be made through:
+- for `gettimeofday()`, `time()` and `getcpu()`, the vsyscall memory area at 0xffffffffff600000 if the kernel was built without `CONFIG_LEGACY_VSYSCALL_NONE` and if `vsyscall=none` is not passed on the commandline.
+    - if built with `CONFIG_LEGACY_VSYSCALL_NATIVE` or if `vsyscall=native` is passed on the commandline, actual instructions are mapped and executed at the fixed address;
+    - if built with `CONFIG_LEGACY_VSYSCALL_EMULATE` or if `vsyscall=emulate` is passed, the page will be mapped but without its executable bit, and the kernel will handle page faults and transform them into system calls.
+- `int $0x80` directly from application code like on i686;
+- `__kernel_vsyscall` from the vDSO like on i686.
+
+System call numbers are backward-compatible, and thus are garanteed not to change. However, they differ from one architecture and ABI to another.
+
+Programs compiled for i686 can be run on x86-64 kernels, and can make system calls via `int $0x80` or `sysenter`. Also note that on x86-64 kernels, three ABIs can be used: x86-64, i686, and x32. The latter is a trade-off to use the new registers and capabilities of x86-64 but keep pointers on 4 bytes to optimize program space and run speed.
+
+Many usability problems often arise when starting seccomp filtering, and can discourage developers from enforcing even a basic seccomp policy;
+- code often needs to be patched to become compatible: if one does not check for errors (e.g. sometimes very reasonably because the system call code is documented as "always succeeds") or does not handle errors gracefully (e.g. because it was not designed with seccomp in mind), crashes will occur with obscure generic errors, possibly later in its execution (which makes debugging much harder);
+- filtering is done on an entire process, and libraries have no standard to specify their "minimum required seccomp filter to work", so application developers have to maintain these filters for library developers (which will necessarily lead to mistakes at some point);
+- since filtering is done on an entire process, if a single library is not compatible, no filtering can be done at all: a single library requiring a denied syscall might crash the entire process;
+- some binaries may require multiple syscall ABIs.
