@@ -34,8 +34,8 @@ impl CrossPlatformIpcChannel for IpcChannel {
     fn new() -> Result<(Self, Self), IpcError<'static>> {
         let pid: DWORD = unsafe { GetCurrentProcessId() };
         let mut pipe_id = 0;
-        let mut pipe_path = StackBuffer::<100>::default();
         loop {
+            let mut pipe_path = StackBuffer::<100>::default();
             pipe_id += 1;
             if write!(&mut pipe_path, "\\\\.\\pipe\\ipc-{}-{}\x00", pid, pipe_id).is_err() {
                 return Err(IpcError::InternalOsOperationFailed {
