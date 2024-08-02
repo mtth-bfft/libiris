@@ -80,16 +80,6 @@ test_win10_1507_x86_64:
   script:
     - tests/run.ps1 test-binaries-x86_64-pc-windows-msvc-win10/
 
-test_win7_x64:
-  tags:
-    - win7
-    - x64
-  needs:
-    - job: build_windows
-      artifacts: true
-  script:
-    - tests/run.ps1 test-binaries-x86_64-pc-windows-msvc-win10/
-
 test_debian11_i686:
   tags:
     - debian11
