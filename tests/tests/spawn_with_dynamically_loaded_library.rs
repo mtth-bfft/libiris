@@ -16,10 +16,23 @@ fn spawn() {
         .redirect_stderr(Some(&tmpout))
         .unwrap();
 
-    // Windows searches the .exe's directory for DLLs, but Unix dynamic
-    // linkers don't. Tell them manually that the library is in the same directory.
-    #[cfg(target_family = "unix")]
-    {
+    // Windows searches the worker EXE's directory for DLLs. However, dummy_library.dll
+    // is not a first-class build target, so it ends up in target\<profile>\deps instead
+    // of target\<profile>\ . Copy it, so that it is found and so that its ACL is patched
+    // to allow the worker to load it.
+    if cfg!(windows) {
+        let lib_dir = std::path::Path::new(worker_binary.to_str().unwrap())
+            .parent()
+            .unwrap();
+        let target_path = lib_dir.join("dummy_library.dll");
+        let dll_path = lib_dir.join("deps").join("dummy_library.dll");
+        if !target_path.is_file() {
+            std::fs::copy(dll_path, target_path).unwrap();
+        }
+    }
+    // Unix dynamic linkers don't search the executable's directory. Tell them manually
+    // that the library is in the same directory.
+    else {
         let lib_dir = std::path::Path::new(worker_binary.to_str().unwrap())
             .parent()
             .unwrap()
