@@ -135,10 +135,18 @@ lazy_static! {
             if create.is_null() || delete.is_null() {
                 None
             } else {
-                let create =
-                    unsafe { std::mem::transmute::<_, CreateAppContainerProfileFn>(create) };
-                let delete =
-                    unsafe { std::mem::transmute::<_, DeleteAppContainerProfileFn>(delete) };
+                let create = unsafe {
+                    std::mem::transmute::<
+                        *mut winapi::shared::minwindef::__some_function,
+                        CreateAppContainerProfileFn,
+                    >(create)
+                };
+                let delete = unsafe {
+                    std::mem::transmute::<
+                        *mut winapi::shared::minwindef::__some_function,
+                        DeleteAppContainerProfileFn,
+                    >(delete)
+                };
                 Some(AppContainerProfileFunctions { create, delete })
             }
         }
