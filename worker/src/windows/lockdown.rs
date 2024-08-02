@@ -10,6 +10,7 @@ use iris_ipc_messages::os::{IPCRequest, IPCResponse};
 use log::{debug, info};
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use winapi::shared::basetsd::ULONG_PTR;
@@ -548,7 +549,17 @@ extern "system" fn hook_ntcreatefile(
     } else {
         unsafe { *(*allocation_size).QuadPart() }
     };
-    let ea = unsafe { std::slice::from_raw_parts(ea_buffer as *const u8, ea_length as usize) };
+    let ea = unsafe {
+        std::slice::from_raw_parts(
+            // from_raw_parts() requires a non-null pointer, even for an empty slice when no EA is set.
+            if ea_buffer.is_null() {
+                NonNull::<u8>::dangling().as_ptr()
+            } else {
+                ea_buffer as *const u8
+            },
+            ea_length as usize,
+        )
+    };
     let request = IPCRequest::NtCreateFile {
         desired_access,
         path: &path,
