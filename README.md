@@ -1,36 +1,39 @@
-libiris
-=======
+*Sandboxing* has multiple definitions in the information security field, we use it here to mean reducing your program's *ambient authority* (what it can legitimately do) and the *attack surface* exposed to it (the amount of code it could trigger bugs in, to increase its ambient authority).
+This project is intended as a cross-platform sandboxing development harness, with a low barrier to entry. It should help developers who want to inventory which resources their program needs, and split it in coherent chunks (sub-processes) with varying ambient authority. It has not been audited and has not received much community feedback, so *it should not be used for production*.
 
-| Build | Tests                      |
-|-------|----------------------------|
-| ![Linux](https://gitlab.com/libiris/libiris/badges/main/pipeline.svg?ignore_skipped=true&style=flat-square&job=build_linux&key_text=Linux&key_width=60) | ![Debian 11](https://gitlab.com/libiris/libiris/badges/main/pipeline.svg?ignore_skipped=true&style=flat-square&job=test_linux&key_text=Debian%2011&key_width=70) |
-| ![Windows](https://gitlab.com/libiris/libiris/badges/main/pipeline.svg?ignore_skipped=true&style=flat-square&job=build_windows&key_text=Windows&key_width=60) | ![7 SP1](https://gitlab.com/libiris/libiris/badges/main/pipeline.svg?ignore_skipped=true&style=flat-square&job=test_win7_x64&key_text=7%20SP1&key_width=70)&nbsp;&nbsp;![7 SP1](https://gitlab.com/libiris/libiris/badges/main/pipeline.svg?ignore_skipped=true&style=flat-square&job=test_win10_latest_x64&key_text=10%2022H2&key_width=70) |
+# Usecase
 
-libiris is a cross-platform sandboxing harness. This project is not a production-ready sandboxing library, instead it aims at being a good development harness for codebases which need modifications or testing in preparation for sandboxing.
+If the software you develop handles untrusted data (a browser rendering a Web page, a game server taking note of player inputs, etc.), that data may trigger bugs in your code and take over control of your software. If your software is running with the default ambient authority inherited from the user, the attacker has automatically gained access to the user's files and can spy on anything they do. To avoid that, you want to inventory parts of your software most likely to have bugs, and have them run with fewer access rights and fewer accessible APIs. This means you have to simultaneously:
+- understand sandboxing goals and methodology;
+- get other developers on board, despite their rightful concerns for performance or code complexity;
+- change your software architecture to split it into multiple sub-processes, so you have to move to remote procedure calls, sharing state, ensuring proper locking, etc.;
+- learn about the different mechanisms offered by the operating system(s) you target, all of which have different APIs, sometimes conflict in their design choices, and sometimes rely on undocumented quirks;
+- look at the small volume of documentation of existing projects to see if they fit your needs, then maybe try to integrate them (most complex projects require learning how to use another build system);
+- all that before having a working prototype.
 
-Sandboxing means reducing your program's *ambient authority* (what it can legitimately do) and the *attack surface* exposed to it (the amount of code it can trigger bugs in, to increase its ambient authority). This requires understanding internals about each OS and platform your project targets, and requires splitting your program into multiple processes (for reasons detailed in the [docs](./docs/)). This takes a lot of time and effort, and has no user-visible added value on the short term. The goal of this project is to reduce entry costs, so that more developers try to sandbox their projects, and to document common solutions, so that developers without a security background are incentivized to reuse them instead of starting from scratch.
+The point of this project is to provide both documentation and a development harness to lower the barrier to entry. Hopefully, it can encourage more developers to sandbox their projects and to document common methodologies and solutions.
 
-This repository contains:
+# Contents
 
-* `docs`: documentation is critical for our goals. If the design or implementation of this library, or the design of OS mechanisms is not clear, open an issue
-* `worker`: the library loaded by sandboxed processes (*workers*) when they start
-* `policy`: a crate to specify exactly what a worker can do
-* `broker`: the library which allows creating workers, based on a policy
-* `ipc`: a crate which allows workers to send requests to their broker, and receive resources (when allowed)
-* `linux-entrypoint`: the very first function executed by Linux workers when they start, split off because it needs to be compiled without the Rust standard library (which may be in an inconsistent state after a `fork()`, e.g. due locks held by threads which do not exist anymore)
-* `tests`: an integration test suite for all the crates above
+* [docs](docs/): documentation is critical for our goals. If the design or implementation of this library, or the design of OS mechanisms is not clear, open an issue
+* [policy](policy/): basically a struct storing the allow-list of everything a sandboxed process is allowed to do
+* [broker](broker/): the library which allows creating workers, based on a policy
+* [linux-entrypoint](linux-entrypoint/): on Linux only, the very first function executed after fork()ing into a sandboxed process, split off because it needs to be compiled without the Rust standard library (since `fork()` may cut other threads in the middle of their use of the stdlib, we have to assume they were holding a lock and the stdlib is in an unusable state)
+* [worker](worker/): the library loaded by all sandboxed processes when they start
+* [ipc](ipc/): the library used by workers to send requests to their broker, and receive resources (when allowed)
+* [tests](tests/): an integration test suite for all the crates above
 
 # Compilation
 
 You will need:
-- a stable Rust toolchain;
-- on Linux, libseccomp, libcap, and their development package (e.g. `apt install libcap2 libcap-dev libseccomp2 libseccomp-dev` if you are running Debian);
-- this repository.
+- on Linux, libseccomp, libcap, and their development package (e.g. `apt install libcap2 libcap-dev libseccomp2 libseccomp-dev`);
+- on Windows, Visual Studio (the free Community edition is fine) with the _Desktop C++ Development_ workload;
+- [a stable Rust toolchain](https://rustup.rs/);
+- a local clone of this repository.
 
 Then a simple `cargo build` should be all it takes (otherwise, open an issue).
 
 # Contributing
 
-If you use this project, feedback would be appreciated (to sandbox what, on what kinds of platforms, was something hard to grasp, did you face any integration issue, etc).
-
-Even if you do not use the project, you can help with code reviews and documentation reviews (especially about design choices and OS isolation internals).
+Open an issue with a description of any problem you find, or contribute to improving the documentation of sandboxing mechanisms.
+If you use this project, feedback would be appreciated (did it help in sandboxing a new software project, was it easy to use, did you face any issue to move to a production-ready sandbox, etc.)
