@@ -1,0 +1,25 @@
+A program can become compromised if it handles data from untrusted sources, crafted by attackers in unexpected ways in order to alter all or part of the intended program behavior (e.g. [a multimedia player parsing subtitles from the Internet to display them](https://blog.checkpoint.com/2017/05/23/hacked-in-translation/)). It can also become compromised as a result of supply-chain attacks, in which case it can act maliciously even before handling any input. A good first step before considering sandboxing is to check whether you adhere to [good practices](prerequisites.md) when building your software.
+
+**Sandboxing** has multiple definitions in the information security field, we use it here to mean both:
+
+1. reducing your program's [**ambient authority**](https://www.usenix.org/legacy/event/sec10/tech/full_papers/Watson.pdf), that is everything it can legitimately do just because of its identity: what files it can open, connect to the network, etc. Reducing ambient authority to the least a program needs in order to function is the **principle of least privilege**, a more general security best practice;
+
+2. reducing the **attack surface** reachable from your program. The attack surface is every line of code an attacker inside the sandbox can trigger (directly, or indirectly by a chain of events) on the outside, to gain more ambient authority (a **sandbox escape**):
+    - in another process, via remote procedure calls: some [D-Bus services on Linux](https://github.com/netblue30/firejail/issues/796) or [ALPC servers](https://pacsec.jp/psj17/PSJ2017_Rouault_Imbert_alpc_rpc_pacsec.pdf) on Windows run as administrator;
+    - in the kernel, via system calls: for instance, [CVE-2016-5195](https://github.com/dirtycow/dirtycow.github.io/wiki/VulnerabilityDetails) in Linux allowed full system compromise using system calls all users can trigger (`open(/proc/self/mem), open(/etc/passwd, O_RDONLY), mmap(), madvise()`) no matter their identity;
+    - in another computer, via the network: for instance, CVE-2017-0144 or [CVE-2020-1472](https://msrc.microsoft.com/update-guide/en-us/vulnerability/CVE-2020-1472) allow a full Windows system compromise from any network neighbour able to send network packets.
+
+Reducing the ambient authority will often, as an added benefit, also reduce the attack surface (e.g. by removing the possibility of exploiting vulnerabilities in code located after a privilege check). Nevertheless, the two work orientations are distinct and necessary: if all an attacker needs to do to escape is to chain a second vulnerability in decades-old unmaintained code, reducing ambient authority will not be enough to stop them. Attack surface reduction should prevent these chained attacks, as a defense in depth.
+
+There are two types of sandboxing:
+- **application-aware**: the app starts by inheriting a default ambient authority and attack surface, and creates one or more restricted child process. The application code needs to be adapted to use sandboxing primitives offered by the OS;
+- **application-wide**: the app starts and runs as a whole with reduced ambient authority and attack surface. This can be accomplished via a launcher that handles setting up the execution context (e.g. see [Firejail](previous-work.md)) or via a kernel-enforced mechanism (e.g. see [mandatory access control](previous-work.md)).
+
+Application-wide sandboxing has limits: some applications are well suited for it, some not at all. For instance, a multimedia player like VLC can read files in home directories (to play them), can access the network (to stream a movie), can access a webcam and microphone (to record it) in which case it will also write to home directories (to save the recording), can access low-level graphics rendering APIs (to accelerate decoding). If all these actions are in the same process, almost no restriction can be imposed on it without breaking functionalities.
+
+Application-aware sandboxing can be done to various extents, by splitting code into more or fewer sandboxes with different access rights. Theoretically, each piece of code could run in a sandbox with exactly the privileges it requires. In practice, each split costs hardware resources (processor time, memory), requires introducing communication channels which need to be developped and tested, may introduce security vulnerabilities, and may even introduce too much performance overhead just to communicate back and forth.
+
+Finally, a sandbox can strive to also have the following qualities:
+- have developer-friendly documentation with examples, and a good community to support it, so that it is easy to integrate;
+- be comprehensively documented and rely on supported OS security mechanisms so that it is easy to audit and so that vulnerabilities are fixed promptly;
+- not require modifying the end-user system's logic or settings (e.g. adding a kernel driver, modifying file access control lists) or change behaviour of any other program (e.g. modify settings, even if they are local to the session) so that it may run on a wider range of systems.

@@ -10,10 +10,6 @@ To do so, system call locations and types must first be inventoried. This prereq
 Some ideas include embedding all allowed system call locations in the executable file, then filter at kernel level to only allow these call addresses and syscalls[5]. This idea could nowadays be implemented using a seccomp BPF filter (which can perform comparisons on call address and system call type) to avoid using custom kernel patches. However, this requires an inventory of system calls not known in advance (e.g. when dynamically linking to a library provided by the system's package manager), and scanning memory to find system call instructions would require handling cases of . - it requires a patched kernel and dynamic linker, and there are no such patches available to the public for popular OSes like GNU/Linux or Windows;
 - in the Windows ecosystem, system calls are seldom performed directly in assembly: instead, programs (and malicious shellcodes) call into ntdll.dll, and thus filtering based on call address is not enough (stack analysis would be required, and even then, it can be spoofed since it is stored in userland memory ranges);
 
-=> autant résoudre le problème plus générique d'empêcher d'avoir du code dynamique, nan?
-
-=> Concept généralisé en seccomp, pour empêcher tout code dynamique par défaut (incluant les instructions de syscall, donc)
-
 ## Capsicum
 
 This project was designed by researchers from the University of Cambridge in 2010[3]. Its goal is to add extensions to system calls and libraries exposed to unprivileged processes, more suitable if they want to sandbox themselves. These extensions were merged into FreeBSD 9.0, but unfortunately the Linux integration project has been discontinued (the last patchset[2] for Linux 4.11 has not been updated for four years, and the original website[2] is no longer online).
@@ -40,10 +36,6 @@ This project, written in C and assembly and started by Quarkslab, inserts a mini
 
 Since this approach uses a custom Linux hypervisor, it requires administrator privileges to load kernel modules, and does not work for e.g. Windows, which is not compatible with our end-user requirements.
 
-## TODO
-
-WebKitGTK, Flatpak and GNOME
-
 ## Chromium Web browser
 
         - https://chromium.googlesource.com/chromium/src.git/+/master/docs/linux/sandboxing.md
@@ -64,13 +56,17 @@ WebKitGTK, Flatpak and GNOME
 
         - https://github.com/openssh/openssh-portable/blob/master/sandbox-seccomp-filter.c
 
+## WebKitGTK
+
+## GNOME
+
 ## Apple's SecurityServer
 
 ## SELinux sandbox context
 
 ## BubbleWrap
 
-##  Flatpak
+## Flatpak
 
 ## Firejail
 
@@ -93,4 +89,3 @@ Low integrity level was used for Internet Explorer's "Protected Mode", without b
     [4] https://www.freebsd.org/cgi/man.cgi?query=rights&sektion=4
     [5] https://www.usenix.org/legacy/publications/library/proceedings/sec05/tech/full_papers/linn/linn.pdf
     [6] https://www.researchgate.net/publication/220796742_Detection_of_injected_dynamically_generated_and_obfuscated_malicious_code/
-

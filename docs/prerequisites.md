@@ -1,21 +1,15 @@
 # Prerequisites
 
-Designing a project to be sandboxed, or retrofitting a sandbox in an existing project, are time consuming projects with lots of implications. Before diving in it, one should review existing mitigation techniques in compile-time, link-time or run-time hardening which may give a better return on time invested.
+Designing a project to be sandboxed, or retrofitting a sandbox in an existing project, are time consuming projects: they require development and maintenance time. They have lots of implications: performance overhead, problems when debugging, etc. Before diving in it, one should review existing mitigation techniques in compile-time, link-time or run-time hardening which may give a better return on time invested.
 
 ## Programming language
 
-When starting a project from scratch, it might be worthwhile to take the time to find a programming language with the appropriate abstraction level and security guarantees that mitigate vulnerability classes most likely to be exploited. For instance, Rust provides strong memory and concurrency guarantees[27], but can be complex to learn and use.
+When starting a project from scratch, it might be worthwhile to take the time to find a programming language with the appropriate abstraction level and security guarantees that mitigate vulnerability classes most likely to be exploited. For instance, Rust provides strong memory and concurrency guarantees, and modern [exploit mitigations](https://doc.rust-lang.org/rustc/exploit-mitigations.html), but can be complex to learn and use.
 
 ## Dependency and patch management
 
 Using a code versionning tool like Git can give insights into how many people maintain each part of a codebase. Parts with too few maintainers for their complexity can be prioritized, simplified, or replaced with external libraries.
 Likewise, dependencies to third-party libraries need to be reviewed: are they the root cause of security vulnerabilities in your project, or do they take a long time to be updated (especially when vulnerabilities are found)? If so, looking for an equivalent library could be worthwhile.
-
-## Priorization
-
-Introducing sandboxing comes at a cost (development and maintenance time, and performance overhead at runtime), so you should prioritize and start with your most sensitive applications. Depending on your attack scenarios, this could be e.g. a server exposed to a large network, or a document parser running on a host containing sensitive data.
-
-When doing this inventory, keep in mind that every application you manage to remove from this list is a lot of time and effort saved. Sandboxing is way more costly than e.g. reducing network exposure, or moving sensitive data to other hosts and isolating the untrusted host at the network level.
 
 ## Static code analysis and additional compiler verifications
 
@@ -94,6 +88,14 @@ To find existing bugs and minimize the number of new ones introduced in the futu
 Various **sanitizer** tools (e.g. `-fsanitize` integrated to LLVM[26] and MSVC) can enforce stricter runtime checks by instrumenting executables, to detect errors which would otherwise not cause an immediate visible effect.
 
 In addition to tests, a **fuzzer** can feed randomly generated inputs and try to trigger more code paths, in ways developers did not expect and thus for which they did not write tests.[28]
+
+## Priorization
+
+Just like sandboxing may not be the most cost-effective action to start with, sandboxing itself should be prioritized. Code areas need to be ranked, based on metrics that depend on the design and usecases of the project. Metrics that could be taken into account:
+- cost to isolate (e.g. is that part of the code less known, does it requires a code rewrite, or maybe passing lots of data between processes);
+- how many vulnerabilities have been discovered in that part of the code in the past;
+- how complex are these functionalities (does it involve dynamic memory allocation, pointer arithmetic);
+- how exposed to untrusted data that part of the code is.
 
 ## References
 
