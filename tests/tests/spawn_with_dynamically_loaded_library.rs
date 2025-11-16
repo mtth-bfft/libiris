@@ -24,8 +24,9 @@ fn spawn() {
         let lib_dir = std::path::Path::new(worker_binary.to_str().unwrap())
             .parent()
             .unwrap();
-        let target_path = lib_dir.join("dummy_library.dll");
         let dll_path = lib_dir.join("deps").join("dummy_library.dll");
+        assert!(dll_path.is_file());
+        let target_path = lib_dir.join("dummy_library.dll");
         if !target_path.is_file() {
             std::fs::copy(dll_path, target_path).unwrap();
         }
