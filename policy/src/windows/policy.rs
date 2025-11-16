@@ -128,6 +128,13 @@ impl Policy<'_> {
         create_options: ULONG,
         ea: &[u8],
     ) -> PolicyVerdict {
+        if cfg!(debug_assertions) && cfg!(windows) {
+            // When not in production, add exceptions transparently if they ease debugging and don't
+            // generate wildly different behaviors
+            if path.contains(".pdb") {
+                return PolicyVerdict::Granted; // allow PDB access to add names to stacktraces
+            }
+        }
         let unsupported_access_rights =
             desired_access & !(FILE_ALWAYS_GRANTED_RIGHTS | FILE_READ_RIGHTS | FILE_WRITE_RIGHTS);
         if unsupported_access_rights != 0 {
